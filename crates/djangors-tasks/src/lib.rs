@@ -102,6 +102,10 @@ pub struct QueuedTask {
     pub created_at: chrono::DateTime<chrono::Utc>,
     /// Earliest scheduled execution timestamp.
     pub scheduled_at: chrono::DateTime<chrono::Utc>,
+    /// Timestamp when the current attempt started, or `None` while not running.
+    pub started_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Timestamp when the most recent attempt finished, or `None` before completion.
+    pub finished_at: Option<chrono::DateTime<chrono::Utc>>,
     /// Last error or panic message if execution failed.
     pub error_message: Option<String>,
 }
@@ -143,12 +147,43 @@ pub async fn create_task_table(db: &djangors_db::Database) -> Result<(), djangor
             max_attempts INT NOT NULL DEFAULT 3,
             created_at {ts_type} NOT NULL,
             scheduled_at {ts_type} NOT NULL,
+            started_at {ts_type},
+            finished_at {ts_type},
             error_message TEXT
         );"
     );
     conn.execute(&sql, &[])
         .await
         .map_err(djangors_db::DbError::QueryFailed)?;
+    // Upgrade task tables created by earlier versions without requiring callers to
+    // replace their queue. SQLite lacks a portable ADD COLUMN IF NOT EXISTS form.
+    for (column, column_type) in [("started_at", ts_type), ("finished_at", ts_type)] {
+        let exists = match dialect {
+            djangors_db::Dialect::Sqlite => conn
+                .fetch_all("PRAGMA table_info(djangors_task_queue)", &[])
+                .await
+                .map_err(djangors_db::DbError::QueryFailed)?
+                .iter()
+                .any(|row| row.try_string(1).ok().flatten().as_deref() == Some(column)),
+            djangors_db::Dialect::Postgres => {
+                let row = conn
+                    .fetch_optional(
+                        "SELECT 1 FROM information_schema.columns WHERE table_name = 'djangors_task_queue' AND column_name = $1",
+                        &[djangors_db::BindValue::Text(column.to_string())],
+                    )
+                    .await
+                    .map_err(djangors_db::DbError::QueryFailed)?;
+                row.is_some()
+            }
+        };
+        if !exists {
+            let alter =
+                format!("ALTER TABLE djangors_task_queue ADD COLUMN {column} {column_type}");
+            conn.execute(&alter, &[])
+                .await
+                .map_err(djangors_db::DbError::QueryFailed)?;
+        }
+    }
     Ok(())
 }
 
@@ -318,6 +353,8 @@ pub async fn enqueue_scheduled(
         max_attempts: 3,
         created_at: chrono::Utc::now(),
         scheduled_at,
+        started_at: None,
+        finished_at: None,
         error_message: None,
     };
     let saved = task.save(db).await?;
@@ -338,7 +375,7 @@ pub async fn claim_next_task(db: &djangors_db::Database) -> Result<Option<Queued
                     djangors_db::Dialect::Sqlite => "",
                 };
                 let sql_sel = format!(
-                    "SELECT id, task_name, payload, status, attempts, max_attempts, created_at, scheduled_at, error_message \
+                    "SELECT id, task_name, payload, status, attempts, max_attempts, created_at, scheduled_at, started_at, finished_at, error_message \
                      FROM djangors_task_queue \
                      WHERE status = 'pending' AND scheduled_at <= {p1} \
                      ORDER BY scheduled_at ASC, id ASC{lock_clause} \
@@ -364,7 +401,9 @@ pub async fn claim_next_task(db: &djangors_db::Database) -> Result<Option<Queued
                     max_attempts: row.try_i64(5).map_err(djangors_db::DbError::QueryFailed)?.unwrap_or_default() as i32,
                     created_at: row.try_datetime(6).map_err(djangors_db::DbError::QueryFailed)?.ok_or_else(|| djangors_db::DbError::QueryFailed(sqlx::Error::Protocol("missing created_at".into())))?,
                     scheduled_at: row.try_datetime(7).map_err(djangors_db::DbError::QueryFailed)?.ok_or_else(|| djangors_db::DbError::QueryFailed(sqlx::Error::Protocol("missing scheduled_at".into())))?,
-                    error_message: row.try_string(8).map_err(djangors_db::DbError::QueryFailed)?,
+                    started_at: row.try_datetime(8).map_err(djangors_db::DbError::QueryFailed)?,
+                    finished_at: row.try_datetime(9).map_err(djangors_db::DbError::QueryFailed)?,
+                    error_message: row.try_string(10).map_err(djangors_db::DbError::QueryFailed)?,
                 };
 
                 task.status = "running".to_string();
@@ -372,11 +411,13 @@ pub async fn claim_next_task(db: &djangors_db::Database) -> Result<Option<Queued
 
                 let p_up1 = dialect.placeholder(1);
                 let p_up2 = dialect.placeholder(2);
+                let p_up3 = dialect.placeholder(3);
                 let sql_up = format!(
-                    "UPDATE djangors_task_queue SET status = 'running', attempts = {p_up1} WHERE id = {p_up2}"
+                    "UPDATE djangors_task_queue SET status = 'running', attempts = {p_up1}, started_at = {p_up2}, finished_at = NULL WHERE id = {p_up3}"
                 );
                 let params_up = vec![
                     djangors_db::BindValue::I64(task.attempts as i64),
+                    djangors_db::BindValue::DateTime(now),
                     djangors_db::BindValue::I64(task.id),
                 ];
                 conn.execute(&sql_up, &params_up)
@@ -391,14 +432,50 @@ pub async fn claim_next_task(db: &djangors_db::Database) -> Result<Option<Queued
     Ok(claimed)
 }
 
+/// Requeues tasks whose recorded start time is older than `visibility_timeout`.
+/// Tasks that exhausted their attempts are marked failed instead of being retried.
+pub async fn reclaim_stale_tasks(
+    db: &djangors_db::Database,
+    visibility_timeout: std::time::Duration,
+) -> Result<u64, TaskError> {
+    let mut conn = db.conn();
+    let dialect = conn.dialect();
+    let cutoff = chrono::Utc::now()
+        - chrono::Duration::from_std(visibility_timeout)
+            .map_err(|error| TaskError::Serialization(error.to_string()))?;
+    let p1 = dialect.placeholder(1);
+    let p2 = dialect.placeholder(2);
+    let sql = format!(
+        "UPDATE djangors_task_queue SET \
+         status = CASE WHEN attempts < max_attempts THEN 'pending' ELSE 'failed' END, \
+         error_message = 'worker lease expired', started_at = NULL, \
+         finished_at = CASE WHEN attempts < max_attempts THEN NULL ELSE {p2} END \
+         WHERE status = 'running' AND started_at IS NOT NULL AND started_at <= {p1}"
+    );
+    conn.execute(
+        &sql,
+        &[
+            djangors_db::BindValue::DateTime(cutoff),
+            djangors_db::BindValue::DateTime(chrono::Utc::now()),
+        ],
+    )
+    .await
+    .map_err(djangors_db::DbError::QueryFailed)
+    .map_err(TaskError::from)
+}
+
 // Internally marks a claimed queued task as successfully completed.
 async fn mark_task_completed(db: &djangors_db::Database, task_id: i64) -> Result<(), TaskError> {
     let mut conn = db.conn();
     let p1 = conn.dialect().placeholder(1);
+    let p2 = conn.dialect().placeholder(2);
     let sql = format!(
-        "UPDATE djangors_task_queue SET status = 'completed', error_message = NULL WHERE id = {p1}"
+        "UPDATE djangors_task_queue SET status = 'completed', finished_at = {p1}, error_message = NULL WHERE id = {p2}"
     );
-    let params = vec![djangors_db::BindValue::I64(task_id)];
+    let params = vec![
+        djangors_db::BindValue::DateTime(chrono::Utc::now()),
+        djangors_db::BindValue::I64(task_id),
+    ];
     conn.execute(&sql, &params)
         .await
         .map_err(djangors_db::DbError::QueryFailed)?;
@@ -423,12 +500,14 @@ async fn mark_task_failed(
     let p1 = conn.dialect().placeholder(1);
     let p2 = conn.dialect().placeholder(2);
     let p3 = conn.dialect().placeholder(3);
+    let p4 = conn.dialect().placeholder(4);
     let sql = format!(
-        "UPDATE djangors_task_queue SET status = {p1}, error_message = {p2} WHERE id = {p3}"
+        "UPDATE djangors_task_queue SET status = {p1}, error_message = {p2}, finished_at = {p3}, started_at = NULL WHERE id = {p4}"
     );
     let params = vec![
         djangors_db::BindValue::Text(next_status.to_string()),
         djangors_db::BindValue::Text(error_message.to_string()),
+        djangors_db::BindValue::DateTime(chrono::Utc::now()),
         djangors_db::BindValue::I64(task_id),
     ];
     conn.execute(&sql, &params)
@@ -445,6 +524,7 @@ pub struct Worker {
     poll_interval: std::time::Duration,
     // How frequently this worker will wake up to run the recurring tasks check.
     recurring_tick_interval: Option<std::time::Duration>,
+    stale_task_timeout: std::time::Duration,
 }
 
 impl Worker {
@@ -454,6 +534,7 @@ impl Worker {
             db,
             poll_interval: std::time::Duration::from_secs(1),
             recurring_tick_interval: None,
+            stale_task_timeout: std::time::Duration::from_secs(5 * 60),
         }
     }
 
@@ -466,6 +547,13 @@ impl Worker {
     /// Configures the polling interval for checking due tasks when idle.
     pub fn with_poll_interval(mut self, interval: std::time::Duration) -> Self {
         self.poll_interval = interval;
+        self
+    }
+
+    /// Sets how long a task may remain running without a heartbeat before it is reclaimed.
+    /// Defaults to five minutes.
+    pub fn with_stale_task_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.stale_task_timeout = timeout;
         self
     }
 
@@ -500,6 +588,7 @@ impl Worker {
                     last_recurring_tick = tokio::time::Instant::now();
                 }
             }
+            let _ = reclaim_stale_tasks(&self.db, self.stale_task_timeout).await;
             let task_run = self.run_once();
             tokio::pin!(task_run);
             let result = tokio::select! {

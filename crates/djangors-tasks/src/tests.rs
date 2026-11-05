@@ -31,6 +31,69 @@ async fn test_worker_run_until_stops_when_idle() -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
+#[tokio::test]
+async fn test_reclaim_stale_tasks_retries_or_fails_at_attempt_limit(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = TEST_DB_LOCK.lock().await;
+    let test_db = djangors_test::TestDatabase::connect().await?;
+    create_task_table(test_db.database()).await?;
+    test_db
+        .database()
+        .conn()
+        .execute("DELETE FROM djangors_task_queue", &[])
+        .await?;
+    let first = enqueue(test_db.database(), "sample_task_fn", &serde_json::json!({})).await?;
+    let second = enqueue(test_db.database(), "sample_task_fn", &serde_json::json!({})).await?;
+    let mut conn = test_db.database().conn();
+    let p1 = conn.dialect().placeholder(1);
+    let p2 = conn.dialect().placeholder(2);
+    conn.execute(
+        &format!("UPDATE djangors_task_queue SET status = 'running', attempts = 1, started_at = {p1} WHERE id = {p2}"),
+        &[
+            djangors_db::BindValue::DateTime(chrono::Utc::now() - chrono::Duration::minutes(10)),
+            djangors_db::BindValue::I64(first),
+        ],
+    )
+    .await?;
+    conn.execute(
+        &format!("UPDATE djangors_task_queue SET status = 'running', attempts = max_attempts, started_at = {p1} WHERE id = {p2}"),
+        &[
+            djangors_db::BindValue::DateTime(chrono::Utc::now() - chrono::Duration::minutes(10)),
+            djangors_db::BindValue::I64(second),
+        ],
+    )
+    .await?;
+
+    assert_eq!(
+        reclaim_stale_tasks(test_db.database(), std::time::Duration::from_secs(60)).await?,
+        2
+    );
+    let p1 = conn.dialect().placeholder(1);
+    let first_row = conn
+        .fetch_one(
+            &format!(
+                "SELECT status, started_at, finished_at FROM djangors_task_queue WHERE id = {p1}"
+            ),
+            &[djangors_db::BindValue::I64(first)],
+        )
+        .await?;
+    assert_eq!(first_row.try_string(0)?.as_deref(), Some("pending"));
+    assert_eq!(first_row.try_datetime(1)?, None);
+    assert_eq!(first_row.try_datetime(2)?, None);
+    let second_row = conn
+        .fetch_one(
+            &format!(
+                "SELECT status, started_at, finished_at FROM djangors_task_queue WHERE id = {p1}"
+            ),
+            &[djangors_db::BindValue::I64(second)],
+        )
+        .await?;
+    assert_eq!(second_row.try_string(0)?.as_deref(), Some("failed"));
+    assert_eq!(second_row.try_datetime(1)?, None);
+    assert!(second_row.try_datetime(2)?.is_some());
+    Ok(())
+}
+
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SamplePayload {
     message: String,
