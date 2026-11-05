@@ -58,6 +58,55 @@ async fn test_sqlite_connect_in_memory() {
     assert!(db.sqlite_pool().is_some());
 }
 
+#[derive(Debug)]
+#[allow(dead_code)]
+enum TypedTransactionError {
+    Business(&'static str),
+    Database(DbError),
+}
+
+impl From<DbError> for TypedTransactionError {
+    fn from(error: DbError) -> Self {
+        Self::Database(error)
+    }
+}
+
+#[tokio::test]
+async fn transaction_conn_preserves_typed_error_and_rolls_back() {
+    let db = Database::connect(&DatabaseConfig::new("sqlite::memory:").max_connections(1))
+        .await
+        .expect("connect sqlite");
+    db.conn()
+        .execute("CREATE TABLE typed_tx_test (value TEXT)", &[])
+        .await
+        .unwrap();
+
+    let result: Result<(), TypedTransactionError> = db
+        .transaction_conn(|conn| {
+            Box::pin(async move {
+                conn.execute(
+                    "INSERT INTO typed_tx_test (value) VALUES ('transient')",
+                    &[],
+                )
+                .await
+                .map_err(DbError::from)?;
+                Err(TypedTransactionError::Business("no copies left"))
+            })
+        })
+        .await;
+
+    assert!(matches!(
+        result,
+        Err(TypedTransactionError::Business("no copies left"))
+    ));
+    let row = db
+        .conn()
+        .fetch_one("SELECT COUNT(*) FROM typed_tx_test", &[])
+        .await
+        .unwrap();
+    assert_eq!(row.try_i64(0).unwrap(), Some(0));
+}
+
 // Restored during review of dispatch 13.1: these three transaction tests were
 // deleted by the SQLite port even though `transaction` and
 // `transaction_with_isolation` both still exist. They cover the exact code the
