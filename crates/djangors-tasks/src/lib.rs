@@ -79,6 +79,8 @@ pub struct TaskRegistration {
 
 inventory::collect!(TaskRegistration);
 
+static NEXT_WORKER_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 /// Database model representing a task in the queue table.
 #[derive(Model, Debug, Clone)]
 #[djangors(app = "djangors_tasks", table_name = "djangors_task_queue")]
@@ -129,6 +131,150 @@ pub struct RecurringTask {
     pub last_run_at: Option<chrono::DateTime<chrono::Utc>>,
     /// Whether this recurring task is active.
     pub enabled: bool,
+    /// Latest enqueue outcome recorded by the scheduler.
+    pub last_status: Option<String>,
+    /// Most recent scheduler error, if any.
+    pub last_error: Option<String>,
+}
+
+/// Number of queued tasks in a particular status.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct StatusCount {
+    /// Queue status, such as `pending`, `running`, `completed`, or `failed`.
+    pub status: String,
+    /// Number of tasks currently in this status.
+    pub count: u64,
+}
+
+/// Task counts and average runtime grouped by registered task name.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct TaskQueueStats {
+    /// Registered task name.
+    pub task_name: String,
+    /// Counts by queue status.
+    pub by_status: Vec<StatusCount>,
+    /// Mean duration in milliseconds for attempts with both lifecycle timestamps.
+    pub average_runtime_ms: Option<f64>,
+}
+
+/// Snapshot of task queue volume, wait age, and per-task activity.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct QueueStats {
+    /// Total counts grouped by status.
+    pub by_status: Vec<StatusCount>,
+    /// Age of the oldest pending task, measured from creation time.
+    pub oldest_pending_age: Option<chrono::Duration>,
+    /// Counts and average runtimes grouped by task name.
+    pub per_task: Vec<TaskQueueStats>,
+}
+
+/// Returns task queue counts, oldest pending age, and per-task average runtime.
+pub async fn queue_stats(db: &djangors_db::Database) -> Result<QueueStats, TaskError> {
+    let mut conn = db.conn();
+    let grouped = conn
+        .fetch_all(
+            "SELECT status, COUNT(*) FROM djangors_task_queue GROUP BY status ORDER BY status",
+            &[],
+        )
+        .await
+        .map_err(djangors_db::DbError::QueryFailed)?;
+    let by_status = grouped
+        .iter()
+        .map(|row| {
+            Ok(StatusCount {
+                status: row
+                    .try_string(0)
+                    .map_err(djangors_db::DbError::QueryFailed)?
+                    .unwrap_or_default(),
+                count: row
+                    .try_i64(1)
+                    .map_err(djangors_db::DbError::QueryFailed)?
+                    .unwrap_or_default() as u64,
+            })
+        })
+        .collect::<Result<Vec<_>, djangors_db::DbError>>()?;
+    let pending = conn
+        .fetch_optional(
+            "SELECT MIN(created_at) FROM djangors_task_queue WHERE status = 'pending'",
+            &[],
+        )
+        .await
+        .map_err(djangors_db::DbError::QueryFailed)?;
+    let oldest_pending_age = pending
+        .map(|row| row.try_datetime(0))
+        .transpose()
+        .map_err(djangors_db::DbError::QueryFailed)?
+        .flatten()
+        .map(|created_at| chrono::Utc::now() - created_at);
+
+    let rows = conn
+        .fetch_all(
+            "SELECT task_name, status, started_at, finished_at FROM djangors_task_queue",
+            &[],
+        )
+        .await
+        .map_err(djangors_db::DbError::QueryFailed)?;
+    let mut per_task = std::collections::BTreeMap::<
+        String,
+        (std::collections::BTreeMap<String, u64>, Vec<i64>),
+    >::new();
+    for row in rows {
+        let task_name = row
+            .try_string(0)
+            .map_err(djangors_db::DbError::QueryFailed)?
+            .unwrap_or_default();
+        let status = row
+            .try_string(1)
+            .map_err(djangors_db::DbError::QueryFailed)?
+            .unwrap_or_default();
+        let started = row
+            .try_datetime(2)
+            .map_err(djangors_db::DbError::QueryFailed)?;
+        let finished = row
+            .try_datetime(3)
+            .map_err(djangors_db::DbError::QueryFailed)?;
+        let entry = per_task.entry(task_name).or_default();
+        *entry.0.entry(status).or_default() += 1;
+        if let (Some(started), Some(finished)) = (started, finished) {
+            entry.1.push((finished - started).num_milliseconds());
+        }
+    }
+    let per_task = per_task
+        .into_iter()
+        .map(|(task_name, (counts, runtimes))| TaskQueueStats {
+            task_name,
+            by_status: counts
+                .into_iter()
+                .map(|(status, count)| StatusCount { status, count })
+                .collect(),
+            average_runtime_ms: (!runtimes.is_empty())
+                .then(|| runtimes.iter().sum::<i64>() as f64 / runtimes.len() as f64),
+        })
+        .collect();
+    Ok(QueueStats {
+        by_status,
+        oldest_pending_age,
+        per_task,
+    })
+}
+
+/// Returns the latest heartbeat written by any worker, or `None` if no worker has reported.
+pub async fn last_heartbeat(
+    db: &djangors_db::Database,
+) -> Result<Option<chrono::DateTime<chrono::Utc>>, TaskError> {
+    let mut conn = db.conn();
+    let row = conn
+        .fetch_optional(
+            "SELECT MAX(heartbeat_at) FROM djangors_worker_heartbeat",
+            &[],
+        )
+        .await
+        .map_err(djangors_db::DbError::QueryFailed)?;
+    row.map(|row| row.try_datetime(0))
+        .transpose()
+        .map_err(djangors_db::DbError::QueryFailed)
+        .map(Option::flatten)
+        .map_err(TaskError::from)
 }
 
 /// Creates the database table `djangors_task_queue` if it does not already exist.
@@ -184,6 +330,15 @@ pub async fn create_task_table(db: &djangors_db::Database) -> Result<(), djangor
                 .map_err(djangors_db::DbError::QueryFailed)?;
         }
     }
+    conn.execute(
+        &format!(
+            "CREATE TABLE IF NOT EXISTS djangors_worker_heartbeat (\
+             worker_id VARCHAR(255) PRIMARY KEY, heartbeat_at {ts_type} NOT NULL)"
+        ),
+        &[],
+    )
+    .await
+    .map_err(djangors_db::DbError::QueryFailed)?;
     Ok(())
 }
 
@@ -203,12 +358,39 @@ pub async fn create_recurring_task_table(
             cron_expr TEXT NOT NULL,
             next_run_at {ts_type} NOT NULL,
             last_run_at {ts_type},
-            enabled BOOLEAN NOT NULL DEFAULT TRUE
+            enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            last_status VARCHAR(50),
+            last_error TEXT
         );"
     );
     conn.execute(&sql, &[])
         .await
         .map_err(djangors_db::DbError::QueryFailed)?;
+    for (column, column_type) in [("last_status", "VARCHAR(50)"), ("last_error", "TEXT")] {
+        let exists = match dialect {
+            djangors_db::Dialect::Sqlite => conn
+                .fetch_all("PRAGMA table_info(djangors_recurring_task)", &[])
+                .await
+                .map_err(djangors_db::DbError::QueryFailed)?
+                .iter()
+                .any(|row| row.try_string(1).ok().flatten().as_deref() == Some(column)),
+            djangors_db::Dialect::Postgres => conn
+                .fetch_optional(
+                    "SELECT 1 FROM information_schema.columns WHERE table_name = 'djangors_recurring_task' AND column_name = $1",
+                    &[djangors_db::BindValue::Text(column.to_string())],
+                )
+                .await
+                .map_err(djangors_db::DbError::QueryFailed)?
+                .is_some(),
+        };
+        if !exists {
+            let alter =
+                format!("ALTER TABLE djangors_recurring_task ADD COLUMN {column} {column_type}");
+            conn.execute(&alter, &[])
+                .await
+                .map_err(djangors_db::DbError::QueryFailed)?;
+        }
+    }
     Ok(())
 }
 
@@ -291,8 +473,9 @@ pub async fn tick_recurring_tasks(db: &djangors_db::Database) -> Result<usize, T
         let p_up1 = dialect.placeholder(1);
         let p_up2 = dialect.placeholder(2);
         let p_up3 = dialect.placeholder(3);
+        let p_up4 = dialect.placeholder(4);
         let sql_update = format!(
-            "UPDATE djangors_recurring_task SET last_run_at = {p_up1}, next_run_at = {p_up2} WHERE id = {p_up3}"
+            "UPDATE djangors_recurring_task SET last_run_at = {p_up1}, next_run_at = {p_up2}, last_status = {p_up3}, last_error = NULL WHERE id = {p_up4}"
         );
 
         let mut count = 0;
@@ -317,6 +500,7 @@ pub async fn tick_recurring_tasks(db: &djangors_db::Database) -> Result<usize, T
             let params_update = vec![
                 djangors_db::BindValue::DateTime(previous),
                 djangors_db::BindValue::DateTime(next),
+                djangors_db::BindValue::Text("enqueued".to_string()),
                 djangors_db::BindValue::I64(id),
             ];
             conn.execute(&sql_update, &params_update).await.map_err(djangors_db::DbError::QueryFailed)?;
@@ -525,6 +709,7 @@ pub struct Worker {
     // How frequently this worker will wake up to run the recurring tasks check.
     recurring_tick_interval: Option<std::time::Duration>,
     stale_task_timeout: std::time::Duration,
+    worker_id: String,
 }
 
 impl Worker {
@@ -535,6 +720,11 @@ impl Worker {
             poll_interval: std::time::Duration::from_secs(1),
             recurring_tick_interval: None,
             stale_task_timeout: std::time::Duration::from_secs(5 * 60),
+            worker_id: format!(
+                "{}-{}",
+                std::process::id(),
+                NEXT_WORKER_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            ),
         }
     }
 
@@ -555,6 +745,32 @@ impl Worker {
     pub fn with_stale_task_timeout(mut self, timeout: std::time::Duration) -> Self {
         self.stale_task_timeout = timeout;
         self
+    }
+
+    /// Writes this worker's heartbeat at the given interval until the future is cancelled.
+    ///
+    /// Call this from a Tokio task alongside [`Worker::run`] or [`Worker::run_until`].
+    pub async fn heartbeat(&self, interval: std::time::Duration) -> Result<(), TaskError> {
+        let mut ticker = tokio::time::interval(interval.max(std::time::Duration::from_millis(1)));
+        loop {
+            ticker.tick().await;
+            let now = chrono::Utc::now();
+            let mut conn = self.db.conn();
+            let p1 = conn.dialect().placeholder(1);
+            let p2 = conn.dialect().placeholder(2);
+            conn.execute(
+                &format!(
+                    "INSERT INTO djangors_worker_heartbeat (worker_id, heartbeat_at) VALUES ({p1}, {p2}) \
+                     ON CONFLICT (worker_id) DO UPDATE SET heartbeat_at = EXCLUDED.heartbeat_at"
+                ),
+                &[
+                    djangors_db::BindValue::Text(self.worker_id.clone()),
+                    djangors_db::BindValue::DateTime(now),
+                ],
+            )
+            .await
+            .map_err(djangors_db::DbError::QueryFailed)?;
+        }
     }
 
     /// Runs the worker loop indefinitely, processing tasks as they become due.

@@ -94,6 +94,83 @@ async fn test_reclaim_stale_tasks_retries_or_fails_at_attempt_limit(
     Ok(())
 }
 
+#[tokio::test]
+async fn test_queue_stats_and_worker_heartbeat() -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = TEST_DB_LOCK.lock().await;
+    let test_db = djangors_test::TestDatabase::connect().await?;
+    create_task_table(test_db.database()).await?;
+    test_db
+        .database()
+        .conn()
+        .execute("DELETE FROM djangors_task_queue", &[])
+        .await?;
+    test_db
+        .database()
+        .conn()
+        .execute("DELETE FROM djangors_worker_heartbeat", &[])
+        .await?;
+    enqueue(
+        test_db.database(),
+        "sample_task_fn",
+        &SamplePayload {
+            message: "hello_tasks".to_owned(),
+        },
+    )
+    .await?;
+    let worker = Worker::new(test_db.database().clone());
+    assert!(worker.run_once().await?);
+    enqueue(
+        test_db.database(),
+        "sample_task_fn",
+        &SamplePayload {
+            message: "not-yet".to_owned(),
+        },
+    )
+    .await?;
+
+    let stats = queue_stats(test_db.database()).await?;
+    assert_eq!(
+        stats
+            .by_status
+            .iter()
+            .find(|count| count.status == "completed")
+            .unwrap()
+            .count,
+        1
+    );
+    assert_eq!(
+        stats
+            .by_status
+            .iter()
+            .find(|count| count.status == "pending")
+            .unwrap()
+            .count,
+        1
+    );
+    assert!(stats.oldest_pending_age.is_some());
+    assert_eq!(stats.per_task.len(), 1);
+    assert!(stats.per_task[0].average_runtime_ms.is_some());
+
+    let heartbeat_worker = worker;
+    let heartbeat = tokio::spawn(async move {
+        heartbeat_worker
+            .heartbeat(std::time::Duration::from_secs(30))
+            .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        loop {
+            if last_heartbeat(test_db.database()).await?.is_some() {
+                return Ok::<(), TaskError>(());
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await??;
+    heartbeat.abort();
+    assert!(last_heartbeat(test_db.database()).await?.is_some());
+    Ok(())
+}
+
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SamplePayload {
     message: String,
@@ -507,7 +584,9 @@ async fn test_recurring_task_advances_from_previous_scheduled_time_not_now(
     let enqueued = tick_recurring_tasks(db).await?;
     assert_eq!(enqueued, 1);
 
-    let sel_sql = format!("SELECT next_run_at FROM djangors_recurring_task WHERE id = {p1}");
+    let sel_sql = format!(
+        "SELECT next_run_at, last_status, last_error FROM djangors_recurring_task WHERE id = {p1}"
+    );
     let row = db
         .conn()
         .fetch_one(&sel_sql, &[djangors_db::BindValue::I64(recurring_id)])
@@ -522,6 +601,8 @@ async fn test_recurring_task_advances_from_previous_scheduled_time_not_now(
              (got {new_next_run_at}, which is not in the past as expected)"
     );
     assert!(new_next_run_at > overdue_since);
+    assert_eq!(row.try_string(1)?.as_deref(), Some("enqueued"));
+    assert_eq!(row.try_string(2)?, None);
 
     Ok(())
 }
