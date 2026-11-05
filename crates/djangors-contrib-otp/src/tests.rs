@@ -1,4 +1,5 @@
 use super::*;
+#[cfg(feature = "models")]
 use djangors_orm::Model;
 
 #[test]
@@ -24,6 +25,7 @@ fn provisioning_uri_has_expected_fields() {
 }
 
 #[tokio::test]
+#[cfg(feature = "models")]
 async fn enrollment_round_trip_against_database() {
     let Ok(db) = djangors_test::TestDatabase::connect().await else {
         return;

@@ -12,10 +12,14 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[features]
+default = ["models"]
+models = ["dep:djangors-auth", "dep:djangors-macros", "dep:djangors-orm"]
+
 [dependencies]
-djangors-auth = { path = "../djangors-auth", version = "0.7.0" }
-djangors-macros = { path = "../djangors-macros", version = "0.7.0" }
-djangors-orm = { path = "../djangors-orm", version = "0.7.0" }
+djangors-auth = { path = "../djangors-auth", version = "0.7.0", optional = true }
+djangors-macros = { path = "../djangors-macros", version = "0.7.0", optional = true }
+djangors-orm = { path = "../djangors-orm", version = "0.7.0", optional = true }
 totp-rs = { version = "5.7.2", features = ["gen_secret", "otpauth"] }
 
 [dev-dependencies]

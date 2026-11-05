@@ -1,10 +1,10 @@
 #![deny(missing_docs)]
 //! TOTP-based two-factor authentication primitives for Djangors.
 //!
-//! This v1 intentionally ships TOTP only; WebAuthn is a separate future scope.  `OtpDevice`
-//! stores the base32 secret in plaintext because this codebase has no existing reversible
-//! encryption-at-rest convention for secrets (password hashing is one-way and cannot be reused).
-//! Secret encryption is a known v1 gap and should be addressed by a dedicated future project.
+//! This v1 intentionally ships TOTP only; WebAuthn is a separate future scope. The default
+//! `models` feature provides [`OtpDevice`], whose `secret` field is stored as plaintext. Apps
+//! that require encryption at rest should disable default features and use these helpers with
+//! their own encrypted credential storage.
 //!
 //! `djangors-admin` has no username/password login handler: applications own their login views.
 //! After password authentication, an application should find the user's confirmed device and
@@ -12,11 +12,15 @@
 //! usual create-device → show [`provisioning_uri`] as a QR payload → verify first code → set
 //! `confirmed = true` flow.
 
-use djangors_macros::Model;
-use djangors_orm::ForeignKey;
 use totp_rs::{Algorithm, Secret, TOTP};
 
+#[cfg(feature = "models")]
+use djangors_macros::Model;
+#[cfg(feature = "models")]
+use djangors_orm::ForeignKey;
+
 /// Represents an enrolled or unconfirmed TOTP device for a user.
+#[cfg(feature = "models")]
 #[derive(Model, Debug, Clone)]
 #[djangors(app = "djangors_contrib_otp", table_name = "djangors_otp_device")]
 pub struct OtpDevice {
