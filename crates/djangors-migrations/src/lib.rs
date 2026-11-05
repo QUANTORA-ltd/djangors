@@ -171,6 +171,64 @@ async fn ensure_history(db: &djangors_db::Database) -> Result<(), MigrationError
     Ok(())
 }
 
+/// Checks that every registered model table and column exists in the database.
+///
+/// This check deliberately reports drift instead of applying schema changes
+/// implicitly. Generate and commit a migration with `dj makemigrations`, then
+/// apply it with `dj migrate` before starting the application.
+pub async fn validate_model_schema(
+    db: &djangors_db::Database,
+    models: &[djangors_orm::ModelSnapshot],
+) -> Result<(), MigrationError> {
+    let dialect = db.dialect();
+    for model in models {
+        let mut conn = db.conn();
+        let rows = match dialect {
+            djangors_db::Dialect::Postgres => {
+                conn
+                    .fetch_all(
+                        "SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1",
+                        &[BindValue::Text(model.table_name.clone())],
+                    )
+                    .await?
+            }
+            djangors_db::Dialect::Sqlite => {
+                let table = model.table_name.replace('"', "\"\"");
+                conn
+                    .fetch_all(&format!("PRAGMA table_info(\"{table}\")"), &[])
+                    .await?
+            }
+        };
+        let mut columns = std::collections::HashSet::new();
+        for row in rows {
+            let name = match dialect {
+                djangors_db::Dialect::Postgres => row.try_string_by_name("column_name")?,
+                djangors_db::Dialect::Sqlite => row.try_string_by_name("name")?,
+            };
+            if let Some(name) = name {
+                columns.insert(name);
+            }
+        }
+        let missing: Vec<String> = if columns.is_empty() {
+            vec!["<table>".to_string()]
+        } else {
+            model
+                .fields
+                .iter()
+                .filter(|field| !columns.contains(&field.column_name))
+                .map(|field| field.column_name.clone())
+                .collect()
+        };
+        if !missing.is_empty() {
+            return Err(MigrationError::SchemaBehind {
+                table: model.table_name.clone(),
+                missing,
+            });
+        }
+    }
+    Ok(())
+}
+
 fn migration_files(dir: &Path) -> Result<Vec<PathBuf>, MigrationError> {
     Ok(std::fs::read_dir(dir)?
         .filter_map(Result::ok)
@@ -208,8 +266,10 @@ fn section(text: &str, wanted: &str) -> String {
 
 /// Applies initial database schema migrations if not already applied.
 pub async fn migrate(db: &djangors_db::Database) -> Result<(), MigrationError> {
+    let models = djangors_orm::meta::registered_models_snapshot();
     if Path::new("migrations").is_dir() {
-        return migrate_from_dir(db, Path::new("migrations")).await;
+        migrate_from_dir(db, Path::new("migrations")).await?;
+        return validate_model_schema(db, &models).await;
     }
     // 1. Ensure tracking table exists
     ensure_history(db).await?;
@@ -225,7 +285,7 @@ pub async fn migrate(db: &djangors_db::Database) -> Result<(), MigrationError> {
     let row = db.conn().fetch_optional(&query, &params).await?;
 
     if row.is_some() {
-        return Ok(());
+        return validate_model_schema(db, &models).await;
     }
 
     // 3. Build plan and execute in transaction
@@ -254,7 +314,7 @@ pub async fn migrate(db: &djangors_db::Database) -> Result<(), MigrationError> {
     .await
     .map_err(MigrationError::Database)?;
 
-    Ok(())
+    validate_model_schema(db, &models).await
 }
 
 /// Returns the list of migration names currently recorded as applied in `djangors_migrations`.

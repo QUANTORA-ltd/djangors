@@ -36,6 +36,17 @@ pub enum MigrationError {
         name: String,
     },
 
+    /// The database schema does not contain tables or columns required by registered models.
+    #[error(
+        "database schema is behind model table {table}; missing {missing:?}. Commit migrations with `dj makemigrations` and apply them with `dj migrate`"
+    )]
+    SchemaBehind {
+        /// Model table whose schema is incomplete.
+        table: String,
+        /// Missing table or column names.
+        missing: Vec<String>,
+    },
+
     /// An operation is not supported on the specified SQL dialect.
     #[error("operation {operation} is not supported on dialect {dialect}")]
     UnsupportedOnDialect {
