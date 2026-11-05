@@ -99,6 +99,20 @@ impl Request {
         self
     }
 
+    /// Mutable access to this request's per-request extensions.
+    pub fn extensions_mut(&mut self) -> &mut Extensions {
+        &mut self.extensions
+    }
+
+    /// The route pattern that matched this request, if the router found one.
+    ///
+    /// Returns e.g. `/api/results/{id:i64}/approve` rather than
+    /// `/api/results/8812/approve`, which makes it safe to use as a metrics
+    /// label or log field.
+    pub fn matched_route(&self) -> Option<&str> {
+        self.ext::<crate::router::MatchedRoute>().map(|m| m.as_str())
+    }
+
     fn parse_query(query: &str) -> HashMap<String, String> {
         let mut params = HashMap::new();
         for pair in query.split('&') {

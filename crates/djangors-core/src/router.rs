@@ -52,6 +52,28 @@ struct Route {
     name: Option<String>,
 }
 
+/// The full route pattern that matched the request, e.g.
+/// `/api/results/{id:i64}/approve`.
+///
+/// It is inserted into both the [`Request`] extensions (read it with
+/// [`Request::matched_route`]) and, after the handler runs, the [`Response`]
+/// extensions, so observability layers can label metrics with a
+/// low-cardinality route instead of the raw path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MatchedRoute(pub Arc<str>);
+
+impl MatchedRoute {
+    /// The pattern as a string slice.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    fn from_pattern(pattern: &str) -> Self {
+        let trimmed = pattern.trim_start_matches('/');
+        Self(Arc::from(format!("/{trimmed}")))
+    }
+}
+
 /// Error type returned when route reversing fails.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ReverseError {
@@ -450,7 +472,7 @@ impl Router {
     /// and isolate any panics. A panicking handler must not take down other
     /// in-flight requests or crash the whole server process.
     /// Dispatch a request to the matching handler (standard or streaming).
-    pub async fn handle_dispatch(&self, req: Request) -> Result<ResponseKind, DjangorsError> {
+    pub async fn handle_dispatch(&self, mut req: Request) -> Result<ResponseKind, DjangorsError> {
         let path = req.path().to_string();
         let method = req.method().clone();
 
@@ -461,7 +483,16 @@ impl Router {
             })
             .await;
 
-        let res = match self.match_path(&path, &method) {
+        let matched = self.match_path(&path, &method);
+        let matched_pattern = matched
+            .as_ref()
+            .map(|(idx, _)| self.routes[*idx].pattern.clone());
+        if let Some(pattern) = &matched_pattern {
+            req.extensions_mut()
+                .insert(MatchedRoute::from_pattern(pattern));
+        }
+
+        let mut res = match matched {
             Some((idx, params)) => match &self.routes[idx].handler {
                 HandlerKind::Standard(handler) => {
                     let handler = handler.clone();
@@ -516,6 +547,11 @@ impl Router {
             },
             None => Err(DjangorsError::NotFound),
         };
+
+        if let (Some(pattern), Ok(ResponseKind::Standard(resp))) = (&matched_pattern, &mut res) {
+            resp.extensions_mut()
+                .insert(MatchedRoute::from_pattern(pattern));
+        }
 
         let status = match &res {
             Ok(ResponseKind::Standard(resp)) => resp.status().as_u16(),

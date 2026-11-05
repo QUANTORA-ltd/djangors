@@ -67,7 +67,7 @@ pub use path_params::PathParams;
 pub use ratelimit::{rate_limited, ByIp, RateLimitKey, RateLimiter};
 pub use request::Request;
 pub use response::Response;
-pub use router::Router;
+pub use router::{MatchedRoute, Router};
 pub use settings::DjangorsSettings;
 pub use sse::StreamingResponse;
 pub use state::AppState;
