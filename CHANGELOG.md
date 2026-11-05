@@ -5,6 +5,39 @@ All notable changes to Djangors are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Migrating from 0.7.0
+
+`DjangorsSettings`, `djangors_mail::Message`, and `djangors_rest::ViewSetConfig` are now
+`#[non_exhaustive]` so future fields can be added without requiring downstream struct-literal
+edits. Construct them with the provided constructors and builders:
+
+```rust
+let settings = DjangorsSettings::new()
+    .with_host("127.0.0.1")
+    .with_port(8000)
+    .with_debug(false)
+    .with_allowed_hosts(["example.com"])
+    .with_secret_key(secret_key);
+
+let message = djangors_mail::Message::new(
+    ["person@example.com"],
+    "sender@example.com",
+    "Welcome",
+    "Hello",
+)
+.cc("copy@example.com")
+.reply_to("support@example.com");
+
+static VIEW_CONFIG: djangors_rest::ViewSetConfig = djangors_rest::ViewSetConfig::new()
+    .with_filterable_fields(&["status"])
+    .with_page_size(Some(50));
+```
+
+Generated model `save`, `update`, and `delete` methods take a shared `&Database`; pass the
+database reference directly (`model.save(db).await?`). They are concrete database-backed methods,
+not generic over a transaction executor, so code that previously passed `&&Database` or a
+transaction wrapper should use the equivalent API available on that wrapper.
+
 ## [0.7.0]
 
 This release contains a **breaking change to the `ModelAdmin` trait**, made to fix a

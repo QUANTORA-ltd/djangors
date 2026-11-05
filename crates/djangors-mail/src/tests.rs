@@ -1,12 +1,12 @@
 use super::*;
 fn message() -> Message {
-    Message {
-        to: vec!["recipient@example.com".into()],
-        from: "sender@example.com".into(),
-        subject: "Subject".into(),
-        body: "plain body".into(),
-        html_body: Some("<p>html body</p>".into()),
-    }
+    Message::new(
+        ["recipient@example.com"],
+        "sender@example.com",
+        "Subject",
+        "plain body",
+    )
+    .html_body("<p>html body</p>")
 }
 #[tokio::test]
 async fn console_send() {
@@ -39,4 +39,18 @@ fn html_message_is_multipart_alternative() {
     let text = String::from_utf8(raw).unwrap();
     assert!(text.contains("multipart/alternative"));
     assert!(text.contains("plain body") && text.contains("html body"));
+}
+
+#[test]
+fn message_builder_adds_copy_and_reply_to_headers() {
+    let message = Message::new(["to@example.com"], "from@example.com", "Subject", "body")
+        .cc("cc@example.com")
+        .bcc("bcc@example.com")
+        .reply_to("reply@example.com");
+    let raw = SmtpBackend::serialize(&message).unwrap();
+    let text = String::from_utf8(raw).unwrap();
+    assert!(text.contains("Cc: cc@example.com"));
+    // Lettre deliberately removes Bcc from the serialized message headers.
+    assert_eq!(message.bcc, ["bcc@example.com"]);
+    assert!(text.contains("Reply-To: reply@example.com"));
 }

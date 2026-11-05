@@ -854,19 +854,18 @@ pub async fn request_password_reset<U: AuthUser>(
         // Use a default 1-hour TTL for the token.
         let token = generate_password_reset_token(&user, secret, Duration::from_secs(3600));
         let reset_link = format!("{}{}", reset_link_base, token);
-        let message = djangors_mail::Message {
-            to: vec![email.to_string()],
-            from: "noreply@localhost".to_string(),
-            subject: "Password Reset Request".to_string(),
-            body: format!(
+        let message = djangors_mail::Message::new(
+            [email.to_string()],
+            "noreply@localhost",
+            "Password Reset Request",
+            format!(
                 "You are receiving this email because you requested a password reset for your user account.\n\
                  Please click the following link to choose a new password:\n\n\
                  {}\n\n\
                  If you did not request this reset, you can safely ignore this email.",
                 reset_link
             ),
-            html_body: None,
-        };
+        );
         mail.send(&message)
             .await
             .map_err(|e| AuthError::Mail(e.to_string()))?;

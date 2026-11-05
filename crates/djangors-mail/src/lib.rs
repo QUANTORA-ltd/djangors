@@ -14,7 +14,8 @@ use std::{
 use thiserror::Error;
 
 /// An outgoing email message.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub struct Message {
     /// Recipient email addresses.
     pub to: Vec<String>,
@@ -26,6 +27,54 @@ pub struct Message {
     pub body: String,
     /// Optional HTML formatted email body.
     pub html_body: Option<String>,
+    /// Carbon-copy recipient email addresses.
+    pub cc: Vec<String>,
+    /// Blind-carbon-copy recipient email addresses.
+    pub bcc: Vec<String>,
+    /// Optional reply-to email address.
+    pub reply_to: Option<String>,
+}
+
+impl Message {
+    /// Creates a message with required addressing and content fields.
+    pub fn new(
+        to: impl IntoIterator<Item = impl Into<String>>,
+        from: impl Into<String>,
+        subject: impl Into<String>,
+        body: impl Into<String>,
+    ) -> Self {
+        Self {
+            to: to.into_iter().map(Into::into).collect(),
+            from: from.into(),
+            subject: subject.into(),
+            body: body.into(),
+            ..Self::default()
+        }
+    }
+
+    /// Adds a carbon-copy recipient.
+    pub fn cc(mut self, address: impl Into<String>) -> Self {
+        self.cc.push(address.into());
+        self
+    }
+
+    /// Adds a blind-carbon-copy recipient.
+    pub fn bcc(mut self, address: impl Into<String>) -> Self {
+        self.bcc.push(address.into());
+        self
+    }
+
+    /// Sets the reply-to address.
+    pub fn reply_to(mut self, address: impl Into<String>) -> Self {
+        self.reply_to = Some(address.into());
+        self
+    }
+
+    /// Sets an HTML alternative body.
+    pub fn html_body(mut self, body: impl Into<String>) -> Self {
+        self.html_body = Some(body.into());
+        self
+    }
 }
 
 /// Errors returned by email backends during delivery or configuration.
@@ -53,7 +102,7 @@ pub struct ConsoleBackend;
 #[async_trait]
 impl MailBackend for ConsoleBackend {
     async fn send(&self, message: &Message) -> Result<(), MailError> {
-        tracing::info!(to=?message.to, from=%message.from, subject=%message.subject, body=%message.body, html_body=?message.html_body, "ConsoleBackend sending mail");
+        tracing::info!(to=?message.to, cc=?message.cc, bcc=?message.bcc, from=%message.from, reply_to=?message.reply_to, subject=%message.subject, body=%message.body, html_body=?message.html_body, "ConsoleBackend sending mail");
         Ok(())
     }
 }
@@ -158,6 +207,24 @@ impl SmtpBackend {
                 .parse()
                 .map_err(|e| MailError::Send(format!("invalid recipient: {e}")))?);
         }
+        for cc in &message.cc {
+            builder = builder.cc(cc
+                .parse()
+                .map_err(|e| MailError::Send(format!("invalid cc recipient: {e}")))?);
+        }
+        for bcc in &message.bcc {
+            builder = builder.bcc(
+                bcc.parse()
+                    .map_err(|e| MailError::Send(format!("invalid bcc recipient: {e}")))?,
+            );
+        }
+        if let Some(reply_to) = &message.reply_to {
+            builder = builder.reply_to(
+                reply_to
+                    .parse()
+                    .map_err(|e| MailError::Send(format!("invalid reply-to address: {e}")))?,
+            );
+        }
         if let Some(html) = &message.html_body {
             builder
                 .multipart(MultiPart::alternative_plain_html(
@@ -209,9 +276,12 @@ impl FileBackend {
 
     fn format(message: &Message) -> String {
         format!(
-            "From: {}\nTo: {}\nSubject: {}\n\n{}{}",
+            "From: {}\nTo: {}\nCc: {}\nBcc: {}\nReply-To: {}\nSubject: {}\n\n{}{}",
             message.from,
             message.to.join(", "),
+            message.cc.join(", "),
+            message.bcc.join(", "),
+            message.reply_to.as_deref().unwrap_or_default(),
             message.subject,
             message.body,
             message

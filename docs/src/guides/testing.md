@@ -221,12 +221,10 @@ async fn test_full_stack_socket() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
-    let settings = DjangorsSettings {
-        host: "127.0.0.1".to_string(),
-        port: addr.port(),
-        debug: true,
-        ..Default::default()
-    };
+    let settings = DjangorsSettings::new()
+        .with_host("127.0.0.1")
+        .with_port(addr.port())
+        .with_debug(true);
 
     let router = Router::new();
     let router_service = RouterService::new(router, settings.debug);
