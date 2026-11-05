@@ -44,59 +44,77 @@ fn get_cookie_value(response: &str, cookie_name: &str) -> Option<String> {
 async fn test_polls_voting_integration() {
     let _guard = DB_MUTEX.lock().unwrap();
 
-    let db_url = "postgres://postgres:postgres@localhost/djangors_test";
-    let config = djangors_db::config::DatabaseConfig::new(db_url);
+    let sqlite = matches!(
+        std::env::var("TEST_BACKEND").as_deref(),
+        Ok(value) if value.eq_ignore_ascii_case("sqlite")
+    );
+    let config = if sqlite {
+        djangors_db::config::DatabaseConfig::new("sqlite::memory:")
+            .max_connections(1)
+            .min_connections(1)
+    } else {
+        djangors_db::config::DatabaseConfig::new(
+            std::env::var("DATABASE_URL")
+                .unwrap_or_else(|_| "postgres://postgres:postgres@localhost/djangors_test".into()),
+        )
+    };
     let db = Database::connect(&config).await.unwrap();
+    let dialect = db.dialect();
+    let pk_type = dialect.auto_pk_type();
+    let timestamp_type = dialect.timestamp_type();
 
     // Clean up existing tables
-    let _ = djangors_orm::sqlx::query("DROP TABLE IF EXISTS polls_choice")
-        .execute(db.pool())
+    let mut conn = db.conn();
+    let _ = conn.execute("DROP TABLE IF EXISTS polls_choice", &[]).await;
+    let _ = conn
+        .execute("DROP TABLE IF EXISTS polls_question", &[])
         .await;
-    let _ = djangors_orm::sqlx::query("DROP TABLE IF EXISTS polls_question")
-        .execute(db.pool())
-        .await;
-    let _ = djangors_orm::sqlx::query("DROP TABLE IF EXISTS auth_user")
-        .execute(db.pool())
-        .await;
+    let _ = conn.execute("DROP TABLE IF EXISTS auth_user", &[]).await;
 
     // Create tables
-    djangors_orm::sqlx::query(
-        "CREATE TABLE auth_user (
-            id BIGSERIAL PRIMARY KEY,
+    conn.execute(
+        &format!(
+            "CREATE TABLE auth_user (
+            id {pk_type},
             username VARCHAR(150) NOT NULL,
             email VARCHAR(254) NOT NULL,
             password TEXT NOT NULL,
             is_active BOOLEAN NOT NULL,
             is_staff BOOLEAN NOT NULL,
             is_superuser BOOLEAN NOT NULL,
-            date_joined TIMESTAMPTZ NOT NULL,
-            last_login TIMESTAMPTZ
-        )",
+            date_joined {timestamp_type} NOT NULL,
+            last_login {timestamp_type}
+        )"
+        ),
+        &[],
     )
-    .execute(db.pool())
     .await
     .unwrap();
 
-    djangors_orm::sqlx::query(
-        "CREATE TABLE polls_question (
-            id BIGSERIAL PRIMARY KEY,
+    conn.execute(
+        &format!(
+            "CREATE TABLE polls_question (
+            id {pk_type},
             question_text VARCHAR(200) NOT NULL,
-            pub_date TIMESTAMPTZ NOT NULL
-        )",
+            pub_date {timestamp_type} NOT NULL
+        )"
+        ),
+        &[],
     )
-    .execute(db.pool())
     .await
     .unwrap();
 
-    djangors_orm::sqlx::query(
-        "CREATE TABLE polls_choice (
-            id BIGSERIAL PRIMARY KEY,
+    conn.execute(
+        &format!(
+            "CREATE TABLE polls_choice (
+            id {pk_type},
             question BIGINT NOT NULL REFERENCES polls_question(id) ON DELETE CASCADE,
             choice_text VARCHAR(200) NOT NULL,
             votes INTEGER NOT NULL DEFAULT 0
-        )",
+        )"
+        ),
+        &[],
     )
-    .execute(db.pool())
     .await
     .unwrap();
 

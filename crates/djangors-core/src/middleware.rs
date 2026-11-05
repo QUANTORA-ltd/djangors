@@ -119,7 +119,7 @@ pub fn hsts_layer(max_age_seconds: u64) -> HstsLayer {
 /// this builder only handles directive assembly and header formatting, not source-keyword
 /// validation, matching `HstsLayer`'s minimal scope.
 ///
-/// ```ignore
+/// ```text
 /// let csp = CspBuilder::new()
 ///     .default_src(&["'self'"])
 ///     .script_src(&["'self'", "https://cdn.example.com"])

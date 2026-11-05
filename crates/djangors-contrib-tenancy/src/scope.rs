@@ -16,7 +16,7 @@ use djangors_orm::{
 /// tenant).
 ///
 /// Typical usage, one line per tenant-scoped model:
-/// ```ignore
+/// ```text
 /// impl Scoped for SchoolClass {
 ///     fn scope(req: &Request, qs: QuerySet<Self>) -> Result<QuerySet<Self>, DjangorsError> {
 ///         tenant_scope(req, qs, "tenant")

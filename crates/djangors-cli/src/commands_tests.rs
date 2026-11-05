@@ -6,6 +6,18 @@ use djangors_orm::Model as _;
 static DB_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 static FS_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+struct TestProcessGroup(std::process::Child);
+
+impl Drop for TestProcessGroup {
+    fn drop(&mut self) {
+        let group = format!("-{}", self.0.id());
+        let _ = std::process::Command::new("kill")
+            .args(["-TERM", "--", &group])
+            .status();
+        let _ = self.0.wait();
+    }
+}
+
 async fn superuser_test_database() -> Database {
     let sqlite = matches!(
         std::env::var("TEST_BACKEND").as_deref(),
@@ -612,6 +624,7 @@ fn test_run_rebuilds_after_source_change() {
     let _guard = FS_MUTEX.lock().unwrap();
     use std::io::{Read, Write};
     use std::net::TcpStream;
+    use std::os::unix::process::CommandExt;
     use std::time::{Duration, Instant};
     let root = std::env::temp_dir().join(format!("dj_test_run_{}", std::process::id()));
     let project = root.join("project");
@@ -624,7 +637,16 @@ fn test_run_rebuilds_after_source_change() {
         .unwrap()
         .port();
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.toml");
-    let mut runner = std::process::Command::new("cargo")
+    std::fs::copy(
+        manifest.parent().unwrap().join("Cargo.lock"),
+        project.join("Cargo.lock"),
+    )
+    .unwrap();
+    let target_dir = std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| manifest.parent().unwrap().join("target"));
+    let mut command = std::process::Command::new("cargo");
+    command
         .args(["run", "--manifest-path"])
         .arg(&manifest)
         .args([
@@ -636,10 +658,13 @@ fn test_run_rebuilds_after_source_change() {
             &port.to_string(),
         ])
         .current_dir(&project)
-        .spawn()
-        .unwrap();
+        .env("CARGO_TARGET_DIR", target_dir)
+        .process_group(0);
+    let runner = TestProcessGroup(command.spawn().unwrap());
     let request = |expected: &str| -> bool {
         if let Ok(mut stream) = TcpStream::connect(("127.0.0.1", port)) {
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+            let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
             let _ = stream.write_all(
                 "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n".as_bytes(),
             );
@@ -651,64 +676,28 @@ fn test_run_rebuilds_after_source_change() {
         }
     };
     let start = Instant::now();
-    while start.elapsed() < Duration::from_secs(90) && !request("It worked!") {
+    // The generated project may compile from scratch on a constrained CI runner.
+    while start.elapsed() < Duration::from_secs(300) && !request("It worked!") {
         std::thread::sleep(Duration::from_millis(250));
     }
-    assert!(request("It worked!"), "watch server did not start");
+    if !request("It worked!") {
+        drop(runner);
+        let _ = std::fs::remove_dir_all(&root);
+        panic!("watch server did not start");
+    }
     let views = project.join("src/views.rs");
     let content = std::fs::read_to_string(&views)
         .unwrap()
         .replace("It worked!", "Changed by watcher");
     std::fs::write(views, content).unwrap();
     let start = Instant::now();
-    while start.elapsed() < Duration::from_secs(90) && !request("Changed by watcher") {
+    while start.elapsed() < Duration::from_secs(300) && !request("Changed by watcher") {
         std::thread::sleep(Duration::from_millis(250));
     }
     let changed = request("Changed by watcher");
-    let _ = runner.kill();
-    let _ = runner.wait();
-    // `runner` is the `cargo run` process; `dj run`'s own watch loop spawns the
-    // generated server binary as ITS child. A hard kill of `runner` does not
-    // cascade to that grandchild (SIGKILL never propagates to descendants), so
-    // it survives as an orphan holding the port (and, inheriting this test
-    // process's stdio, would otherwise hang anything piping this test's output
-    // waiting for EOF that never comes). Find and kill it directly by matching
-    // its cmdline against this test's own unique binary path.
-    kill_processes_matching(&project.join("target/debug"));
+    drop(runner);
     let _ = std::fs::remove_dir_all(root);
     assert!(changed, "watch server did not serve rebuilt content");
-}
-
-/// Best-effort: SIGKILL any running process whose *resolved executable path*
-/// is under `dir` (Linux-only, via /proc — acceptable since this whole test
-/// suite already assumes a Linux/Postgres environment). Must check
-/// `/proc/<pid>/exe` (which always resolves to the real absolute path, even
-/// for a since-deleted binary), not `cmdline` — `dj run` spawns the built
-/// binary via a *relative* path (`target/debug/<pkg>`, since it runs with the
-/// project directory as its cwd), so `cmdline` alone would never match an
-/// absolute `dir`.
-fn kill_processes_matching(dir: &Path) {
-    let Ok(entries) = std::fs::read_dir("/proc") else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let pid_str = entry.file_name();
-        let Some(pid_str) = pid_str.to_str() else {
-            continue;
-        };
-        if pid_str.parse::<u32>().is_err() {
-            continue;
-        }
-        let exe_path = entry.path().join("exe");
-        let Ok(resolved) = std::fs::read_link(&exe_path) else {
-            continue;
-        };
-        if resolved.starts_with(dir) {
-            let _ = std::process::Command::new("kill")
-                .args(["-9", pid_str])
-                .status();
-        }
-    }
 }
 
 #[test]

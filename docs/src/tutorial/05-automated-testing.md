@@ -52,10 +52,18 @@ The test suite initializes test database tables, seeds model data, binds a Tokio
 # use djangors_sessions::{SessionLayer, SignedCookieStore};
 # use polls::models::{Choice, Question};
 # use polls::urls;
+# use std::net::SocketAddr;
+# use tokio::io::{AsyncReadExt, AsyncWriteExt};
 # use tokio::net::TcpListener;
 # use tower::ServiceBuilder;
 # static DB_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
-# async fn send_request(addr: std::net::SocketAddr, req: &str) -> String { String::new() }
+# async fn send_request(addr: SocketAddr, req: &str) -> String {
+#     let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+#     stream.write_all(req.as_bytes()).await.unwrap();
+#     let mut response = Vec::new();
+#     stream.read_to_end(&mut response).await.unwrap();
+#     String::from_utf8_lossy(&response).into_owned()
+# }
 # #[ignore]
 #[tokio::test]
 async fn test_polls_voting_integration() {
