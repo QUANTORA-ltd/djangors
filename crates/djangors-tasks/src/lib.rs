@@ -168,6 +168,51 @@ pub struct QueueStats {
     pub per_task: Vec<TaskQueueStats>,
 }
 
+/// Lifecycle notification emitted by a worker after claiming or completing a task attempt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TaskEvent {
+    /// A task attempt has been claimed and is starting.
+    Started {
+        /// Queue row identifier.
+        task_id: i64,
+        /// Registered task name.
+        task_name: String,
+    },
+    /// A task attempt completed successfully.
+    Succeeded {
+        /// Queue row identifier.
+        task_id: i64,
+        /// Registered task name.
+        task_name: String,
+        /// Time spent executing the attempt.
+        duration: chrono::Duration,
+    },
+    /// A task attempt failed and will not be retried.
+    Failed {
+        /// Queue row identifier.
+        task_id: i64,
+        /// Registered task name.
+        task_name: String,
+        /// Failure message.
+        error: String,
+        /// Time spent executing the attempt.
+        duration: chrono::Duration,
+    },
+    /// A task attempt failed and has been returned to the queue for retry.
+    Retried {
+        /// Queue row identifier.
+        task_id: i64,
+        /// Registered task name.
+        task_name: String,
+        /// Failure message that triggered the retry.
+        error: String,
+        /// Time spent executing the attempt.
+        duration: chrono::Duration,
+        /// One-based attempt number that just failed.
+        attempt: i32,
+    },
+}
+
 /// Returns task queue counts, oldest pending age, and per-task average runtime.
 pub async fn queue_stats(db: &djangors_db::Database) -> Result<QueueStats, TaskError> {
     let mut conn = db.conn();
@@ -710,6 +755,7 @@ pub struct Worker {
     recurring_tick_interval: Option<std::time::Duration>,
     stale_task_timeout: std::time::Duration,
     worker_id: String,
+    on_event: Option<std::sync::Arc<dyn Fn(TaskEvent) + Send + Sync>>,
 }
 
 impl Worker {
@@ -725,6 +771,7 @@ impl Worker {
                 std::process::id(),
                 NEXT_WORKER_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
             ),
+            on_event: None,
         }
     }
 
@@ -745,6 +792,42 @@ impl Worker {
     pub fn with_stale_task_timeout(mut self, timeout: std::time::Duration) -> Self {
         self.stale_task_timeout = timeout;
         self
+    }
+
+    /// Registers a synchronous callback for task lifecycle events.
+    pub fn on_event<F>(mut self, callback: F) -> Self
+    where
+        F: Fn(TaskEvent) + Send + Sync + 'static,
+    {
+        self.on_event = Some(std::sync::Arc::new(callback));
+        self
+    }
+
+    fn emit(&self, event: TaskEvent) {
+        if let Some(callback) = &self.on_event {
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| callback(event)));
+        }
+    }
+
+    fn emit_failure(&self, task: &QueuedTask, error: String, duration: std::time::Duration) {
+        let duration =
+            chrono::Duration::from_std(duration).unwrap_or_else(|_| chrono::Duration::zero());
+        if task.attempts < task.max_attempts {
+            self.emit(TaskEvent::Retried {
+                task_id: task.id,
+                task_name: task.task_name.clone(),
+                error,
+                duration,
+                attempt: task.attempts,
+            });
+        } else {
+            self.emit(TaskEvent::Failed {
+                task_id: task.id,
+                task_name: task.task_name.clone(),
+                error,
+                duration,
+            });
+        }
     }
 
     /// Writes this worker's heartbeat at the given interval until the future is cancelled.
@@ -839,6 +922,11 @@ impl Worker {
             Some(t) => t,
             None => return Ok(false),
         };
+        let attempt_started = std::time::Instant::now();
+        self.emit(TaskEvent::Started {
+            task_id: task.id,
+            task_name: task.task_name.clone(),
+        });
 
         let handler = inventory::iter::<TaskRegistration>()
             .find(|reg| reg.name == task.task_name)
@@ -856,6 +944,7 @@ impl Worker {
                     task.max_attempts,
                 )
                 .await?;
+                self.emit_failure(&task, err_msg, attempt_started.elapsed());
                 return Ok(true);
             }
         };
@@ -872,6 +961,7 @@ impl Worker {
                     task.max_attempts,
                 )
                 .await?;
+                self.emit_failure(&task, err_msg, attempt_started.elapsed());
                 return Ok(true);
             }
         };
@@ -881,6 +971,12 @@ impl Worker {
         match join_handle.await {
             Ok(Ok(())) => {
                 mark_task_completed(&self.db, task.id).await?;
+                self.emit(TaskEvent::Succeeded {
+                    task_id: task.id,
+                    task_name: task.task_name.clone(),
+                    duration: chrono::Duration::from_std(attempt_started.elapsed())
+                        .unwrap_or_else(|_| chrono::Duration::zero()),
+                });
             }
             Ok(Err(task_err)) => {
                 let err_msg = task_err.to_string();
@@ -892,6 +988,7 @@ impl Worker {
                     task.max_attempts,
                 )
                 .await?;
+                self.emit_failure(&task, err_msg, attempt_started.elapsed());
             }
             Err(join_err) => {
                 let err_msg = if join_err.is_panic() {
@@ -915,6 +1012,7 @@ impl Worker {
                     task.max_attempts,
                 )
                 .await?;
+                self.emit_failure(&task, err_msg, attempt_started.elapsed());
             }
         }
 

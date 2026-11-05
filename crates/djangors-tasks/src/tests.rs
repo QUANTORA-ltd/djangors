@@ -117,8 +117,17 @@ async fn test_queue_stats_and_worker_heartbeat() -> Result<(), Box<dyn std::erro
         },
     )
     .await?;
-    let worker = Worker::new(test_db.database().clone());
+    let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let observed_events = events.clone();
+    let worker = Worker::new(test_db.database().clone()).on_event(move |event| {
+        observed_events.lock().unwrap().push(event);
+    });
     assert!(worker.run_once().await?);
+    {
+        let observed = events.lock().unwrap();
+        assert!(matches!(observed.first(), Some(TaskEvent::Started { .. })));
+        assert!(matches!(observed.get(1), Some(TaskEvent::Succeeded { .. })));
+    }
     enqueue(
         test_db.database(),
         "sample_task_fn",
