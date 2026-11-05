@@ -3,6 +3,9 @@ use thiserror::Error;
 /// Error types for ORM database query and mapping operations.
 #[derive(Debug, Error)]
 pub enum OrmError {
+    /// A transaction setup or commit failed before the ORM query could finish.
+    #[error("Database transaction failed: {0}")]
+    Transaction(#[from] djangors_db::DbError),
     /// An underlying SQL query execution failed.
     #[error("Database query failed: {0}")]
     Query(#[from] sqlx::Error),

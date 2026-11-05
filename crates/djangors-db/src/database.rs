@@ -178,35 +178,38 @@ impl Database {
     }
 
     /// Run `f` inside a PostgreSQL database transaction.
-    pub async fn transaction<F, T, E>(&self, f: F) -> Result<T, DbError>
+    ///
+    /// The closure's error type is returned unchanged after rollback. Database
+    /// setup and commit failures are converted through `From<DbError>`.
+    pub async fn transaction<F, T, E>(&self, f: F) -> Result<T, E>
     where
         F: for<'c> FnOnce(&'c mut PgConnection) -> BoxFuture<'c, Result<T, E>> + Send,
         T: Send,
-        E: Into<DbError> + Send,
+        E: From<DbError> + Send,
     {
         match self {
             Self::Pg { pool, .. } => {
                 let mut tx = pool
                     .begin()
                     .await
-                    .map_err(|e| DbError::TransactionFailed(e.to_string()))?;
+                    .map_err(|e| E::from(DbError::TransactionFailed(e.to_string())))?;
                 let res = f(&mut tx).await;
                 match res {
                     Ok(val) => {
                         tx.commit()
                             .await
-                            .map_err(|e| DbError::TransactionFailed(e.to_string()))?;
+                            .map_err(|e| E::from(DbError::TransactionFailed(e.to_string())))?;
                         Ok(val)
                     }
                     Err(err) => {
                         let _ = tx.rollback().await;
-                        Err(err.into())
+                        Err(err)
                     }
                 }
             }
-            Self::Sqlite { .. } => Err(DbError::TransactionFailed(
+            Self::Sqlite { .. } => Err(E::from(DbError::TransactionFailed(
                 "PostgreSQL PgConnection transaction called on a SQLite Database".to_string(),
-            )),
+            ))),
         }
     }
 
@@ -215,68 +218,81 @@ impl Database {
         &self,
         level: IsolationLevel,
         f: F,
-    ) -> Result<T, DbError>
+    ) -> Result<T, E>
     where
         F: for<'c> FnOnce(&'c mut PgConnection) -> BoxFuture<'c, Result<T, E>> + Send,
         T: Send,
-        E: Into<DbError> + Send,
+        E: From<DbError> + Send,
     {
         match self {
             Self::Pg { pool, .. } => {
                 let mut tx = pool
                     .begin()
                     .await
-                    .map_err(|e| DbError::TransactionFailed(e.to_string()))?;
+                    .map_err(|e| E::from(DbError::TransactionFailed(e.to_string())))?;
                 let sql = isolation_level_sql(level);
                 tx.execute(sql)
                     .await
-                    .map_err(|e| DbError::TransactionFailed(e.to_string()))?;
+                    .map_err(|e| E::from(DbError::TransactionFailed(e.to_string())))?;
 
                 let res = f(&mut tx).await;
                 match res {
                     Ok(val) => {
                         tx.commit()
                             .await
-                            .map_err(|e| DbError::TransactionFailed(e.to_string()))?;
+                            .map_err(|e| E::from(DbError::TransactionFailed(e.to_string())))?;
                         Ok(val)
                     }
                     Err(err) => {
                         let _ = tx.rollback().await;
-                        Err(err.into())
+                        Err(err)
                     }
                 }
             }
-            Self::Sqlite { .. } => Err(DbError::TransactionFailed(
+            Self::Sqlite { .. } => Err(E::from(DbError::TransactionFailed(
                 "PostgreSQL transaction_with_isolation called on a SQLite Database".to_string(),
-            )),
+            ))),
         }
     }
 
     /// Run `f` inside a transaction on either backend.
-    pub async fn transaction_conn<F, T, E>(&self, f: F) -> Result<T, DbError>
+    ///
+    /// The closure's error type is returned unchanged after rollback. Database
+    /// begin and commit failures are converted through `From<DbError>`. Reborrow
+    /// the connection with [`Conn::conn`](crate::executor::DbExecutor::conn)
+    /// between QuerySet calls, since QuerySet methods consume their executor:
+    ///
+    /// ```ignore
+    /// db.transaction_conn(|conn| Box::pin(async move {
+    ///     Item::objects().filter(q!(id = first_id)).get(conn.conn()).await?;
+    ///     Item::objects().filter(q!(id = second_id)).get(conn.conn()).await?;
+    ///     Ok::<_, DbError>(())
+    /// })).await?;
+    /// ```
+    pub async fn transaction_conn<F, T, E>(&self, f: F) -> Result<T, E>
     where
         F: for<'c> FnOnce(&'c mut Conn<'c>) -> BoxFuture<'c, Result<T, E>> + Send,
         T: Send,
-        E: Into<DbError> + Send,
+        E: From<DbError> + Send,
     {
         match self {
             Self::Pg { pool, .. } => {
                 let mut tx = pool
                     .begin()
                     .await
-                    .map_err(|e| DbError::TransactionFailed(e.to_string()))?;
+                    .map_err(|e| E::from(DbError::TransactionFailed(e.to_string())))?;
                 let mut conn = Conn::PgTx(&mut tx);
                 let res = f(&mut conn).await;
                 match res {
                     Ok(val) => {
                         tx.commit()
                             .await
-                            .map_err(|e| DbError::TransactionFailed(e.to_string()))?;
+                            .map_err(|e| E::from(DbError::TransactionFailed(e.to_string())))?;
                         Ok(val)
                     }
                     Err(err) => {
                         let _ = tx.rollback().await;
-                        Err(err.into())
+                        Err(err)
                     }
                 }
             }
@@ -284,19 +300,19 @@ impl Database {
                 let mut tx = pool
                     .begin()
                     .await
-                    .map_err(|e| DbError::TransactionFailed(e.to_string()))?;
+                    .map_err(|e| E::from(DbError::TransactionFailed(e.to_string())))?;
                 let mut conn = Conn::SqliteTx(&mut tx);
                 let res = f(&mut conn).await;
                 match res {
                     Ok(val) => {
                         tx.commit()
                             .await
-                            .map_err(|e| DbError::TransactionFailed(e.to_string()))?;
+                            .map_err(|e| E::from(DbError::TransactionFailed(e.to_string())))?;
                         Ok(val)
                     }
                     Err(err) => {
                         let _ = tx.rollback().await;
-                        Err(err.into())
+                        Err(err)
                     }
                 }
             }
