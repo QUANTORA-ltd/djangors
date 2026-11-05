@@ -11,6 +11,175 @@ static TEST_TASK_EXECUTED: AtomicBool = AtomicBool::new(false);
 // test that touches `djangors_task_queue` must acquire this guard before doing so.
 static TEST_DB_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+#[tokio::test]
+async fn test_worker_run_until_stops_when_idle() -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = TEST_DB_LOCK.lock().await;
+    let test_db = djangors_test::TestDatabase::connect().await?;
+    create_task_table(test_db.database()).await?;
+    let worker = Worker::new(test_db.database().clone())
+        .with_poll_interval(std::time::Duration::from_secs(30));
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let worker_task = tokio::spawn(async move {
+        worker
+            .run_until(async {
+                let _ = shutdown_rx.await;
+            })
+            .await
+    });
+    let _ = shutdown_tx.send(());
+    tokio::time::timeout(std::time::Duration::from_secs(1), worker_task).await???;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_reclaim_stale_tasks_retries_or_fails_at_attempt_limit(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = TEST_DB_LOCK.lock().await;
+    let test_db = djangors_test::TestDatabase::connect().await?;
+    create_task_table(test_db.database()).await?;
+    test_db
+        .database()
+        .conn()
+        .execute("DELETE FROM djangors_task_queue", &[])
+        .await?;
+    let first = enqueue(test_db.database(), "sample_task_fn", &serde_json::json!({})).await?;
+    let second = enqueue(test_db.database(), "sample_task_fn", &serde_json::json!({})).await?;
+    let mut conn = test_db.database().conn();
+    let p1 = conn.dialect().placeholder(1);
+    let p2 = conn.dialect().placeholder(2);
+    conn.execute(
+        &format!("UPDATE djangors_task_queue SET status = 'running', attempts = 1, started_at = {p1} WHERE id = {p2}"),
+        &[
+            djangors_db::BindValue::DateTime(chrono::Utc::now() - chrono::Duration::minutes(10)),
+            djangors_db::BindValue::I64(first),
+        ],
+    )
+    .await?;
+    conn.execute(
+        &format!("UPDATE djangors_task_queue SET status = 'running', attempts = max_attempts, started_at = {p1} WHERE id = {p2}"),
+        &[
+            djangors_db::BindValue::DateTime(chrono::Utc::now() - chrono::Duration::minutes(10)),
+            djangors_db::BindValue::I64(second),
+        ],
+    )
+    .await?;
+
+    assert_eq!(
+        reclaim_stale_tasks(test_db.database(), std::time::Duration::from_secs(60)).await?,
+        2
+    );
+    let p1 = conn.dialect().placeholder(1);
+    let first_row = conn
+        .fetch_one(
+            &format!(
+                "SELECT status, started_at, finished_at FROM djangors_task_queue WHERE id = {p1}"
+            ),
+            &[djangors_db::BindValue::I64(first)],
+        )
+        .await?;
+    assert_eq!(first_row.try_string(0)?.as_deref(), Some("pending"));
+    assert_eq!(first_row.try_datetime(1)?, None);
+    assert_eq!(first_row.try_datetime(2)?, None);
+    let second_row = conn
+        .fetch_one(
+            &format!(
+                "SELECT status, started_at, finished_at FROM djangors_task_queue WHERE id = {p1}"
+            ),
+            &[djangors_db::BindValue::I64(second)],
+        )
+        .await?;
+    assert_eq!(second_row.try_string(0)?.as_deref(), Some("failed"));
+    assert_eq!(second_row.try_datetime(1)?, None);
+    assert!(second_row.try_datetime(2)?.is_some());
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_queue_stats_and_worker_heartbeat() -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = TEST_DB_LOCK.lock().await;
+    let test_db = djangors_test::TestDatabase::connect().await?;
+    create_task_table(test_db.database()).await?;
+    test_db
+        .database()
+        .conn()
+        .execute("DELETE FROM djangors_task_queue", &[])
+        .await?;
+    test_db
+        .database()
+        .conn()
+        .execute("DELETE FROM djangors_worker_heartbeat", &[])
+        .await?;
+    enqueue(
+        test_db.database(),
+        "sample_task_fn",
+        &SamplePayload {
+            message: "hello_tasks".to_owned(),
+        },
+    )
+    .await?;
+    let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let observed_events = events.clone();
+    let worker = Worker::new(test_db.database().clone()).on_event(move |event| {
+        observed_events.lock().unwrap().push(event);
+    });
+    assert!(worker.run_once().await?);
+    {
+        let observed = events.lock().unwrap();
+        assert!(matches!(observed.first(), Some(TaskEvent::Started { .. })));
+        assert!(matches!(observed.get(1), Some(TaskEvent::Succeeded { .. })));
+    }
+    enqueue(
+        test_db.database(),
+        "sample_task_fn",
+        &SamplePayload {
+            message: "not-yet".to_owned(),
+        },
+    )
+    .await?;
+
+    let stats = queue_stats(test_db.database()).await?;
+    assert_eq!(
+        stats
+            .by_status
+            .iter()
+            .find(|count| count.status == "completed")
+            .unwrap()
+            .count,
+        1
+    );
+    assert_eq!(
+        stats
+            .by_status
+            .iter()
+            .find(|count| count.status == "pending")
+            .unwrap()
+            .count,
+        1
+    );
+    assert!(stats.oldest_pending_age.is_some());
+    assert_eq!(stats.per_task.len(), 1);
+    assert!(stats.per_task[0].average_runtime_ms.is_some());
+
+    let heartbeat_worker = worker;
+    let heartbeat = tokio::spawn(async move {
+        heartbeat_worker
+            .heartbeat(std::time::Duration::from_secs(30))
+            .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        loop {
+            if last_heartbeat(test_db.database()).await?.is_some() {
+                return Ok::<(), TaskError>(());
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await??;
+    heartbeat.abort();
+    assert!(last_heartbeat(test_db.database()).await?.is_some());
+    Ok(())
+}
+
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SamplePayload {
     message: String,
@@ -424,7 +593,9 @@ async fn test_recurring_task_advances_from_previous_scheduled_time_not_now(
     let enqueued = tick_recurring_tasks(db).await?;
     assert_eq!(enqueued, 1);
 
-    let sel_sql = format!("SELECT next_run_at FROM djangors_recurring_task WHERE id = {p1}");
+    let sel_sql = format!(
+        "SELECT next_run_at, last_status, last_error FROM djangors_recurring_task WHERE id = {p1}"
+    );
     let row = db
         .conn()
         .fetch_one(&sel_sql, &[djangors_db::BindValue::I64(recurring_id)])
@@ -439,6 +610,8 @@ async fn test_recurring_task_advances_from_previous_scheduled_time_not_now(
              (got {new_next_run_at}, which is not in the past as expected)"
     );
     assert!(new_next_run_at > overdue_since);
+    assert_eq!(row.try_string(1)?.as_deref(), Some("enqueued"));
+    assert_eq!(row.try_string(2)?, None);
 
     Ok(())
 }

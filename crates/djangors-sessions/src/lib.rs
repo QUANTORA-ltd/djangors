@@ -151,7 +151,9 @@ impl SignedCookieStore {
             key: secret_key.to_vec(),
             cookie_name: "djangors_sessionid".to_string(),
             max_age: Duration::from_secs(14 * 24 * 60 * 60), // 2 weeks
-            secure: false,
+            // Session cookies should only be sent over HTTPS by default.
+            // Local HTTP development can opt out with `.with_secure(false)`.
+            secure: true,
         }
     }
 
@@ -168,6 +170,8 @@ impl SignedCookieStore {
     }
 
     /// Configures whether the cookie should set the `Secure` flag.
+    ///
+    /// This defaults to `true`; set it to `false` only for local HTTP development.
     pub fn with_secure(mut self, secure: bool) -> Self {
         self.secure = secure;
         self

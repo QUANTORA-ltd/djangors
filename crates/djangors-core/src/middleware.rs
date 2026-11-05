@@ -546,6 +546,30 @@ pub struct HostValidationService<S> {
     allowed_hosts: Vec<String>,
 }
 
+pub(crate) fn request_host_is_allowed<B>(
+    allowed_hosts: &[String],
+    req: &hyper::Request<B>,
+) -> bool {
+    if allowed_hosts.is_empty() {
+        return true;
+    }
+    let host = match req.headers().get(hyper::header::HOST) {
+        Some(header) => header.to_str().ok(),
+        None => req.uri().authority().map(|authority| authority.as_str()),
+    };
+    let Some(host) = host else {
+        return false;
+    };
+    let host_without_port = if host.starts_with('[') {
+        host.find(']').map(|idx| &host[..=idx]).unwrap_or(host)
+    } else {
+        host.split(':').next().unwrap_or(host)
+    };
+    allowed_hosts
+        .iter()
+        .any(|allowed| allowed.eq_ignore_ascii_case(host_without_port))
+}
+
 impl<S, B> Service<hyper::Request<B>> for HostValidationService<S>
 where
     S: Service<hyper::Request<B>, Response = hyper::Response<Full<Bytes>>, Error = Infallible>
@@ -572,32 +596,7 @@ where
         let mut inner = self.inner.clone();
         let allowed_hosts = self.allowed_hosts.clone();
 
-        let host_str = match req.headers().get(hyper::header::HOST) {
-            Some(hdr) => hdr.to_str().ok(),
-            None => req.uri().authority().map(|a| a.as_str()),
-        };
-
-        // If allowed_hosts is empty, unrestricted (always valid)
-        let is_valid = if allowed_hosts.is_empty() {
-            true
-        } else if let Some(h) = host_str {
-            // Strip trailing port if present
-            let host_without_port = if h.starts_with('[') {
-                if let Some(close_bracket_idx) = h.find(']') {
-                    &h[..=close_bracket_idx]
-                } else {
-                    h
-                }
-            } else {
-                h.split(':').next().unwrap_or(h)
-            };
-            let host_lower = host_without_port.to_lowercase();
-            allowed_hosts.iter().any(|allowed| allowed == &host_lower)
-        } else {
-            false
-        };
-
-        if !is_valid {
+        if !request_host_is_allowed(&allowed_hosts, &req) {
             let response = hyper::Response::builder()
                 .status(400)
                 .body(Full::new(Bytes::from("400 Bad Request: Disallowed Host")))
