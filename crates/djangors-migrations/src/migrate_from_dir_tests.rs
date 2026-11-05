@@ -347,6 +347,77 @@ async fn test_sqlite_plan_execution_from_snapshots() {
 }
 
 #[tokio::test]
+async fn schema_validation_reports_missing_tables_and_columns() {
+    use djangors_orm::{FieldKind, FieldSnapshot, ModelSnapshot, SnapshotDefault};
+
+    let db = connect().await;
+    let _guard = TEST_DB_LOCK.lock().await;
+    let table = format!("schema_check_{}", unique_suffix());
+    let snapshot = ModelSnapshot {
+        app_label: "testapp".to_string(),
+        table_name: table.clone(),
+        struct_name: "SchemaCheck".to_string(),
+        fields: vec![
+            FieldSnapshot {
+                name: "id".to_string(),
+                column_name: "id".to_string(),
+                kind: FieldKind::BigInt,
+                nullable: false,
+                primary_key: true,
+                unique: false,
+                db_index: false,
+                default: SnapshotDefault::None,
+                max_length: None,
+                auto: true,
+            },
+            FieldSnapshot {
+                name: "label".to_string(),
+                column_name: "label".to_string(),
+                kind: FieldKind::Char,
+                nullable: true,
+                primary_key: false,
+                unique: false,
+                db_index: false,
+                default: SnapshotDefault::None,
+                max_length: Some(100),
+                auto: false,
+            },
+        ],
+        relations: vec![],
+        unique_together: vec![],
+        ordering: vec![],
+        indexes: vec![],
+    };
+
+    let error = validate_model_schema(&db, std::slice::from_ref(&snapshot))
+        .await
+        .expect_err("an absent model table must be reported");
+    assert!(matches!(error, MigrationError::SchemaBehind { .. }));
+
+    let id = db.dialect().auto_pk_type();
+    db.conn()
+        .execute(&format!("CREATE TABLE \"{table}\" (id {id})"), &[])
+        .await
+        .unwrap();
+    let error = validate_model_schema(&db, &[snapshot]).await.unwrap_err();
+    match error {
+        MigrationError::SchemaBehind {
+            table: found,
+            missing,
+        } => {
+            assert_eq!(found, table);
+            assert_eq!(missing, vec!["label"]);
+        }
+        other => panic!("expected SchemaBehind, got {other:?}"),
+    }
+
+    db.conn()
+        .execute(&format!("DROP TABLE \"{table}\""), &[])
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn test_sqlite_migrate_from_dir_cycle() {
     use djangors_db::{Database, DatabaseConfig};
 

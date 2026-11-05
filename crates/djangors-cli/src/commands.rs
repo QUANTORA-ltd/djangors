@@ -1087,7 +1087,7 @@ async fn migrate_with_plan(
         .await?
         .is_some()
     {
-        return Ok(());
+        return djangors_migrations::validate_model_schema(db, models).await;
     }
 
     let plan = djangors_migrations::build_create_plan_from_snapshots(models, dialect)?;
@@ -1116,7 +1116,9 @@ async fn migrate_with_plan(
         })
     })
     .await
-    .map_err(djangors_migrations::MigrationError::Database)
+    .map_err(djangors_migrations::MigrationError::Database)?;
+
+    djangors_migrations::validate_model_schema(db, models).await
 }
 
 /// Create a superuser in the database.
