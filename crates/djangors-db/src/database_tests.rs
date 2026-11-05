@@ -1,4 +1,5 @@
 use super::*;
+use crate::BindValue;
 
 const TEST_DB_URL: &str = "postgres://postgres:postgres@localhost/djangors_test";
 
@@ -56,6 +57,62 @@ async fn test_sqlite_connect_in_memory() {
         .expect("Failed to connect SQLite");
     assert_eq!(db.dialect(), Dialect::Sqlite);
     assert!(db.sqlite_pool().is_some());
+}
+
+#[tokio::test]
+async fn query_observer_receives_redacted_rows_model_and_threshold_data() {
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    let config = DatabaseConfig::new("sqlite::memory:")
+        .max_connections(1)
+        .min_connections(1);
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let observed = events.clone();
+    let db = Database::connect(&config)
+        .await
+        .unwrap()
+        .with_slow_query_threshold(Duration::ZERO)
+        .with_query_observer(move |event| {
+            observed.lock().unwrap().push(event.clone());
+        });
+
+    db.conn()
+        .execute("CREATE TABLE users (name TEXT)", &[])
+        .await
+        .unwrap();
+    db.conn()
+        .execute(
+            "INSERT INTO users (name) VALUES (?)",
+            &[BindValue::Text("secret-value".to_owned())],
+        )
+        .await
+        .unwrap();
+    let rows = db
+        .conn()
+        .fetch_all(
+            "SELECT name FROM users WHERE name = ?",
+            &[BindValue::Text("secret-value".to_owned())],
+        )
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    db.conn()
+        .fetch_one("SELECT name FROM users", &[])
+        .await
+        .unwrap();
+    db.conn()
+        .fetch_optional("SELECT name FROM users WHERE name = 'literal-secret'", &[])
+        .await
+        .unwrap();
+
+    let events = events.lock().unwrap();
+    assert_eq!(events.len(), 5);
+    assert_eq!(events[1].model.as_deref(), Some("users"));
+    assert!(!events[1].statement.contains("secret-value"));
+    assert!(!events[4].statement.contains("literal-secret"));
+    assert_eq!(events[2].rows, Some(1));
+    assert!(events.iter().all(|event| event.success && event.slow));
 }
 
 // Restored during review of dispatch 13.1: these three transaction tests were

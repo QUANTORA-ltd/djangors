@@ -134,9 +134,40 @@ impl Database {
     /// Returns a [`Conn`] execution handle for this database pool.
     pub fn conn(&self) -> Conn<'_> {
         match self {
-            Self::Pg { pool, .. } => Conn::PgPool(pool),
-            Self::Sqlite { pool, .. } => Conn::SqlitePool(pool),
+            Self::Pg { pool, query_count } => Conn::traced_pg_pool(pool, query_count),
+            Self::Sqlite { pool, query_count } => Conn::traced_sqlite_pool(pool, query_count),
         }
+    }
+
+    /// Configure the slow-query warning threshold for this database handle.
+    ///
+    /// Queries that take at least `threshold` emit a `WARN` tracing event with the
+    /// redacted statement, inferred table, and elapsed time. Bound parameter values
+    /// are never included. A zero duration causes every query to be reported.
+    pub fn with_slow_query_threshold(self, threshold: Duration) -> Self {
+        match &self {
+            Self::Pg { query_count, .. } | Self::Sqlite { query_count, .. } => {
+                crate::executor::set_slow_query_threshold(query_count, threshold);
+            }
+        }
+        self
+    }
+
+    /// Attach a callback that receives timing and row-count data for each query.
+    ///
+    /// Applications can use this hook to export per-table counters and histograms
+    /// through their preferred metrics system. Observer panics are caught so they
+    /// cannot disrupt a database operation. Statements exclude bind values.
+    pub fn with_query_observer<F>(self, observer: F) -> Self
+    where
+        F: Fn(&crate::executor::QueryEvent) + Send + Sync + 'static,
+    {
+        match &self {
+            Self::Pg { query_count, .. } | Self::Sqlite { query_count, .. } => {
+                crate::executor::set_query_observer(query_count, observer);
+            }
+        }
+        self
     }
 
     /// Returns the database dialect.
@@ -265,7 +296,13 @@ impl Database {
                     .begin()
                     .await
                     .map_err(|e| DbError::TransactionFailed(e.to_string()))?;
-                let mut conn = Conn::PgTx(&mut tx);
+                let mut conn = Conn::traced_pg_tx(
+                    &mut tx,
+                    match self {
+                        Self::Pg { query_count, .. } => query_count,
+                        _ => unreachable!(),
+                    },
+                );
                 let res = f(&mut conn).await;
                 match res {
                     Ok(val) => {
@@ -285,7 +322,13 @@ impl Database {
                     .begin()
                     .await
                     .map_err(|e| DbError::TransactionFailed(e.to_string()))?;
-                let mut conn = Conn::SqliteTx(&mut tx);
+                let mut conn = Conn::traced_sqlite_tx(
+                    &mut tx,
+                    match self {
+                        Self::Sqlite { query_count, .. } => query_count,
+                        _ => unreachable!(),
+                    },
+                );
                 let res = f(&mut conn).await;
                 match res {
                     Ok(val) => {
