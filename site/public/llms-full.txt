@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Chidi09/djangors/blob/main/PLAN.md">Roadmap</a> ·
+  <a href="https://github.com/QUANTORA-ltd/djangors/blob/main/PLAN.md">Roadmap</a> ·
   <a href="docs/src/tutorial/01-requests-and-responses.md">Tutorial</a> ·
   <a href="docs/src/django-comparison.md">Djangors for Django developers</a> ·
   <a href="docs/src/guides/">Topic guides</a>
@@ -128,7 +128,7 @@ Contributing to Djangors itself, or want a `dj` build with unreleased fixes? Clo
 instead of installing from crates.io:
 
 ```bash
-git clone https://github.com/Chidi09/djangors.git
+git clone https://github.com/QUANTORA-ltd/djangors.git
 cd djangors
 cargo build --workspace
 cargo run -p djangors-cli -- new mysite
@@ -290,7 +290,7 @@ explicitly planned follow-up ("Freeze Review Pass 2"), not yet frozen under this
 
 ## `CHANGELOG.md`
 
-A root [`CHANGELOG.md`](https://github.com/Chidi09/djangors/blob/main/CHANGELOG.md) is maintained
+A root [`CHANGELOG.md`](https://github.com/QUANTORA-ltd/djangors/blob/main/CHANGELOG.md) is maintained
 today, grouped by development phase since there has not yet been a tagged `1.0` release. Once
 `1.0` ships, it switches to the [Keep a Changelog](https://keepachangelog.com/) format:
 `Added`/`Changed`/`Deprecated`/`Removed`/`Fixed`/`Security` sections per version.
@@ -11085,7 +11085,7 @@ Phases are sequential dependencies, not calendar promises. Each phase has a **De
 
 ### Phase 0 — Bootstrap (days, not weeks)
 - [x] `git init`; workspace `Cargo.toml`; empty crates for core/macros/orm/db/cli with `#![deny(missing_docs)]` policy decided. **Done** — 32 crates under `crates/`, all at `#![deny(missing_docs)]` since 9.5.
-- [x] Reserve crates.io names, GitHub org, domain, chat server. Check `djangors` name availability/conflicts *first*; have a backup name. **Done** — all 32 crates published, repo at `github.com/Chidi09/djangors`, site at `djangors.vercel.app`. **Remaining:** no chat server (Discord/Zulip) exists; no `djangors.rs`/`djangors.dev` domain, the site is on a `vercel.app` subdomain.
+- [x] Reserve crates.io names, GitHub org, domain, chat server. Check `djangors` name availability/conflicts *first*; have a backup name. **Done** — all 32 crates published, repo at `github.com/QUANTORA-ltd/djangors`, site at `djangors.vercel.app`. **Remaining:** no chat server (Discord/Zulip) exists; no `djangors.rs`/`djangors.dev` domain, the site is on a `vercel.app` subdomain.
 - [x] CI: fmt, clippy (deny warnings), test, docs build. **Done, but as CircleCI, not GitHub Actions** — `.circleci/config.yml`, two jobs: `test` (`fmt --check` → `clippy --workspace --all-targets -D warnings` → `build --workspace --all-targets` → `cargo test --workspace` against a `cimg/postgres:16.0` service container → `cargo doc --workspace --no-deps` with `RUSTDOCFLAGS: -D warnings`) and `audit` (`cargo audit`, with three RUSTSEC ignores each carrying an inline comment naming the advisory and why it is unfixable upstream). **Remaining, and all still genuinely open:** (a) no OS/toolchain matrix — linux + the image's pinned 1.83 only, no mac, no windows, no MSRV leg; (b) **no `rust-version` declared in the workspace `Cargo.toml` at all**, so there is no MSRV to test against and a dependency bump can raise the required toolchain for downstream users silently; (c) no `cargo-deny` (license checking is not covered — `cargo audit` covers advisories only); (d) no examples-build step; (e) **CI never exercises SQLite** — see the Phase 2 test-harness item below.
 - [x] `docs/design/` RFC template; write RFCs for the five hard problems (Part 4). **Done** — 99 design docs under `docs/design/`; every phase since has been design-doc-first.
 - [x] Write the aspirational `examples/polls` (Part 3) — the API spec. **Done** — `examples/polls` is real and passes its own tests; `examples/school` added later as the larger dogfooding target.

@@ -54,6 +54,35 @@ async fn panicking_handler_fn(_: Request, _: PathParams) -> Result<Response, Dja
     panic!("boom");
 }
 
+async fn matched_route_fn(req: Request, _: PathParams) -> Result<Response, DjangorsError> {
+    let route = req.matched_route().unwrap_or("none").to_string();
+    Ok(Response::text(StatusCode::OK, &route))
+}
+
+#[tokio::test]
+async fn matched_route_is_available_to_handler_and_response() {
+    let router = Router::new().get("/items/{id:i64}", matched_route_fn);
+    let req = make_request(Method::GET, "/items/42");
+    let resp = router.handle(req).await.unwrap();
+
+    // The handler saw the pattern, not the raw path.
+    assert_eq!(resp.body(), b"/items/{id:i64}");
+
+    // An outer tower layer can read it from the response extensions.
+    let matched = resp
+        .extensions()
+        .get::<MatchedRoute>()
+        .expect("router inserts MatchedRoute into the response");
+    assert_eq!(matched.as_str(), "/items/{id:i64}");
+}
+
+#[tokio::test]
+async fn matched_route_is_absent_on_404() {
+    let router = Router::new().get("/hello", ok_handler_fn);
+    let req = make_request(Method::GET, "/nope");
+    assert!(router.handle(req).await.is_err());
+}
+
 #[tokio::test]
 async fn literal_route_match() {
     let router = Router::new().get("/hello", ok_handler_fn);

@@ -78,7 +78,7 @@ This is pre-1.0 and we're not pretending otherwise:
 ## Try it
 
 ```
-git clone https://github.com/Chidi09/djangors
+git clone https://github.com/QUANTORA-ltd/djangors
 cd djangors
 cargo build --workspace
 cargo run -p djangors-cli -- new mysite
@@ -90,7 +90,7 @@ cargo run -p djangors-cli -- new mysite
 [Roadmap](../../PLAN.md)
 
 We'd rather hear "this broke for me" now, before 1.0, than after. Issues, questions, and PRs are
-all welcome at [github.com/Chidi09/djangors](https://github.com/Chidi09/djangors).
+all welcome at [github.com/QUANTORA-ltd/djangors](https://github.com/QUANTORA-ltd/djangors).
 
 ---
 

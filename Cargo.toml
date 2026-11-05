@@ -18,7 +18,7 @@ edition = "2021"
 rust-version = "1.96.0"
 license = "MIT OR Apache-2.0"
 authors = ["Chidi <chidiisking7@gmail.com>"]
-repository = "https://github.com/Chidi09/djangors"
+repository = "https://github.com/QUANTORA-ltd/djangors"
 homepage = "https://djangors.vercel.app"
 
 # Full debug symbols push `target/debug` past 13G, which exhausts this repo's

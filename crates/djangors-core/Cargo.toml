@@ -15,6 +15,7 @@ authors.workspace = true
 [features]
 default = []
 sentry = ["dep:sentry", "dep:sentry-tracing"]
+metrics = ["dep:metrics", "dep:metrics-exporter-prometheus"]
 
 [dependencies]
 sentry = { version = "0.34", optional = true, default-features = false, features = ["backtrace", "contexts", "panic", "reqwest", "rustls"] }
@@ -59,6 +60,8 @@ base64 = "0.22.1"
 djangors-orm = { path = "../djangors-orm", version = "0.7.0" }
 djangors-cache = { path = "../djangors-cache", version = "0.7.0" }
 inventory = "0.3.24"
+metrics = { version = "0.24", optional = true }
+metrics-exporter-prometheus = { version = "0.18", optional = true }
 
 [dev-dependencies]
 djangors-db = { path = "../djangors-db" }

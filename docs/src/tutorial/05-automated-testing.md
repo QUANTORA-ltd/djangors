@@ -13,57 +13,30 @@ Djangors applications leverage standard Rust integration test files in `tests/`.
 
 ```rust,compile
 use djangors_auth::{hash_password, User};
-use djangors_core::middleware::{csrf_layer, security_headers_layer};
-use djangors_core::router::RouterService;
-use djangors_core::{Djangors, DjangorsSettings, Router};
-use djangors_db::Database;
+use djangors_test::TestDatabase;
+use djangors_test::TestClient;
 use djangors_orm::Model as _;
-use djangors_sessions::{SessionLayer, SignedCookieStore};
 use polls::models::{Choice, Question};
 use polls::urls;
-use std::net::SocketAddr;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
-use tower::ServiceBuilder;
-
-static DB_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-async fn send_request(addr: SocketAddr, req: &str) -> String {
-    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
-    stream.write_all(req.as_bytes()).await.unwrap();
-    let mut buf = Vec::new();
-    stream.read_to_end(&mut buf).await.unwrap();
-    String::from_utf8_lossy(&buf).into_owned()
-}
 ```
 
 ---
 
-## 2. Launching Test Server & Executing Test Assertions
+## 2. Testing Database-Backed Routes
 
-The test suite initializes test database tables, seeds model data, binds a Tokio TCP listener on an ephemeral port (`127.0.0.1:0`), and tests HTTP requests:
+The test suite initializes an isolated database, seeds model data, and sends a request through the real router with `TestClient`. See the [real-socket testing guide](../guides/testing.md#2-real-socket-integration-testing) when a test needs to exercise TCP or Tower middleware:
 
 ```rust,compile
 # use djangors_auth::{hash_password, User};
-# use djangors_core::middleware::{csrf_layer, security_headers_layer};
-# use djangors_core::router::RouterService;
-# use djangors_core::{Djangors, DjangorsSettings, Router};
-# use djangors_db::Database;
-# use djangors_sessions::{SessionLayer, SignedCookieStore};
+# use djangors_test::TestClient;
+# use djangors_test::TestDatabase;
 # use polls::models::{Choice, Question};
 # use polls::urls;
-# use tokio::net::TcpListener;
-# use tower::ServiceBuilder;
-# static DB_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
-# async fn send_request(addr: std::net::SocketAddr, req: &str) -> String { String::new() }
 # #[ignore]
 #[tokio::test]
 async fn test_polls_voting_integration() {
-    let _guard = DB_MUTEX.lock().unwrap();
-
-    let db_url = "postgres://postgres:postgres@localhost/djangors_test";
-    let config = djangors_db::config::DatabaseConfig::new(db_url);
-    let db = Database::connect(&config).await.unwrap();
+    let test_db = TestDatabase::isolated().await.unwrap();
+    let db = test_db.database();
 
     // Clean up and recreate schema for isolated test execution
     let _ = djangors_orm::sqlx::query("DROP TABLE IF EXISTS polls_choice").execute(db.pool()).await;
@@ -114,14 +87,14 @@ async fn test_polls_voting_integration() {
         date_joined: now,
         last_login: Some(now),
     };
-    user.save(&db).await.unwrap();
+    user.save(db).await.unwrap();
 
     let question = Question {
         id: 0,
         question_text: "What is your favorite color?".to_string(),
         pub_date: now,
     };
-    let q_saved = question.save(&db).await.unwrap();
+    let q_saved = question.save(db).await.unwrap();
 
     let choice = Choice {
         id: 0,
@@ -129,41 +102,17 @@ async fn test_polls_voting_integration() {
         choice_text: "Blue".to_string(),
         votes: 0,
     };
-    let c_saved = choice.save(&db).await.unwrap();
+    let c_saved = choice.save(db).await.unwrap();
 
-    // Bind listener & spawn server task
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-
-    let settings = DjangorsSettings {
-        host: "127.0.0.1".to_string(),
-        port: addr.port(),
-        debug: true,
-        ..Default::default()
-    };
-
-    let router = urls::urls().with_state(db.clone());
-    let router_service = RouterService::new(router, settings.debug);
-
-    let service = ServiceBuilder::new()
-        .layer(security_headers_layer())
-        .layer(SessionLayer::new(SignedCookieStore::new(
-            b"dev-only-secret-key-at-least-32-bytes-long-for-signing-cookies",
-        )))
-        .layer(csrf_layer())
-        .service(router_service);
-
-    let app = Djangors::new(settings, Router::new());
-    tokio::spawn(async move {
-        app.serve_service(listener, service).await.unwrap();
-    });
-
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-
-    // Test 1: GET / returns 200 OK
-    let res = send_request(addr, "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n").await;
-    assert!(res.contains("200 OK"));
-    assert!(res.contains("What is your favorite color?"));
+    let response = TestClient::new(urls::urls())
+        .get("/")
+        .with_state(db.clone())
+        .send()
+        .await;
+    response
+        .assert_status(hyper::StatusCode::OK)
+        .assert_contains("What is your favorite color?");
+    test_db.cleanup().await.unwrap();
 }
 ```
 

@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use hyper::http::header::{CONTENT_TYPE, LOCATION};
-use hyper::http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
+use hyper::http::{Extensions, HeaderMap, HeaderName, HeaderValue, StatusCode};
 use serde::Serialize;
 
 use crate::error::DjangorsError;
@@ -14,6 +14,7 @@ pub struct Response {
     status: StatusCode,
     headers: HeaderMap,
     body: Bytes,
+    extensions: Extensions,
 }
 
 impl Response {
@@ -22,6 +23,7 @@ impl Response {
             status,
             headers: HeaderMap::new(),
             body: Bytes::new(),
+            extensions: Extensions::new(),
         }
     }
 
@@ -110,6 +112,7 @@ impl Response {
         let mut res = hyper::Response::new(http_body_util::Full::new(self.body));
         *res.status_mut() = self.status;
         *res.headers_mut() = self.headers;
+        *res.extensions_mut() = self.extensions;
         res
     }
 
@@ -125,6 +128,7 @@ impl Response {
         let mut res = hyper::Response::new(full.boxed());
         *res.status_mut() = self.status;
         *res.headers_mut() = self.headers;
+        *res.extensions_mut() = self.extensions;
         res
     }
 
@@ -144,6 +148,17 @@ impl Response {
     /// The response headers.
     pub fn headers(&self) -> &HeaderMap {
         &self.headers
+    }
+
+    /// Per-response typed extensions, e.g. the
+    /// [`MatchedRoute`](crate::router::MatchedRoute) inserted by the router.
+    pub fn extensions(&self) -> &Extensions {
+        &self.extensions
+    }
+
+    /// Mutable access to the response extensions.
+    pub fn extensions_mut(&mut self) -> &mut Extensions {
+        &mut self.extensions
     }
 
     /// The response body as bytes.

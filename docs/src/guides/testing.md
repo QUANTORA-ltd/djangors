@@ -210,7 +210,7 @@ use std::net::SocketAddr;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tower::ServiceBuilder;
-use djangors_core::{Djangors, DjangorsSettings, Router};
+use djangors_core::{Djangors, DjangorsSettings, Response, Router, StatusCode};
 use djangors_core::router::RouterService;
 use djangors_core::middleware::{csrf_layer, security_headers_layer};
 use djangors_sessions::{SessionLayer, SignedCookieStore};
@@ -228,7 +228,9 @@ async fn test_full_stack_socket() {
         ..Default::default()
     };
 
-    let router = Router::new();
+    let router = Router::new().get("/", |_, _| async {
+        Ok(Response::text(StatusCode::OK, "socket test"))
+    });
     let router_service = RouterService::new(router, settings.debug);
 
     let service = ServiceBuilder::new()

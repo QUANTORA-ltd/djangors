@@ -401,7 +401,10 @@ pub fn run(port: u16) -> Result<(), String> {
                 .map_err(|e| format!("failed to run cargo build: {e}"))?;
             needs_build = false;
             if status.success() {
-                let binary = Path::new("target/debug").join(&package);
+                let target_dir = std::env::var_os("CARGO_TARGET_DIR")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| PathBuf::from("target"));
+                let binary = target_dir.join("debug").join(&package);
                 let spawned = std::process::Command::new(binary)
                     .env("DJANGORS_PORT", port.to_string())
                     .spawn();
