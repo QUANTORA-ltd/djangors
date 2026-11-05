@@ -9,11 +9,6 @@ async fn hello_handler(_: Request, _: PathParams) -> Result<Response, DjangorsEr
     Ok(Response::text(StatusCode::OK, "Hello from Djangors!"))
 }
 
-async fn slow_handler(_: Request, _: PathParams) -> Result<Response, DjangorsError> {
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-    Ok(Response::text(StatusCode::OK, "Slow response"))
-}
-
 #[tokio::test]
 async fn real_socket_request_response() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -121,10 +116,24 @@ async fn graceful_shutdown_drains_in_flight_request() {
         port: addr.port(),
         ..Default::default()
     };
-    let router = Router::new().get("/slow", slow_handler);
+    let request_started = std::sync::Arc::new(tokio::sync::Notify::new());
+    let finish_request = std::sync::Arc::new(tokio::sync::Notify::new());
+    let router = Router::new().get("/slow", {
+        let request_started = request_started.clone();
+        let finish_request = finish_request.clone();
+        move |_, _| {
+            let request_started = request_started.clone();
+            let finish_request = finish_request.clone();
+            async move {
+                request_started.notify_one();
+                finish_request.notified().await;
+                Ok(Response::text(StatusCode::OK, "Slow response"))
+            }
+        }
+    });
     let app = Djangors::new(settings, router);
 
-    let server = tokio::spawn(async move {
+    let mut server = tokio::spawn(async move {
         app.serve_with_shutdown(listener, async {
             let _ = shutdown_rx.await;
         })
@@ -143,16 +152,16 @@ async fn graceful_shutdown_drains_in_flight_request() {
         String::from_utf8(buf).unwrap()
     });
 
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    let shutdown_started = tokio::time::Instant::now();
+    request_started.notified().await;
     shutdown_tx.send(()).unwrap();
-    server.await.unwrap();
-    let shutdown_elapsed = shutdown_started.elapsed();
-
     assert!(
-        shutdown_elapsed >= std::time::Duration::from_millis(250),
-        "server returned before the in-flight request drained: {shutdown_elapsed:?}"
+        tokio::time::timeout(std::time::Duration::from_millis(50), &mut server)
+            .await
+            .is_err(),
+        "server returned while the request handler was still in flight"
     );
+    finish_request.notify_one();
+    server.await.unwrap();
     let response = response_task.await.unwrap();
     assert!(
         response.contains("200 OK"),
