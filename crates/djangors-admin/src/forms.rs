@@ -99,11 +99,15 @@ pub(crate) fn render_form(
     has_change_permission: bool,
     has_delete_permission: bool,
     fieldsets: Option<&'static [(&'static str, &'static [&'static str])]>,
+    excluded_fields: &[&'static str],
     readonly_fields: &[&'static str],
     raw_id_fields: &[&'static str],
     inlines_data: Vec<InlineTableData>,
 ) -> Result<Response, DjangorsError> {
     let build_row = |name: &'static str, section: Option<&'static str>| -> Option<FormFieldRow> {
+        if excluded_fields.contains(&name) {
+            return None;
+        }
         if let Some(field) = meta.fields.iter().find(|f| f.name == name) {
             if field.auto || field.primary_key {
                 if is_add {

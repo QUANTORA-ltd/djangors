@@ -129,6 +129,20 @@ impl AdminSite {
         config: ModelAdminConfig,
     ) {
         let meta = M::meta();
+        if let Some(excluded) = config.exclude {
+            for name in excluded {
+                assert!(
+                    meta.fields.iter().any(|field| field.name == *name)
+                        || meta
+                            .relations
+                            .iter()
+                            .any(|relation| relation.field_name == *name),
+                    "exclude field '{}' does not exist on model '{}'",
+                    name,
+                    meta.struct_name
+                );
+            }
+        }
         if let Some(list_display) = config.list_display {
             for name in list_display {
                 assert!(
@@ -215,7 +229,14 @@ impl AdminSite {
             let effective_columns: Vec<&'static str> = config
                 .list_display
                 .map(|c| c.to_vec())
-                .unwrap_or_else(M::field_names);
+                .unwrap_or_else(M::field_names)
+                .into_iter()
+                .filter(|name| {
+                    !config
+                        .exclude
+                        .is_some_and(|excluded| excluded.contains(name))
+                })
+                .collect();
             for name in list_editable {
                 let field = meta
                     .fields

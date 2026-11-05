@@ -7,12 +7,105 @@ use djangors_auth::User;
 use djangors_auth::SESSION_USER_ID_KEY;
 use djangors_core::{DjangorsError, PathParams, Request, Response, Router, StatusCode};
 use djangors_macros::Model as MacroModel;
+use djangors_orm::Model as OrmModel;
 use hyper::http::{Extensions, HeaderMap, Method, Uri};
 use std::marker::PhantomData;
 
 static DB_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 static CROSS_PROCESS_LOCK: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::const_new();
+static EXCLUDED_TEST_FIELDS: &[&str] = &["name"];
+static EXCLUDED_TEST_FIELDSETS: &[(&str, &[&str])] = &[("Credentials", &["name"])];
+
+#[test]
+fn excluded_admin_field_is_hidden_and_not_present_in_lists() {
+    let admin = crate::model_admin::DefaultModelAdmin::<ModelD> {
+        config: ModelAdminConfig {
+            exclude: Some(EXCLUDED_TEST_FIELDS),
+            search_fields: Some(EXCLUDED_TEST_FIELDS),
+            list_filter: Some(EXCLUDED_TEST_FIELDS),
+            ..Default::default()
+        },
+        _marker: PhantomData,
+    };
+    assert_eq!(admin.field_names(), vec!["id", "content"]);
+    assert_eq!(admin.effective_columns(), vec!["id", "content"]);
+    assert!(admin.search_fields().is_empty());
+    assert!(admin.list_filter_fields().is_empty());
+
+    let response = crate::forms::render_form(
+        ModelD::meta(),
+        &["id", "name", "content"],
+        &std::collections::HashMap::from([
+            ("id".to_string(), "1".to_string()),
+            ("name".to_string(), "sensitive-value".to_string()),
+            ("content".to_string(), "visible-value".to_string()),
+        ]),
+        &std::collections::HashMap::new(),
+        false,
+        &SiteBranding::default(),
+        String::new(),
+        true,
+        false,
+        Some(EXCLUDED_TEST_FIELDSETS),
+        EXCLUDED_TEST_FIELDS,
+        &[],
+        &[],
+        vec![],
+    )
+    .unwrap();
+    let html = String::from_utf8_lossy(response.body());
+    assert!(!html.contains("sensitive-value"));
+    assert!(!html.contains("name=\"name\""));
+    assert!(html.contains("visible-value"));
+}
+
+#[tokio::test]
+async fn excluded_admin_field_is_ignored_during_update() {
+    let db = djangors_db::Database::connect(
+        &djangors_db::config::DatabaseConfig::new("sqlite::memory:").max_connections(1),
+    )
+    .await
+    .unwrap();
+    db.conn()
+        .execute(
+            "CREATE TABLE test_model_d (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, content TEXT NOT NULL)",
+            &[],
+        )
+        .await
+        .unwrap();
+    db.conn()
+        .execute(
+            "INSERT INTO test_model_d (name, content) VALUES ('original', 'before')",
+            &[],
+        )
+        .await
+        .unwrap();
+    let admin = crate::model_admin::DefaultModelAdmin::<ModelD> {
+        config: ModelAdminConfig {
+            exclude: Some(&["name"]),
+            ..Default::default()
+        },
+        _marker: PhantomData,
+    };
+    admin
+        .update_from_form(
+            &db,
+            1,
+            &std::collections::HashMap::from([
+                ("name".to_string(), "attacker-supplied".to_string()),
+                ("content".to_string(), "after".to_string()),
+            ]),
+            None,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+    let row = ModelD::objects().get(&db).await.unwrap();
+    assert_eq!(row.name, "original");
+    assert_eq!(row.content, "after");
+}
 
 /// `DB_MUTEX` only serializes this crate's own tests against each other - it
 /// says nothing about `cargo test --workspace` running a DIFFERENT crate's
