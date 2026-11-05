@@ -4,7 +4,7 @@
 
 If you discover a security vulnerability in Djangors, please report it privately so we can address the issue before public disclosure.
 
-- **Primary Channel**: Use GitHub's [Private Vulnerability Reporting](https://github.com/Chidi09/djangors/security/advisories/new) (navigate to the **Security** tab on the repository and click **Report a vulnerability**).
+- **Primary Channel**: Use GitHub's [Private Vulnerability Reporting](https://github.com/QUANTORA-ltd/djangors/security/advisories/new) (navigate to the **Security** tab on the repository and click **Report a vulnerability**).
 - **Fallback Channel**: Email `chidiisking7@gmail.com`.
 
 > [!IMPORTANT]

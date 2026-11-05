@@ -61,7 +61,7 @@ since that would silently drift from the real docs. The same script also generat
 
 - `/` — hero (logo, tagline/pitch pulled from the real README content, not rewritten), the real
   crate-by-crate feature table (from the README), the real benchmark numbers table (from
-  `benchmarks.md`), CTA links to GitHub (`https://github.com/Chidi09/djangors`) and to the docs
+  `benchmarks.md`), CTA links to GitHub (`https://github.com/QUANTORA-ltd/djangors`) and to the docs
   (`/docs/` — see the mdBook-copy note below for why that path will work once deployed).
 - `/compare` — renders the synced `django-comparison.md` content.
 - `/benchmarks` — renders the synced `benchmarks.md` content.

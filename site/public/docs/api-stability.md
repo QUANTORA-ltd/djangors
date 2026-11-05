@@ -34,7 +34,7 @@ explicitly planned follow-up ("Freeze Review Pass 2"), not yet frozen under this
 
 ## `CHANGELOG.md`
 
-A root [`CHANGELOG.md`](https://github.com/Chidi09/djangors/blob/main/CHANGELOG.md) is maintained
+A root [`CHANGELOG.md`](https://github.com/QUANTORA-ltd/djangors/blob/main/CHANGELOG.md) is maintained
 today, grouped by development phase since there has not yet been a tagged `1.0` release. Once
 `1.0` ships, it switches to the [Keep a Changelog](https://keepachangelog.com/) format:
 `Added`/`Changed`/`Deprecated`/`Removed`/`Fixed`/`Security` sections per version.
