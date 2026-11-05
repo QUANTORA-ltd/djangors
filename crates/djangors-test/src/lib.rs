@@ -2,35 +2,67 @@
 //! Small, in-process testing helpers for Djangors applications.
 
 use bytes::Bytes;
-use djangors_core::{AppState, Request, Response, Router};
+use djangors_core::{AppState, Request, Router};
 use djangors_db::{config::DatabaseConfig, Database, DbError};
 use djangors_sessions::Session;
 use hyper::http::{
     header::CONTENT_TYPE, Extensions, HeaderMap, HeaderValue, Method, StatusCode, Uri,
 };
 use std::sync::atomic::{AtomicU64, Ordering};
+use tower::util::BoxCloneService;
+use tower::ServiceExt;
+
+type HyperRequest = hyper::Request<http_body_util::Full<Bytes>>;
+type HyperResponse = hyper::Response<http_body_util::Full<Bytes>>;
+type BoxService = BoxCloneService<HyperRequest, HyperResponse, tower::BoxError>;
+
+#[derive(Clone)]
+enum TestTarget {
+    Router(Router),
+    Service(BoxService),
+}
 
 /// An in-process client for a Djangors router.
 #[derive(Clone)]
 pub struct TestClient {
-    router: Router,
+    target: TestTarget,
 }
 
 impl TestClient {
     /// Creates a new `TestClient` wrapping `router`.
     pub fn new(router: Router) -> Self {
-        Self { router }
+        Self {
+            target: TestTarget::Router(router),
+        }
+    }
+
+    /// Creates a client around a cloneable Tower service, allowing requests to
+    /// pass through the same middleware stack used by the application.
+    pub fn from_service<S>(service: S) -> Self
+    where
+        S: tower::Service<HyperRequest, Response = HyperResponse> + Clone + Send + 'static,
+        S::Error: Into<tower::BoxError>,
+        S::Future: Send + 'static,
+    {
+        Self {
+            target: TestTarget::Service(service.map_err(Into::into).boxed_clone()),
+        }
+    }
+
+    /// Prepares a request with an arbitrary HTTP method.
+    pub fn request(&self, method: Method, path: &str) -> RequestBuilder {
+        RequestBuilder::new(self.target.clone(), method, path)
     }
 
     /// Prepares a GET request to `path`.
     pub fn get(&self, path: &str) -> RequestBuilder {
-        RequestBuilder::new(self.router.clone(), Method::GET, path)
+        self.request(Method::GET, path)
     }
 
     /// Prepares a POST request to `path` with urlencoded form pairs.
     pub fn post_form(&self, path: &str, pairs: &[(&str, &str)]) -> RequestBuilder {
         let body = serde_urlencoded::to_string(pairs).expect("form pairs should encode");
-        let mut builder = RequestBuilder::new(self.router.clone(), Method::POST, path);
+        let mut builder = self.request(Method::POST, path);
         builder.headers.insert(
             CONTENT_TYPE,
             HeaderValue::from_static("application/x-www-form-urlencoded"),
@@ -38,11 +70,31 @@ impl TestClient {
         builder.body = Bytes::from(body);
         builder
     }
+
+    /// Prepares a JSON POST request.
+    pub fn post_json<T: serde::Serialize + ?Sized>(&self, path: &str, body: &T) -> RequestBuilder {
+        self.request(Method::POST, path).json(body)
+    }
+
+    /// Prepares a JSON PUT request.
+    pub fn put_json<T: serde::Serialize + ?Sized>(&self, path: &str, body: &T) -> RequestBuilder {
+        self.request(Method::PUT, path).json(body)
+    }
+
+    /// Prepares a JSON PATCH request.
+    pub fn patch_json<T: serde::Serialize + ?Sized>(&self, path: &str, body: &T) -> RequestBuilder {
+        self.request(Method::PATCH, path).json(body)
+    }
+
+    /// Prepares a DELETE request.
+    pub fn delete(&self, path: &str) -> RequestBuilder {
+        self.request(Method::DELETE, path)
+    }
 }
 
 /// Builder for constructing in-process test HTTP requests.
 pub struct RequestBuilder {
-    router: Router,
+    target: TestTarget,
     method: Method,
     uri: Uri,
     headers: HeaderMap,
@@ -52,9 +104,9 @@ pub struct RequestBuilder {
 }
 
 impl RequestBuilder {
-    fn new(router: Router, method: Method, path: &str) -> Self {
+    fn new(target: TestTarget, method: Method, path: &str) -> Self {
         Self {
-            router,
+            target,
             method,
             uri: path.parse().expect("test request path must be a valid URI"),
             headers: HeaderMap::new(),
@@ -70,6 +122,28 @@ impl RequestBuilder {
         self
     }
 
+    /// Sets or replaces an HTTP request header.
+    pub fn header(mut self, name: &str, value: &str) -> Self {
+        let name = hyper::http::header::HeaderName::from_bytes(name.as_bytes())
+            .expect("header name should be valid");
+        let value = HeaderValue::from_str(value).expect("header value should be valid");
+        self.headers.insert(name, value);
+        self
+    }
+
+    /// Sets the `Authorization: Bearer` header.
+    pub fn bearer(self, token: &str) -> Self {
+        self.header("Authorization", &format!("Bearer {token}"))
+    }
+
+    /// Serializes a value as JSON and sets the JSON content type.
+    pub fn json<T: serde::Serialize + ?Sized>(mut self, body: &T) -> Self {
+        self.body = Bytes::from(serde_json::to_vec(body).expect("JSON body should serialize"));
+        self.headers
+            .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        self
+    }
+
     /// Attaches state data to the test request.
     pub fn with_state<T: Send + Sync + 'static>(mut self, state: T) -> Self {
         self.state = self.state.insert(state);
@@ -78,30 +152,60 @@ impl RequestBuilder {
 
     /// Sends the test request through the router and returns a [`TestResponse`].
     pub async fn send(self) -> TestResponse {
-        let request = Request::new(self.method, self.uri, self.headers, self.body)
-            .with_extensions(self.extensions)
-            .with_state(self.state);
-        let response = match self.router.handle(request).await {
-            Ok(response) => response,
-            Err(error) => error.into_response(),
+        let response = match self.target {
+            TestTarget::Router(router) => {
+                let request = Request::new(self.method, self.uri, self.headers, self.body)
+                    .with_extensions(self.extensions)
+                    .with_state(self.state);
+                match router.handle(request).await {
+                    Ok(response) => response.into_hyper(),
+                    Err(error) => error.into_response().into_hyper(),
+                }
+            }
+            TestTarget::Service(service) => {
+                let mut request = hyper::Request::builder()
+                    .method(self.method)
+                    .uri(self.uri)
+                    .body(http_body_util::Full::new(self.body))
+                    .expect("test request should be valid");
+                *request.headers_mut() = self.headers;
+                *request.extensions_mut() = self.extensions;
+                service
+                    .oneshot(request)
+                    .await
+                    .expect("test service request should succeed")
+            }
         };
-        TestResponse { response }
+        use http_body_util::BodyExt;
+        let (parts, body) = response.into_parts();
+        let body = body
+            .collect()
+            .await
+            .expect("response body should be readable")
+            .to_bytes();
+        TestResponse {
+            status: parts.status,
+            headers: parts.headers,
+            body,
+        }
     }
 }
 
 /// Wrapper around an HTTP response for test assertions.
 pub struct TestResponse {
-    response: Response,
+    status: StatusCode,
+    headers: HeaderMap,
+    body: Bytes,
 }
 
 impl TestResponse {
     /// Asserts that the response status matches `expected`.
     pub fn assert_status(self, expected: StatusCode) -> Self {
         assert_eq!(
-            self.response.status(),
+            self.status,
             expected,
             "expected status {expected}, got {}; body: {}",
-            self.response.status(),
+            self.status,
             self.body_str()
         );
         self
@@ -119,12 +223,27 @@ impl TestResponse {
 
     /// Returns the response body as a UTF-8 string.
     pub fn body_str(&self) -> String {
-        String::from_utf8_lossy(self.response.body()).into_owned()
+        String::from_utf8_lossy(&self.body).into_owned()
     }
 
     /// Returns the HTTP status code of the response.
     pub fn status(&self) -> StatusCode {
-        self.response.status()
+        self.status
+    }
+
+    /// Deserializes the response body as JSON.
+    pub fn json<T: serde::de::DeserializeOwned>(&self) -> Result<T, serde_json::Error> {
+        serde_json::from_slice(&self.body)
+    }
+
+    /// Deserializes the response body as a JSON value.
+    pub fn json_value(&self) -> Result<serde_json::Value, serde_json::Error> {
+        self.json()
+    }
+
+    /// Returns the response headers.
+    pub fn headers(&self) -> &HeaderMap {
+        &self.headers
     }
 }
 
