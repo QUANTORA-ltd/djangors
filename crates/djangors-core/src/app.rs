@@ -1,7 +1,9 @@
 use tokio::net::TcpListener;
 use tokio::task::JoinSet;
+use tower::Layer;
 
 use crate::error::DjangorsError;
+use crate::middleware::{request_host_is_allowed, HostValidationLayer};
 use crate::router::Router;
 use crate::settings::DjangorsSettings;
 
@@ -62,12 +64,15 @@ impl Djangors {
     where
         F: std::future::Future<Output = ()>,
     {
+        self.settings.validate()?;
         let router = self.router;
         let debug = self.settings.debug;
+        let allowed_hosts = self.settings.allowed_hosts;
         serve_with_shutdown_loop(listener, shutdown, move |stream| {
             let router = router.clone();
+            let allowed_hosts = allowed_hosts.clone();
             async move {
-                if let Err(e) = serve_connection(stream, router, debug).await {
+                if let Err(e) = serve_connection(stream, router, debug, allowed_hosts).await {
                     eprintln!("Connection error: {e}");
                 }
             }
@@ -138,9 +143,13 @@ impl Djangors {
         S::Future: Send + 'static,
         F: std::future::Future<Output = ()>,
     {
+        self.settings.validate()?;
+        let allowed_hosts = self.settings.allowed_hosts.clone();
         serve_with_shutdown_loop(listener, shutdown, move |stream| {
             let service = service.clone();
+            let allowed_hosts = allowed_hosts.clone();
             async move {
+                let service = HostValidationLayer::new(allowed_hosts).layer(service);
                 if let Err(e) = serve_connection_service(stream, service).await {
                     eprintln!("Connection error: {e}");
                 }
@@ -263,11 +272,26 @@ async fn serve_connection(
     stream: tokio::net::TcpStream,
     router: Router,
     debug: bool,
+    allowed_hosts: Vec<String>,
 ) -> Result<(), DjangorsError> {
     let io = hyper_util::rt::TokioIo::new(stream);
     let svc = hyper::service::service_fn(move |req| {
         let router = router.clone();
-        async move { Ok::<_, std::convert::Infallible>(router.dispatch_boxed(req, debug).await) }
+        let allowed_hosts = allowed_hosts.clone();
+        async move {
+            if !request_host_is_allowed(&allowed_hosts, &req) {
+                let (parts, _) = hyper::Response::builder()
+                    .status(400)
+                    .body(())
+                    .unwrap()
+                    .into_parts();
+                let body = http_body_util::BodyExt::boxed(http_body_util::Full::new(
+                    bytes::Bytes::from("400 Bad Request: Disallowed Host"),
+                ));
+                return Ok::<_, std::convert::Infallible>(hyper::Response::from_parts(parts, body));
+            }
+            Ok(router.dispatch_boxed(req, debug).await)
+        }
     });
 
     hyper::server::conn::http1::Builder::new()

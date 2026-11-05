@@ -116,8 +116,20 @@ fn test_validate() {
     settings.secret_key = "".to_string();
     assert!(settings.validate().is_err());
 
-    // Production mode with non-empty secret key should be valid
+    // Production mode requires a strong, non-placeholder key.
     settings.secret_key = "some-key".to_string();
+    assert!(settings.validate().is_err());
+    settings.secret_key = "dev-production-key-that-is-long-enough".to_string();
+    assert!(settings.validate().is_err());
+    settings.secret_key = "insecure-production-key-that-is-long".to_string();
+    assert!(settings.validate().is_err());
+    settings.secret_key = "a-production-secret-key-with-at-least-32-bytes".to_string();
+    assert!(settings.validate().is_ok());
+
+    // Production mode also requires an explicit host allowlist.
+    settings.allowed_hosts.clear();
+    assert!(settings.validate().is_err());
+    settings.allowed_hosts.push("example.com".to_string());
     assert!(settings.validate().is_ok());
 
     // Port 0 should fail validation

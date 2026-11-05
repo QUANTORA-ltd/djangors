@@ -248,10 +248,20 @@ impl DjangorsSettings {
     /// Validates the loaded settings structure.
     /// Returns an error if the configuration is invalid or unsafe for startup.
     pub fn validate(&self) -> Result<(), DjangorsError> {
-        if self.secret_key.is_empty() && !self.debug {
-            return Err(DjangorsError::Internal(
-                "SECRET_KEY cannot be empty when DEBUG is false".into(),
-            ));
+        if !self.debug {
+            let weak_key = self.secret_key.len() < 32
+                || self.secret_key.to_ascii_lowercase().contains("insecure")
+                || self.secret_key.to_ascii_lowercase().contains("dev");
+            if weak_key {
+                return Err(DjangorsError::Internal(
+                    "SECRET_KEY must be at least 32 bytes and must not contain 'dev' or 'insecure' when DEBUG is false".into(),
+                ));
+            }
+            if self.allowed_hosts.is_empty() {
+                return Err(DjangorsError::Internal(
+                    "ALLOWED_HOSTS must contain at least one host when DEBUG is false".into(),
+                ));
+            }
         }
         if self.port == 0 {
             return Err(DjangorsError::Internal("Port cannot be 0".into()));
