@@ -47,29 +47,46 @@ async fn get_item(req: Request, params: PathParams) -> Result<Response, Djangors
 
 #[tokio::test]
 async fn full_stack_request_hits_real_database() {
-    let db_url = "postgres://postgres:postgres@localhost/djangors_test";
-    let config = DatabaseConfig::new(db_url);
+    let sqlite = matches!(
+        std::env::var("TEST_BACKEND").as_deref(),
+        Ok(value) if value.eq_ignore_ascii_case("sqlite")
+    );
+    let db_url = if sqlite {
+        "sqlite::memory:".to_owned()
+    } else {
+        std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://postgres:postgres@localhost/djangors_test".to_owned())
+    };
+    let mut config = DatabaseConfig::new(db_url);
+    if sqlite {
+        config = config.max_connections(1).min_connections(1);
+    }
     let db = Database::connect(&config)
         .await
-        .expect("failed to connect to djangors_test — is Postgres running?");
+        .expect("failed to connect to the selected test database");
 
-    sqlx::query("DROP TABLE IF EXISTS test_full_stack_item")
-        .execute(db.pool())
+    let mut conn = db.conn();
+    conn.execute("DROP TABLE IF EXISTS test_full_stack_item", &[])
         .await
         .unwrap();
-    sqlx::query(
+    let id_type = if sqlite {
+        "INTEGER PRIMARY KEY AUTOINCREMENT"
+    } else {
+        "BIGSERIAL PRIMARY KEY"
+    };
+    let create_table = format!(
         "CREATE TABLE test_full_stack_item (
-            id BIGSERIAL PRIMARY KEY,
+            id {id_type},
             name VARCHAR(100) NOT NULL
-        )",
+        )"
+    );
+    conn.execute(&create_table, &[]).await.unwrap();
+    conn.execute(
+        "INSERT INTO test_full_stack_item (name) VALUES ('Widget')",
+        &[],
     )
-    .execute(db.pool())
     .await
     .unwrap();
-    sqlx::query("INSERT INTO test_full_stack_item (name) VALUES ('Widget')")
-        .execute(db.pool())
-        .await
-        .unwrap();
 
     let db_for_cleanup = db.clone();
     let router = Router::new()
@@ -122,8 +139,9 @@ async fn full_stack_request_hits_real_database() {
     let response2 = String::from_utf8(buf2).unwrap();
     assert!(response2.contains("404"), "expected 404, got: {response2}");
 
-    sqlx::query("DROP TABLE test_full_stack_item")
-        .execute(db_for_cleanup.pool())
+    db_for_cleanup
+        .conn()
+        .execute("DROP TABLE test_full_stack_item", &[])
         .await
         .unwrap();
 }
