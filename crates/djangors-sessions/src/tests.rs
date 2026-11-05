@@ -254,7 +254,7 @@ async fn test_session_cookie_secure() {
     let router = Router::new().post("/set", set_handler);
     let secret = b"super-secret-key-for-testing-purposes-only";
 
-    // 1. Default (secure not called or false)
+    // 1. Default is secure.
     let store_default = SignedCookieStore::new(secret);
     let layer_default = SessionLayer::new(store_default);
     let svc_fn1 = service_fn({
@@ -274,11 +274,11 @@ async fn test_session_cookie_secure() {
 
     let resp1 = svc_default.ready().await.unwrap().call(req1).await.unwrap();
     let set_cookie_default = resp1.headers().get(SET_COOKIE).unwrap().to_str().unwrap();
-    assert!(!set_cookie_default.contains("; Secure"));
+    assert!(set_cookie_default.contains("; Secure"));
 
-    // 2. with_secure(true)
-    let store_secure = SignedCookieStore::new(secret).with_secure(true);
-    let layer_secure = SessionLayer::new(store_secure);
+    // 2. Local HTTP development can explicitly opt out.
+    let store_insecure = SignedCookieStore::new(secret).with_secure(false);
+    let layer_insecure = SessionLayer::new(store_insecure);
     let svc_fn2 = service_fn({
         let router = router.clone();
         move |req| {
@@ -286,7 +286,7 @@ async fn test_session_cookie_secure() {
             async move { Ok::<_, std::convert::Infallible>(router.dispatch(req).await) }
         }
     });
-    let mut svc_secure = ServiceBuilder::new().layer(layer_secure).service(svc_fn2);
+    let mut svc_insecure = ServiceBuilder::new().layer(layer_insecure).service(svc_fn2);
 
     let req2 = hyper::Request::builder()
         .method(hyper::Method::POST)
@@ -294,7 +294,13 @@ async fn test_session_cookie_secure() {
         .body(Full::new(Bytes::new()))
         .unwrap();
 
-    let resp2 = svc_secure.ready().await.unwrap().call(req2).await.unwrap();
-    let set_cookie_secure = resp2.headers().get(SET_COOKIE).unwrap().to_str().unwrap();
-    assert!(set_cookie_secure.contains("; Secure"));
+    let resp2 = svc_insecure
+        .ready()
+        .await
+        .unwrap()
+        .call(req2)
+        .await
+        .unwrap();
+    let set_cookie_insecure = resp2.headers().get(SET_COOKIE).unwrap().to_str().unwrap();
+    assert!(!set_cookie_insecure.contains("; Secure"));
 }

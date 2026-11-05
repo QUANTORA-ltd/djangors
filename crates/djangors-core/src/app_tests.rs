@@ -52,6 +52,31 @@ async fn real_socket_request_response() {
 }
 
 #[tokio::test]
+async fn real_socket_rejects_disallowed_host() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let settings = DjangorsSettings {
+        host: "127.0.0.1".to_string(),
+        port: addr.port(),
+        allowed_hosts: vec!["allowed.example".to_string()],
+        ..Default::default()
+    };
+    let app = Djangors::new(settings, Router::new().get("/hello", hello_handler));
+    tokio::spawn(async move { app.serve(listener).await.unwrap() });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    stream
+        .write_all(b"GET /hello HTTP/1.1\r\nHost: attacker.example\r\nConnection: close\r\n\r\n")
+        .await
+        .unwrap();
+    let mut buf = Vec::new();
+    stream.read_to_end(&mut buf).await.unwrap();
+    let response = String::from_utf8(buf).unwrap();
+    assert!(response.contains("400 Bad Request"), "got: {response}");
+}
+
+#[tokio::test]
 async fn real_socket_layered_middleware_response() {
     use crate::middleware::{CsrfLayer, SecurityHeadersLayer};
     use crate::router::RouterService;
@@ -108,6 +133,47 @@ async fn real_socket_layered_middleware_response() {
         response_lower.contains("set-cookie: csrftoken="),
         "Expected 'set-cookie: csrftoken=' header, got: {response}"
     );
+}
+
+#[tokio::test]
+async fn custom_layered_service_rejects_disallowed_host() {
+    use crate::router::RouterService;
+    use tower::ServiceBuilder;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let settings = DjangorsSettings {
+        host: "127.0.0.1".to_string(),
+        port: addr.port(),
+        allowed_hosts: vec!["allowed.example".to_string()],
+        ..Default::default()
+    };
+    let service = ServiceBuilder::new().service(RouterService::new(
+        Router::new().get("/hello", hello_handler),
+        settings.debug,
+    ));
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+    let app = Djangors::new(settings, Router::new());
+    let server = tokio::spawn(async move {
+        app.serve_service_with_shutdown(listener, service, async {
+            let _ = shutdown_rx.await;
+        })
+        .await
+        .unwrap();
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    stream
+        .write_all(b"GET /hello HTTP/1.1\r\nHost: attacker.example\r\nConnection: close\r\n\r\n")
+        .await
+        .unwrap();
+    let mut buf = Vec::new();
+    stream.read_to_end(&mut buf).await.unwrap();
+    let response = String::from_utf8(buf).unwrap();
+    shutdown_tx.send(()).unwrap();
+    server.await.unwrap();
+    assert!(response.contains("400 Bad Request"), "got: {response}");
 }
 
 #[tokio::test]
