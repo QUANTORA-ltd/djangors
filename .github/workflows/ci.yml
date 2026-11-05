@@ -1,0 +1,126 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Keep this in lockstep with `workspace.package.rust-version` in Cargo.toml.
+  RUST_VERSION: "1.96.0"
+
+jobs:
+  test-postgres:
+    name: Test (Postgres)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/djangors_test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust ${{ env.RUST_VERSION }}
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Create test databases
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -c 'CREATE DATABASE djangors_test;'
+          psql -h localhost -U postgres -c 'CREATE DATABASE djangors_bench;'
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (deny warnings)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Build
+        run: cargo build --workspace --all-targets
+
+      - name: Test
+        run: cargo test --workspace -- --include-ignored
+
+      - name: Doc build
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: cargo doc --workspace --no-deps
+
+  test-sqlite:
+    name: Test (SQLite)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust ${{ env.RUST_VERSION }}
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Distinct cache key so this job never races the Postgres job for the
+          # same cache entry.
+          key: sqlite
+
+      # No DATABASE_URL is set anywhere in this job, and that is load-bearing:
+      # the test harness selects its backend by checking whether DATABASE_URL is
+      # present, so if it leaks into the environment this job silently runs
+      # against Postgres and passes while proving nothing about SQLite.
+      - name: Test SQLite backend
+        run: env -u DATABASE_URL TEST_BACKEND=sqlite cargo test --workspace
+
+  audit:
+    name: Security audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust ${{ env.RUST_VERSION }}
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@cargo-audit
+
+      # RUSTSEC-2026-0194 / -0195 (quick-xml DoS, transitive via the `s3` crate) and
+      # RUSTSEC-2023-0071 (rsa Marvin Attack, only reachable via djangors-rest's optional
+      # `jwt` feature) are triaged, currently unfixable upstream, and documented in
+      # docs/security-review-2026-07-27.md. Re-run without --ignore periodically to notice
+      # when upstream ships a fix.
+      - name: Run cargo audit
+        run: |
+          cargo audit \
+            --ignore RUSTSEC-2026-0194 \
+            --ignore RUSTSEC-2026-0195 \
+            --ignore RUSTSEC-2023-0071
