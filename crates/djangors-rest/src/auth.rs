@@ -77,6 +77,54 @@ impl FromRequest for TokenAuth {
 }
 
 #[cfg(feature = "jwt")]
+/// Configuration for HS256 JWT access tokens.
+///
+/// Attach it to the router with `Router::with_state` to override the defaults;
+/// [`JwtAuth`] reads it from request state on every request.
+///
+/// ```no_run
+/// use std::time::Duration;
+/// use djangors_rest::JwtConfig;
+///
+/// let config = JwtConfig::new(Duration::from_secs(15 * 60));
+/// ```
+#[cfg(feature = "jwt")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JwtConfig {
+    /// How long an access token stays valid. Defaults to one hour.
+    pub access_ttl: std::time::Duration,
+    /// Clock skew tolerated when validating the `exp` claim. Defaults to 0.
+    pub leeway: std::time::Duration,
+}
+
+#[cfg(feature = "jwt")]
+impl Default for JwtConfig {
+    fn default() -> Self {
+        Self {
+            access_ttl: std::time::Duration::from_secs(60 * 60),
+            leeway: std::time::Duration::ZERO,
+        }
+    }
+}
+
+#[cfg(feature = "jwt")]
+impl JwtConfig {
+    /// Creates a config with the given access-token lifetime and no leeway.
+    pub fn new(access_ttl: std::time::Duration) -> Self {
+        Self {
+            access_ttl,
+            ..Self::default()
+        }
+    }
+
+    /// Sets the clock-skew leeway applied when validating `exp`.
+    pub fn with_leeway(mut self, leeway: std::time::Duration) -> Self {
+        self.leeway = leeway;
+        self
+    }
+}
+
+#[cfg(feature = "jwt")]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct JwtClaims {
     user_id: i64,
@@ -84,13 +132,21 @@ struct JwtClaims {
 }
 
 #[cfg(feature = "jwt")]
-/// Encodes a user id as an HS256 JWT signed with `secret`.
+/// Encodes a user id as an HS256 JWT signed with `secret`, using the default
+/// one-hour lifetime.
 pub fn encode_jwt(user_id: i64, secret: &str) -> String {
+    encode_jwt_with_config(user_id, secret, &JwtConfig::default())
+}
+
+#[cfg(feature = "jwt")]
+/// Encodes a user id as an HS256 JWT signed with `secret` and the given
+/// [`JwtConfig`].
+pub fn encode_jwt_with_config(user_id: i64, secret: &str, config: &JwtConfig) -> String {
     jsonwebtoken::encode(
         &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256),
         &JwtClaims {
             user_id,
-            exp: jsonwebtoken::get_current_timestamp() + 60 * 60,
+            exp: jsonwebtoken::get_current_timestamp() + config.access_ttl.as_secs(),
         },
         &jsonwebtoken::EncodingKey::from_secret(secret.as_bytes()),
     )
@@ -100,10 +156,23 @@ pub fn encode_jwt(user_id: i64, secret: &str) -> String {
 #[cfg(feature = "jwt")]
 /// Decodes and validates an HS256 JWT, returning its user id claim.
 pub fn decode_jwt(token: &str, secret: &str) -> Result<i64, jsonwebtoken::errors::Error> {
+    decode_jwt_with_config(token, secret, &JwtConfig::default())
+}
+
+#[cfg(feature = "jwt")]
+/// Decodes and validates an HS256 JWT with the given [`JwtConfig`], returning
+/// its user id claim.
+pub fn decode_jwt_with_config(
+    token: &str,
+    secret: &str,
+    config: &JwtConfig,
+) -> Result<i64, jsonwebtoken::errors::Error> {
+    let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256);
+    validation.leeway = config.leeway.as_secs();
     let data = jsonwebtoken::decode::<JwtClaims>(
         token,
         &jsonwebtoken::DecodingKey::from_secret(secret.as_bytes()),
-        &jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256),
+        &validation,
     )?;
     Ok(data.claims.user_id)
 }
@@ -123,7 +192,8 @@ impl FromRequest for JwtAuth {
             .and_then(|value| value.strip_prefix("Bearer "))
             .filter(|token| !token.is_empty() && !token.chars().any(char::is_whitespace))
             .ok_or_else(|| DjangorsError::Unauthorized("not authenticated".to_string()))?;
-        let user_id = decode_jwt(token, settings_secret(req)?)
+        let config = req.state::<JwtConfig>().copied().unwrap_or_default();
+        let user_id = decode_jwt_with_config(token, settings_secret(req)?, &config)
             .map_err(|_| DjangorsError::Unauthorized("invalid token".to_string()))?;
         let db = req.require_state::<djangors_db::Database>()?;
         let user = djangors_auth::User::objects()

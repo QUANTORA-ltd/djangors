@@ -145,6 +145,49 @@ fn jwt_round_trip_and_tamper_rejection() {
     assert!(decode_jwt(&token, "wrong-secret").is_err());
 }
 
+#[cfg(feature = "jwt")]
+#[test]
+fn jwt_config_controls_ttl_and_leeway() {
+    use std::time::Duration;
+
+    #[derive(serde::Deserialize)]
+    struct Claims {
+        exp: u64,
+    }
+
+    let config = JwtConfig::new(Duration::from_secs(120)).with_leeway(Duration::from_secs(5));
+    assert_eq!(config.access_ttl, Duration::from_secs(120));
+    assert_eq!(config.leeway, Duration::from_secs(5));
+
+    let before = jsonwebtoken::get_current_timestamp();
+    let token = encode_jwt_with_config(7, "test-secret", &config);
+    let claims = jsonwebtoken::dangerous::insecure_decode::<Claims>(&token)
+        .unwrap()
+        .claims;
+    assert!(claims.exp >= before + 120);
+    assert!(claims.exp <= jsonwebtoken::get_current_timestamp() + 120);
+    assert_eq!(decode_jwt_with_config(&token, "test-secret", &config).unwrap(), 7);
+
+    // A token that expired an hour ago is rejected by the default leeway and
+    // accepted only when the configured leeway covers the gap.
+    let expired = jsonwebtoken::encode(
+        &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256),
+        &serde_json::json!({
+            "user_id": 7,
+            "exp": jsonwebtoken::get_current_timestamp().saturating_sub(3600),
+        }),
+        &jsonwebtoken::EncodingKey::from_secret(b"test-secret"),
+    )
+    .unwrap();
+    assert!(decode_jwt_with_config(&expired, "test-secret", &config).is_err());
+
+    let generous = JwtConfig::new(Duration::from_secs(60)).with_leeway(Duration::from_secs(7200));
+    assert_eq!(
+        decode_jwt_with_config(&expired, "test-secret", &generous).unwrap(),
+        7
+    );
+}
+
 #[tokio::test]
 #[allow(clippy::await_holding_lock)]
 async fn test_viewset_crud_end_to_end() {
