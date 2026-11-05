@@ -1,4 +1,5 @@
 use super::*;
+use djangors_core::Response;
 
 async fn get_handler(
     _: Request,
@@ -21,6 +22,22 @@ async fn post_handler(
             body
         ),
     ))
+}
+
+async fn json_handler(
+    req: Request,
+    _: djangors_core::PathParams,
+) -> Result<Response, djangors_core::DjangorsError> {
+    let authorization = req
+        .header("authorization")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    let payload: serde_json::Value = serde_json::from_slice(req.body_bytes().await)
+        .map_err(|error| djangors_core::DjangorsError::Internal(error.to_string()))?;
+    Response::json(
+        StatusCode::OK,
+        &serde_json::json!({"authorization": authorization, "payload": payload}),
+    )
 }
 
 fn client() -> TestClient {
@@ -48,6 +65,46 @@ async fn get_and_post_helpers_work() {
         .await
         .assert_status(StatusCode::CREATED)
         .assert_contains("Ada:name=Grace+Hopper");
+}
+
+#[tokio::test]
+async fn json_method_headers_and_response_deserialization_work() {
+    let client = TestClient::new(Router::new().route("/api", Method::PATCH, json_handler));
+    let response = client
+        .request(Method::PATCH, "/api")
+        .json(&serde_json::json!({"enabled": true}))
+        .bearer("test-token")
+        .header("Origin", "https://a.test")
+        .send()
+        .await
+        .assert_status(StatusCode::OK);
+    let value = response.json_value().unwrap();
+    assert_eq!(value["authorization"], "Bearer test-token");
+    assert_eq!(value["payload"]["enabled"], true);
+}
+
+#[tokio::test]
+async fn from_service_runs_tower_layers_and_json_helpers_work() {
+    use hyper::http::{HeaderName, HeaderValue};
+    use tower::ServiceBuilder;
+    use tower_http::set_header::SetResponseHeaderLayer;
+
+    let service = ServiceBuilder::new()
+        .layer(SetResponseHeaderLayer::overriding(
+            HeaderName::from_static("x-test-stack"),
+            HeaderValue::from_static("active"),
+        ))
+        .service(Router::new().post("/api", json_handler));
+    let client = TestClient::from_service(service);
+    let response = client
+        .post_json("/api", &serde_json::json!({"ok": 1}))
+        .bearer("stack-token")
+        .send()
+        .await
+        .assert_status(StatusCode::OK);
+    assert_eq!(response.headers()["x-test-stack"], "active");
+    let value: serde_json::Value = response.json().unwrap();
+    assert_eq!(value["payload"]["ok"], 1);
 }
 
 #[tokio::test]

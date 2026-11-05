@@ -6,10 +6,12 @@ Part of [Djangors](https://github.com/Chidi09/djangors), a batteries-included we
 
 ```toml
 [dependencies]
-djangors-test = "0.6"
+djangors-test = "0.7"
 ```
 
 Provides in-process testing helpers and assertions for Djangors applications to unit test routes, views, authentication, sessions, and database operations.
+
+`TestClient` supports JSON bodies, arbitrary HTTP methods and headers, and can wrap a cloneable Tower service with `TestClient::from_service` to exercise middleware stacks.
 
 - Documentation: https://docs.rs/djangors-test
 - Guides: https://djangors.vercel.app/docs/
