@@ -233,7 +233,7 @@ pub(crate) fn parse_changelist_query_state<'a>(
 
     let list_filter_fields = admin.list_filter_fields();
     let mut active_filters: Vec<(&'static str, bool)> = Vec::new();
-    for &field_name in list_filter_fields {
+    for field_name in list_filter_fields {
         if let Some(raw) = req.query(field_name) {
             match raw {
                 "true" => active_filters.push((field_name, true)),
@@ -584,7 +584,7 @@ pub(crate) async fn admin_changelist(
 
     let mut list_filter_blocks = Vec::new();
     if !list_filter_fields.is_empty() {
-        for &filter_field in list_filter_fields {
+        for filter_field in list_filter_fields {
             let mut pairs_all = vec![("o", o), ("q", q)];
             for &(f, val) in &active_filters {
                 if f != filter_field {

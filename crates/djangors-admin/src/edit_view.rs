@@ -50,6 +50,7 @@ pub(crate) async fn admin_add_get(
         true,
         false,
         admin.fieldsets(),
+        admin.excluded_fields(),
         admin.readonly_fields(),
         admin.raw_id_fields(),
         vec![],
@@ -114,6 +115,7 @@ pub(crate) async fn admin_add_post(
                 true,
                 false,
                 admin.fieldsets(),
+                admin.excluded_fields(),
                 admin.readonly_fields(),
                 admin.raw_id_fields(),
                 vec![],
@@ -185,6 +187,7 @@ pub(crate) async fn admin_change_get(
         true,
         has_delete,
         admin.fieldsets(),
+        admin.excluded_fields(),
         admin.readonly_fields(),
         admin.raw_id_fields(),
         inlines_data,
@@ -228,6 +231,9 @@ pub(crate) async fn admin_change_post(
                 let meta = admin.model_meta();
                 let mut diff_items = Vec::new();
                 for (f_name, old_val) in old_vals {
+                    if admin.excluded_fields().contains(&f_name) {
+                        continue;
+                    }
                     let mut new_val_opt = None;
                     if let Some(f) = meta.fields.iter().find(|f| f.name == f_name) {
                         if !f.auto && !f.primary_key {
@@ -316,6 +322,7 @@ pub(crate) async fn admin_change_post(
                 true,
                 has_delete,
                 admin.fieldsets(),
+                admin.excluded_fields(),
                 admin.readonly_fields(),
                 admin.raw_id_fields(),
                 inlines_data,

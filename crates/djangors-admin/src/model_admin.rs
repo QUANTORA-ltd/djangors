@@ -60,6 +60,8 @@ pub struct ModelAdminConfig {
     pub fieldsets: Option<&'static [(&'static str, &'static [&'static str])]>,
     /// List of field names rendered as read-only on the change form.
     pub readonly_fields: Option<&'static [&'static str]>,
+    /// Field names excluded from admin forms, changelists, search, filters, and writes.
+    pub exclude: Option<&'static [&'static str]>,
     /// List of foreign key field names rendered as raw ID inputs.
     pub raw_id_fields: Option<&'static [&'static str]>,
     /// Base filter expression automatically applied to all admin queries.
@@ -113,13 +115,13 @@ pub trait ModelAdmin: Send + Sync {
     ) -> Result<(Vec<&'static str>, Vec<Vec<String>>), DjangorsError>;
 
     /// Returns search field names for this model admin.
-    fn search_fields(&self) -> &[&'static str];
+    fn search_fields(&self) -> Vec<&'static str>;
     /// Returns list filter field names for this model admin.
-    fn list_filter_fields(&self) -> &[&'static str];
+    fn list_filter_fields(&self) -> Vec<&'static str>;
     /// Returns the date hierarchy field name if configured.
     fn date_hierarchy_field(&self) -> Option<&'static str>;
     /// Returns list editable field names for this model admin.
-    fn list_editable_fields(&self) -> &[&'static str];
+    fn list_editable_fields(&self) -> Vec<&'static str>;
     /// Returns configured bulk admin actions for this model admin.
     fn actions(&self) -> Vec<AdminAction> {
         Vec::new()
@@ -130,6 +132,10 @@ pub trait ModelAdmin: Send + Sync {
     }
     /// Returns read-only field names for the change form.
     fn readonly_fields(&self) -> &[&'static str] {
+        &[]
+    }
+    /// Returns fields that must not be exposed or changed through the admin.
+    fn excluded_fields(&self) -> &[&'static str] {
         &[]
     }
     /// Returns raw ID field names for foreign keys.
@@ -211,10 +217,21 @@ pub struct DefaultModelAdmin<M: Model> {
 
 impl<M: Model + djangors_orm::error::FromRow + Send + Sync + 'static> DefaultModelAdmin<M> {
     pub(crate) fn effective_columns(&self) -> Vec<&'static str> {
-        self.config
+        let columns = self
+            .config
             .list_display
             .map(|cols| cols.to_vec())
-            .unwrap_or_else(M::field_names)
+            .unwrap_or_else(M::field_names);
+        columns
+            .into_iter()
+            .filter(|name| !self.excluded(name))
+            .collect()
+    }
+
+    fn excluded(&self, name: &str) -> bool {
+        self.config
+            .exclude
+            .is_some_and(|fields| fields.contains(&name))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -228,6 +245,12 @@ impl<M: Model + djangors_orm::error::FromRow + Send + Sync + 'static> DefaultMod
     ) -> Result<djangors_orm::queryset::QuerySet<M>, DjangorsError> {
         let mut qs = M::objects();
         if let Some(o) = order {
+            let field = o.strip_prefix('-').unwrap_or(o);
+            if self.excluded(field) {
+                return Err(DjangorsError::BadRequest(format!(
+                    "cannot order by excluded field '{field}'"
+                )));
+            }
             qs = qs.order_by(o).map_err(|e| match e {
                 djangors_orm::error::OrmError::FieldNotFound { .. } => {
                     DjangorsError::BadRequest(e.to_string())
@@ -235,10 +258,11 @@ impl<M: Model + djangors_orm::error::FromRow + Send + Sync + 'static> DefaultMod
                 _ => DjangorsError::Internal(e.to_string()),
             })?;
         }
-        if let (Some(term), Some(fields)) = (search, self.config.search_fields) {
-            if !term.is_empty() {
+        if let Some(term) = search {
+            let fields = self.search_fields();
+            if !term.is_empty() && !fields.is_empty() {
                 qs = qs
-                    .filter_or_icontains(fields, term)
+                    .filter_or_icontains(&fields, term)
                     .map_err(|e| DjangorsError::Internal(e.to_string()))?;
             }
         }
@@ -254,7 +278,7 @@ impl<M: Model + djangors_orm::error::FromRow + Send + Sync + 'static> DefaultMod
                 .filter(djangors_orm::expr::UnresolvedExpr::And(compares))
                 .map_err(|e| DjangorsError::Internal(e.to_string()))?;
         }
-        if let (Some(field), Some((gte, lt))) = (self.config.date_hierarchy, date_range) {
+        if let (Some(field), Some((gte, lt))) = (self.date_hierarchy_field(), date_range) {
             qs = qs
                 .filter_datetime_range(field, gte, lt)
                 .map_err(|e| DjangorsError::Internal(e.to_string()))?;
@@ -329,22 +353,45 @@ impl<M: Model + djangors_orm::error::FromRow + Send + Sync + 'static> ModelAdmin
 
     fn field_names(&self) -> Vec<&'static str> {
         M::field_names()
+            .into_iter()
+            .filter(|name| !self.excluded(name))
+            .collect()
     }
 
-    fn search_fields(&self) -> &[&'static str] {
-        self.config.search_fields.unwrap_or(&[])
+    fn search_fields(&self) -> Vec<&'static str> {
+        self.config
+            .search_fields
+            .unwrap_or(&[])
+            .iter()
+            .copied()
+            .filter(|name| !self.excluded(name))
+            .collect()
     }
 
-    fn list_filter_fields(&self) -> &[&'static str] {
-        self.config.list_filter.unwrap_or(&[])
+    fn list_filter_fields(&self) -> Vec<&'static str> {
+        self.config
+            .list_filter
+            .unwrap_or(&[])
+            .iter()
+            .copied()
+            .filter(|name| !self.excluded(name))
+            .collect()
     }
 
     fn date_hierarchy_field(&self) -> Option<&'static str> {
-        self.config.date_hierarchy
+        self.config
+            .date_hierarchy
+            .filter(|name| !self.excluded(name))
     }
 
-    fn list_editable_fields(&self) -> &[&'static str] {
-        self.config.list_editable.unwrap_or(&[])
+    fn list_editable_fields(&self) -> Vec<&'static str> {
+        self.config
+            .list_editable
+            .unwrap_or(&[])
+            .iter()
+            .copied()
+            .filter(|name| !self.excluded(name))
+            .collect()
     }
 
     fn actions(&self) -> Vec<AdminAction> {
@@ -371,6 +418,10 @@ impl<M: Model + djangors_orm::error::FromRow + Send + Sync + 'static> ModelAdmin
 
     fn readonly_fields(&self) -> &[&'static str] {
         self.config.readonly_fields.unwrap_or(&[])
+    }
+
+    fn excluded_fields(&self) -> &[&'static str] {
+        self.config.exclude.unwrap_or(&[])
     }
 
     fn raw_id_fields(&self) -> &[&'static str] {
@@ -494,7 +545,7 @@ impl<M: Model + djangors_orm::error::FromRow + Send + Sync + 'static> ModelAdmin
         let mut sets = Vec::new();
 
         for field in meta.fields {
-            if field.auto {
+            if field.auto || self.excluded(field.name) {
                 continue;
             }
             let raw_opt = form.get(field.name).map(|s| s.as_str());
@@ -509,6 +560,9 @@ impl<M: Model + djangors_orm::error::FromRow + Send + Sync + 'static> ModelAdmin
         }
 
         for rel in meta.relations {
+            if self.excluded(rel.field_name) {
+                continue;
+            }
             let raw_opt = form.get(rel.field_name).map(|s| s.as_str());
             match parse_relation_value(rel, raw_opt) {
                 Ok(val) => {
@@ -522,6 +576,9 @@ impl<M: Model + djangors_orm::error::FromRow + Send + Sync + 'static> ModelAdmin
 
         if !errors.is_empty() {
             return Ok(Err(errors));
+        }
+        if sets.is_empty() {
+            return Ok(Ok(()));
         }
 
         let qs = self.scoped_pk_queryset(pk, tenant)?;
@@ -545,7 +602,7 @@ impl<M: Model + djangors_orm::error::FromRow + Send + Sync + 'static> ModelAdmin
         let mut sets = Vec::new();
 
         for field in meta.fields {
-            if field.auto {
+            if field.auto || self.excluded(field.name) {
                 continue;
             }
             let Some(raw) = form.get(field.name) else {
@@ -585,7 +642,7 @@ impl<M: Model + djangors_orm::error::FromRow + Send + Sync + 'static> ModelAdmin
         let mut values = Vec::new();
 
         for field in meta.fields {
-            if field.auto || field.primary_key {
+            if field.auto || field.primary_key || self.excluded(field.name) {
                 continue;
             }
             let raw_opt = form.get(field.name).map(|s| s.as_str());
@@ -600,6 +657,9 @@ impl<M: Model + djangors_orm::error::FromRow + Send + Sync + 'static> ModelAdmin
         }
 
         for rel in meta.relations {
+            if self.excluded(rel.field_name) {
+                continue;
+            }
             let raw_opt = form.get(rel.field_name).map(|s| s.as_str());
             match parse_relation_value(rel, raw_opt) {
                 Ok(val) => {
