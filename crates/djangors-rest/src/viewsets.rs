@@ -18,7 +18,8 @@ use hyper::StatusCode;
 use crate::*;
 
 /// Configuration options for a ViewSet endpoint (filtering and ordering allowlists).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ViewSetConfig {
     /// Allowlist of field names that can be filtered via `?field=value` query params.
     pub filterable_fields: &'static [&'static str],
@@ -32,6 +33,62 @@ pub struct ViewSetConfig {
     /// at this value. `None` (the default) ignores the query parameter, so page
     /// size stays entirely server-controlled.
     pub max_page_size: Option<i64>,
+}
+
+const _: ViewSetConfig = ViewSetConfig::default();
+
+impl ViewSetConfig {
+    /// Returns the default configuration as a const expression.
+    pub const fn default() -> Self {
+        Self::new()
+    }
+
+    /// Creates a const-compatible default configuration for static declarations.
+    pub const fn new() -> Self {
+        Self {
+            filterable_fields: &[],
+            orderable_fields: &[],
+            cursor_pagination: false,
+            page_size: None,
+            max_page_size: None,
+        }
+    }
+
+    /// Sets the filterable-field allowlist.
+    pub const fn with_filterable_fields(mut self, fields: &'static [&'static str]) -> Self {
+        self.filterable_fields = fields;
+        self
+    }
+
+    /// Sets the orderable-field allowlist.
+    pub const fn with_orderable_fields(mut self, fields: &'static [&'static str]) -> Self {
+        self.orderable_fields = fields;
+        self
+    }
+
+    /// Enables or disables cursor pagination.
+    pub const fn with_cursor_pagination(mut self, enabled: bool) -> Self {
+        self.cursor_pagination = enabled;
+        self
+    }
+
+    /// Sets the fixed page size.
+    pub const fn with_page_size(mut self, size: Option<i64>) -> Self {
+        self.page_size = size;
+        self
+    }
+
+    /// Sets the maximum page size clients may request.
+    pub const fn with_max_page_size(mut self, size: Option<i64>) -> Self {
+        self.max_page_size = size;
+        self
+    }
+}
+
+impl Default for ViewSetConfig {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ViewSetConfig {

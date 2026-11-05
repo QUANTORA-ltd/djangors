@@ -15,13 +15,13 @@ use djangors_mail::{Message, SmtpConfig, SmtpBackend, MailBackend};
 
 pub async fn send_welcome_email(user_email: &str) -> Result<(), djangors_mail::MailError> {
     // Construct email message
-    let message = Message {
-        to: vec![user_email.to_string()],
-        from: "noreply@example.com".to_string(),
-        subject: "Welcome to our platform!".to_string(),
-        body: "Hello, welcome to our service!".to_string(),
-        html_body: Some("<h1>Hello!</h1><p>Welcome to our service!</p>".to_string()),
-    };
+    let message = Message::new(
+        [user_email],
+        "noreply@example.com",
+        "Welcome to our platform!",
+        "Hello, welcome to our service!",
+    )
+    .html_body("<h1>Hello!</h1><p>Welcome to our service!</p>");
 
     // Configure SMTP backend
     let config = SmtpConfig::new("smtp.example.com")
@@ -58,7 +58,7 @@ when your test asserts that "an email was sent with this subject":
 
 ```rust,compile
 # use djangors_mail::{Message, InMemoryBackend, MailBackend};
-# fn build_message() -> Message { Message { to: vec!["a@b.c".into()], from: "noreply@example.com".into(), subject: "reset".into(), body: "hi".into(), html_body: None } }
+# fn build_message() -> Message { Message::new(["a@b.c"], "noreply@example.com", "reset", "hi") }
 # async fn run() -> Result<(), djangors_mail::MailError> {
 let backend = InMemoryBackend::default();
 let sent: Result<(), _> = backend.send(&build_message()).await;

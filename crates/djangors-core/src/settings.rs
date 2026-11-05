@@ -98,6 +98,7 @@ impl_from_settings_value_via_parse!(
 /// Settings structure holding configuration parameters for the Djangors framework.
 /// Mirrors Django's `settings.py` structure.
 #[derive(Clone)]
+#[non_exhaustive]
 pub struct DjangorsSettings {
     /// Mirrors Django's `DEBUG` setting. If true, detailed error reports are shown.
     /// Never set to true in production.
@@ -139,6 +140,46 @@ impl Default for DjangorsSettings {
             host: "127.0.0.1".into(),
             port: 8000,
         }
+    }
+}
+
+impl DjangorsSettings {
+    /// Creates settings with framework defaults, then configure them with `with_*` methods.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the development/debug mode.
+    pub fn with_debug(mut self, debug: bool) -> Self {
+        self.debug = debug;
+        self
+    }
+
+    /// Sets the allowed request hosts.
+    pub fn with_allowed_hosts(
+        mut self,
+        hosts: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.allowed_hosts = hosts.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Sets the secret signing key.
+    pub fn with_secret_key(mut self, secret_key: impl Into<String>) -> Self {
+        self.secret_key = secret_key.into();
+        self
+    }
+
+    /// Sets the bind host.
+    pub fn with_host(mut self, host: impl Into<String>) -> Self {
+        self.host = host.into();
+        self
+    }
+
+    /// Sets the bind port.
+    pub fn with_port(mut self, port: u16) -> Self {
+        self.port = port;
+        self
     }
 }
 
