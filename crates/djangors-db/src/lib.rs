@@ -26,5 +26,5 @@ pub use database::{isolation_level_sql, BoxFuture};
 pub use database::{Database, IsolationLevel};
 pub use dialect::{DatePart, Dialect};
 pub use error::DbError;
-pub use executor::{Conn, DbExecutor};
+pub use executor::{Conn, DbExecutor, QueryEvent};
 pub use row::DbRow;
