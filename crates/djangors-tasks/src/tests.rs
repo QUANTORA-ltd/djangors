@@ -11,6 +11,26 @@ static TEST_TASK_EXECUTED: AtomicBool = AtomicBool::new(false);
 // test that touches `djangors_task_queue` must acquire this guard before doing so.
 static TEST_DB_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+#[tokio::test]
+async fn test_worker_run_until_stops_when_idle() -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = TEST_DB_LOCK.lock().await;
+    let test_db = djangors_test::TestDatabase::connect().await?;
+    create_task_table(test_db.database()).await?;
+    let worker = Worker::new(test_db.database().clone())
+        .with_poll_interval(std::time::Duration::from_secs(30));
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let worker_task = tokio::spawn(async move {
+        worker
+            .run_until(async {
+                let _ = shutdown_rx.await;
+            })
+            .await
+    });
+    let _ = shutdown_tx.send(());
+    tokio::time::timeout(std::time::Duration::from_secs(1), worker_task).await???;
+    Ok(())
+}
+
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SamplePayload {
     message: String,

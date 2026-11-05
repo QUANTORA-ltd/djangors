@@ -471,21 +471,58 @@ impl Worker {
 
     /// Runs the worker loop indefinitely, processing tasks as they become due.
     pub async fn run(&self) -> ! {
+        let result = self.run_until(std::future::pending::<()>()).await;
+        match result {
+            Ok(()) => unreachable!("a pending shutdown future cannot resolve"),
+            Err(error) => panic!("worker loop failed: {error}"),
+        }
+    }
+
+    /// Runs until `shutdown` resolves, finishing any task already in progress before returning.
+    ///
+    /// The shutdown future is also observed while the worker is idle, so an idle worker exits
+    /// promptly instead of waiting for the next poll interval.
+    pub async fn run_until<F>(&self, shutdown: F) -> Result<(), TaskError>
+    where
+        F: Future<Output = ()>,
+    {
+        let mut shutdown = Box::pin(shutdown);
         let mut last_recurring_tick = tokio::time::Instant::now();
         loop {
+            tokio::select! {
+                biased;
+                _ = &mut shutdown => return Ok(()),
+                _ = std::future::ready(()) => {}
+            }
             if let Some(interval) = self.recurring_tick_interval {
                 if last_recurring_tick.elapsed() >= interval {
                     let _ = tick_recurring_tasks(&self.db).await;
                     last_recurring_tick = tokio::time::Instant::now();
                 }
             }
-            match self.run_once().await {
+            let task_run = self.run_once();
+            tokio::pin!(task_run);
+            let result = tokio::select! {
+                result = &mut task_run => result,
+                _ = &mut shutdown => {
+                    // Do not cancel a claimed task. Let the current run finish and persist its result.
+                    task_run.await?;
+                    return Ok(());
+                }
+            };
+            match result {
                 Ok(true) => {}
                 Ok(false) => {
-                    tokio::time::sleep(self.poll_interval).await;
+                    tokio::select! {
+                        _ = &mut shutdown => return Ok(()),
+                        _ = tokio::time::sleep(self.poll_interval) => {}
+                    }
                 }
                 Err(_) => {
-                    tokio::time::sleep(self.poll_interval).await;
+                    tokio::select! {
+                        _ = &mut shutdown => return Ok(()),
+                        _ = tokio::time::sleep(self.poll_interval) => {}
+                    }
                 }
             }
         }
