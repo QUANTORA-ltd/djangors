@@ -110,7 +110,8 @@ impl Request {
     /// `/api/results/8812/approve`, which makes it safe to use as a metrics
     /// label or log field.
     pub fn matched_route(&self) -> Option<&str> {
-        self.ext::<crate::router::MatchedRoute>().map(|m| m.as_str())
+        self.ext::<crate::router::MatchedRoute>()
+            .map(|m| m.as_str())
     }
 
     fn parse_query(query: &str) -> HashMap<String, String> {
