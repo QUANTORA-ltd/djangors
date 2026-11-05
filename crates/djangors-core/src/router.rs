@@ -391,6 +391,7 @@ impl Router {
             normalized.split('/').collect()
         };
 
+        let mut best_match: Option<(usize, PathParams, (usize, usize))> = None;
         for (idx, route) in self.routes.iter().enumerate() {
             if route.method != *method {
                 continue;
@@ -431,11 +432,32 @@ impl Router {
             }
 
             if matched {
-                return Some((idx, params));
+                let static_segments = route
+                    .segments
+                    .iter()
+                    .filter(|segment| matches!(segment, Segment::Literal(_)))
+                    .count();
+                let typed_captures = route
+                    .segments
+                    .iter()
+                    .filter(|segment| {
+                        matches!(
+                            segment,
+                            Segment::Capture(CaptureType::I64 | CaptureType::Slug)
+                        )
+                    })
+                    .count();
+                let specificity = (static_segments, typed_captures);
+                if best_match
+                    .as_ref()
+                    .is_none_or(|(_, _, current)| specificity > *current)
+                {
+                    best_match = Some((idx, params, specificity));
+                }
             }
         }
 
-        None
+        best_match.map(|(idx, params, _)| (idx, params))
     }
 
     /// Dispatch a fully constructed [`Request`] to the matching handler.
