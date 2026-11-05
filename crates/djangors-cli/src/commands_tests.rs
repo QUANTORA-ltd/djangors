@@ -651,7 +651,9 @@ fn test_run_rebuilds_after_source_change() {
         }
     };
     let start = Instant::now();
-    while start.elapsed() < Duration::from_secs(90) && !request("It worked!") {
+    # Watch-build can easily take longer than 90s on a constrained CI runner
+    # that also has to compile the whole generated project from scratch.
+    while start.elapsed() < Duration::from_secs(300) && !request("It worked!") {
         std::thread::sleep(Duration::from_millis(250));
     }
     assert!(request("It worked!"), "watch server did not start");
@@ -661,7 +663,7 @@ fn test_run_rebuilds_after_source_change() {
         .replace("It worked!", "Changed by watcher");
     std::fs::write(views, content).unwrap();
     let start = Instant::now();
-    while start.elapsed() < Duration::from_secs(90) && !request("Changed by watcher") {
+    while start.elapsed() < Duration::from_secs(300) && !request("Changed by watcher") {
         std::thread::sleep(Duration::from_millis(250));
     }
     let changed = request("Changed by watcher");

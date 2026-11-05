@@ -10,7 +10,7 @@ async fn hello_handler(_: Request, _: PathParams) -> Result<Response, DjangorsEr
 }
 
 async fn slow_handler(_: Request, _: PathParams) -> Result<Response, DjangorsError> {
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     Ok(Response::text(StatusCode::OK, "Slow response"))
 }
 
