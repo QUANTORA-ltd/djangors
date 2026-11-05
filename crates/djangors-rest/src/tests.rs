@@ -166,7 +166,10 @@ fn jwt_config_controls_ttl_and_leeway() {
         .claims;
     assert!(claims.exp >= before + 120);
     assert!(claims.exp <= jsonwebtoken::get_current_timestamp() + 120);
-    assert_eq!(decode_jwt_with_config(&token, "test-secret", &config).unwrap(), 7);
+    assert_eq!(
+        decode_jwt_with_config(&token, "test-secret", &config).unwrap(),
+        7
+    );
 
     // A token that expired an hour ago is rejected by the default leeway and
     // accepted only when the configured leeway covers the gap.
