@@ -137,7 +137,7 @@ impl Router {
     /// value under its concrete type, where the renderer lookup never finds it and
     /// the custom renderer is silently ignored.
     ///
-    /// ```ignore
+    /// ```text
     /// let router = Router::new().set_error_renderer(MyRenderer);
     /// ```
     pub fn set_error_renderer<R: crate::error::ErrorRenderer + 'static>(self, renderer: R) -> Self {
