@@ -174,6 +174,21 @@ pub async fn create_recurring_task_table(
     conn.execute(&sql, &[])
         .await
         .map_err(djangors_db::DbError::QueryFailed)?;
+    // Keep old installations upgradeable: deployments before the unique index
+    // may already contain duplicate registrations. Retain the oldest ID so
+    // callers holding that ID continue to refer to the surviving schedule.
+    conn.execute(
+        "DELETE FROM djangors_recurring_task WHERE id NOT IN (SELECT MIN(id) FROM djangors_recurring_task GROUP BY task_name, cron_expr)",
+        &[],
+    )
+    .await
+    .map_err(djangors_db::DbError::QueryFailed)?;
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS djangors_recurring_task_name_cron_uq ON djangors_recurring_task (task_name, cron_expr)",
+        &[],
+    )
+    .await
+    .map_err(djangors_db::DbError::QueryFailed)?;
     Ok(())
 }
 
@@ -199,7 +214,9 @@ pub async fn register_recurring(
     let p4 = dialect.placeholder(4);
     let sql = format!(
         "INSERT INTO djangors_recurring_task (task_name, payload, cron_expr, next_run_at, last_run_at, enabled) \
-         VALUES ({p1}, {p2}, {p3}, {p4}, NULL, TRUE) RETURNING id"
+         VALUES ({p1}, {p2}, {p3}, {p4}, NULL, TRUE) \
+         ON CONFLICT (task_name, cron_expr) DO UPDATE SET payload = excluded.payload, next_run_at = excluded.next_run_at, last_run_at = NULL, enabled = TRUE \
+         RETURNING id"
     );
     let params = vec![
         djangors_db::BindValue::Text(task_name.to_string()),
@@ -216,6 +233,87 @@ pub async fn register_recurring(
         .map_err(djangors_db::DbError::QueryFailed)?
         .ok_or_else(|| djangors_db::DbError::QueryFailed(sqlx::Error::RowNotFound))?;
     Ok(id)
+}
+
+/// Unregisters a recurring task by its task name and cron expression.
+///
+/// Returns `true` when a registration was removed, or `false` when no matching
+/// registration existed.
+pub async fn unregister_recurring(
+    db: &djangors_db::Database,
+    task_name: &str,
+    cron_expr: &str,
+) -> Result<bool, TaskError> {
+    let mut conn = db.conn();
+    let dialect = conn.dialect();
+    let p1 = dialect.placeholder(1);
+    let p2 = dialect.placeholder(2);
+    let sql =
+        format!("DELETE FROM djangors_recurring_task WHERE task_name = {p1} AND cron_expr = {p2}");
+    let deleted = conn
+        .execute(
+            &sql,
+            &[
+                djangors_db::BindValue::Text(task_name.to_string()),
+                djangors_db::BindValue::Text(cron_expr.to_string()),
+            ],
+        )
+        .await
+        .map_err(djangors_db::DbError::QueryFailed)?;
+    Ok(deleted > 0)
+}
+
+/// Lists all recurring task registrations in stable ID order.
+pub async fn list_recurring(db: &djangors_db::Database) -> Result<Vec<RecurringTask>, TaskError> {
+    let mut conn = db.conn();
+    let rows = conn
+        .fetch_all(
+            "SELECT id, task_name, payload, cron_expr, next_run_at, last_run_at, enabled FROM djangors_recurring_task ORDER BY id",
+            &[],
+        )
+        .await
+        .map_err(djangors_db::DbError::QueryFailed)?;
+    rows.into_iter()
+        .map(|row| {
+            let decode = |error| TaskError::Db(djangors_db::DbError::QueryFailed(error));
+            Ok(RecurringTask {
+                id: row.try_i64_by_name("id").map_err(decode)?.ok_or_else(|| {
+                    TaskError::Db(djangors_db::DbError::QueryFailed(sqlx::Error::RowNotFound))
+                })?,
+                task_name: row
+                    .try_string_by_name("task_name")
+                    .map_err(decode)?
+                    .ok_or_else(|| {
+                        TaskError::Db(djangors_db::DbError::QueryFailed(sqlx::Error::RowNotFound))
+                    })?,
+                payload: row
+                    .try_string_by_name("payload")
+                    .map_err(decode)?
+                    .ok_or_else(|| {
+                        TaskError::Db(djangors_db::DbError::QueryFailed(sqlx::Error::RowNotFound))
+                    })?,
+                cron_expr: row
+                    .try_string_by_name("cron_expr")
+                    .map_err(decode)?
+                    .ok_or_else(|| {
+                        TaskError::Db(djangors_db::DbError::QueryFailed(sqlx::Error::RowNotFound))
+                    })?,
+                next_run_at: row
+                    .try_datetime_by_name("next_run_at")
+                    .map_err(decode)?
+                    .ok_or_else(|| {
+                        TaskError::Db(djangors_db::DbError::QueryFailed(sqlx::Error::RowNotFound))
+                    })?,
+                last_run_at: row.try_datetime_by_name("last_run_at").map_err(decode)?,
+                enabled: row
+                    .try_bool_by_name("enabled")
+                    .map_err(decode)?
+                    .ok_or_else(|| {
+                        TaskError::Db(djangors_db::DbError::QueryFailed(sqlx::Error::RowNotFound))
+                    })?,
+            })
+        })
+        .collect()
 }
 
 /// Enqueues due recurring tasks atomically while holding row locks, returning the enqueue count.
