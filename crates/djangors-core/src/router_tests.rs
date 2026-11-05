@@ -71,6 +71,30 @@ async fn literal_route_no_match() {
 }
 
 #[tokio::test]
+async fn static_route_takes_precedence_over_earlier_capture() {
+    let router = Router::new()
+        .get("/hostels/{pk}", echo_name_fn)
+        .get("/hostels/rooms", ok_handler_fn);
+    let response = router
+        .handle(make_request(Method::GET, "/hostels/rooms"))
+        .await
+        .unwrap();
+    assert_eq!(response.body(), b"ok");
+}
+
+#[tokio::test]
+async fn typed_capture_takes_precedence_over_earlier_untyped_capture() {
+    let router = Router::new()
+        .get("/items/{id}", echo_name_fn)
+        .get("/items/{id:i64}", echo_id_fn);
+    let response = router
+        .handle(make_request(Method::GET, "/items/42"))
+        .await
+        .unwrap();
+    assert_eq!(response.body(), b"item 42");
+}
+
+#[tokio::test]
 async fn method_mismatch() {
     let router = Router::new().get("/hello", ok_handler_fn);
     let req = make_request(Method::POST, "/hello");
