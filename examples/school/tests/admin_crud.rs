@@ -44,80 +44,47 @@ fn get_cookie_value(response: &str, cookie_name: &str) -> Option<String> {
 async fn test_school_admin_crud_integration() {
     let _guard = DB_MUTEX.lock().unwrap();
 
-    let db_url = "postgres://postgres:postgres@localhost/djangors_test";
-    let config = djangors_db::config::DatabaseConfig::new(db_url);
+    let sqlite = matches!(
+        std::env::var("TEST_BACKEND").as_deref(),
+        Ok(value) if value.eq_ignore_ascii_case("sqlite")
+    );
+    let config = if sqlite {
+        djangors_db::config::DatabaseConfig::new("sqlite::memory:")
+            .max_connections(1)
+            .min_connections(1)
+    } else {
+        djangors_db::config::DatabaseConfig::new(
+            std::env::var("DATABASE_URL")
+                .unwrap_or_else(|_| "postgres://postgres:postgres@localhost/djangors_test".into()),
+        )
+    };
     let db = Database::connect(&config).await.unwrap();
+    let dialect = db.dialect();
+    let pk_type = dialect.auto_pk_type();
+    let timestamp_type = dialect.timestamp_type();
+    let mut conn = db.conn();
 
     // Clean up existing tables
-    let _ = djangors_orm::sqlx::query("DROP TABLE IF EXISTS school_enrollment")
-        .execute(db.pool())
-        .await;
-    let _ = djangors_orm::sqlx::query("DROP TABLE IF EXISTS school_student")
-        .execute(db.pool())
-        .await;
-    let _ = djangors_orm::sqlx::query("DROP TABLE IF EXISTS school_course")
-        .execute(db.pool())
-        .await;
-    let _ = djangors_orm::sqlx::query("DROP TABLE IF EXISTS auth_user")
-        .execute(db.pool())
-        .await;
+    for table in [
+        "school_enrollment",
+        "school_student",
+        "school_course",
+        "auth_user",
+    ] {
+        let _ = conn
+            .execute(&format!("DROP TABLE IF EXISTS {table}"), &[])
+            .await;
+    }
 
-    // Create tables
-    djangors_orm::sqlx::query(
-        "CREATE TABLE auth_user (
-            id BIGSERIAL PRIMARY KEY,
-            username VARCHAR(150) NOT NULL,
-            email VARCHAR(254) NOT NULL,
-            password TEXT NOT NULL,
-            is_active BOOLEAN NOT NULL,
-            is_staff BOOLEAN NOT NULL,
-            is_superuser BOOLEAN NOT NULL,
-            date_joined TIMESTAMPTZ NOT NULL,
-            last_login TIMESTAMPTZ
-        )",
-    )
-    .execute(db.pool())
-    .await
-    .unwrap();
-
-    djangors_orm::sqlx::query(
-        "CREATE TABLE school_student (
-            id BIGSERIAL PRIMARY KEY,
-            first_name VARCHAR(100) NOT NULL,
-            last_name VARCHAR(100) NOT NULL,
-            email VARCHAR(254) NOT NULL UNIQUE,
-            enrolled_date TIMESTAMPTZ NOT NULL,
-            is_active BOOLEAN NOT NULL
-        )",
-    )
-    .execute(db.pool())
-    .await
-    .unwrap();
-
-    djangors_orm::sqlx::query(
-        "CREATE TABLE school_course (
-            id BIGSERIAL PRIMARY KEY,
-            code VARCHAR(20) NOT NULL UNIQUE,
-            name VARCHAR(200) NOT NULL,
-            credits INTEGER NOT NULL
-        )",
-    )
-    .execute(db.pool())
-    .await
-    .unwrap();
-
-    djangors_orm::sqlx::query(
-        "CREATE TABLE school_enrollment (
-            id BIGSERIAL PRIMARY KEY,
-            student BIGINT NOT NULL REFERENCES school_student(id) ON DELETE CASCADE,
-            course BIGINT NOT NULL REFERENCES school_course(id) ON DELETE CASCADE,
-            enrolled_on TIMESTAMPTZ NOT NULL,
-            grade VARCHAR(5) NOT NULL
-        )",
-    )
-    .execute(db.pool())
-    .await
-    .unwrap();
+    // Create tables with backend-specific primary-key and timestamp types.
+    for sql in [
+        format!("CREATE TABLE auth_user (id {pk_type}, username VARCHAR(150) NOT NULL, email VARCHAR(254) NOT NULL, password TEXT NOT NULL, is_active BOOLEAN NOT NULL, is_staff BOOLEAN NOT NULL, is_superuser BOOLEAN NOT NULL, date_joined {timestamp_type} NOT NULL, last_login {timestamp_type})"),
+        format!("CREATE TABLE school_student (id {pk_type}, first_name VARCHAR(100) NOT NULL, last_name VARCHAR(100) NOT NULL, email VARCHAR(254) NOT NULL UNIQUE, enrolled_date {timestamp_type} NOT NULL, is_active BOOLEAN NOT NULL)"),
+        format!("CREATE TABLE school_course (id {pk_type}, code VARCHAR(20) NOT NULL UNIQUE, name VARCHAR(200) NOT NULL, credits INTEGER NOT NULL)"),
+        format!("CREATE TABLE school_enrollment (id {pk_type}, student BIGINT NOT NULL REFERENCES school_student(id) ON DELETE CASCADE, course BIGINT NOT NULL REFERENCES school_course(id) ON DELETE CASCADE, enrolled_on {timestamp_type} NOT NULL, grade VARCHAR(5) NOT NULL)"),
+    ] {
+        conn.execute(&sql, &[]).await.unwrap();
+    }
 
     // 1. Create a superuser directly via the DB
     let now = chrono::Utc::now();

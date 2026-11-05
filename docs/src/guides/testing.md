@@ -210,10 +210,14 @@ use std::net::SocketAddr;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tower::ServiceBuilder;
-use djangors_core::{Djangors, DjangorsSettings, Router};
+use djangors_core::{Djangors, DjangorsError, DjangorsSettings, PathParams, Request, Response, Router, StatusCode};
 use djangors_core::router::RouterService;
 use djangors_core::middleware::{csrf_layer, security_headers_layer};
 use djangors_sessions::{SessionLayer, SignedCookieStore};
+
+# async fn healthz(_: Request, _: PathParams) -> Result<Response, DjangorsError> {
+#     Ok(Response::text(StatusCode::OK, "ok"))
+# }
 
 # #[ignore]
 #[tokio::test]
@@ -228,7 +232,7 @@ async fn test_full_stack_socket() {
         ..Default::default()
     };
 
-    let router = Router::new();
+    let router = Router::new().get("/", healthz);
     let router_service = RouterService::new(router, settings.debug);
 
     let service = ServiceBuilder::new()
