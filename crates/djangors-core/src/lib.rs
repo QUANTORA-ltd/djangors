@@ -33,6 +33,9 @@ pub mod groups;
 pub mod handler;
 /// HTTP request/response logging middleware.
 pub mod logging;
+/// Optional RED metrics middleware and Prometheus exposition endpoint.
+#[cfg(feature = "metrics")]
+pub mod metrics;
 /// Standard HTTP middleware layers (CSRF, Request ID, etc.).
 pub mod middleware;
 /// Pagination utility engines.
