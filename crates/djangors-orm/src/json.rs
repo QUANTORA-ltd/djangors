@@ -72,7 +72,7 @@ pub fn write_json_i64(buf: &mut Vec<u8>, n: i64) {
 }
 
 /// Appends a 64-bit float into `buf`, writing `null` for non-finite values (`NaN`, `±∞`)
-/// to match [`serde_json`] float semantics.
+/// to match `serde_json` float semantics.
 #[inline]
 pub fn write_json_f64(buf: &mut Vec<u8>, f: f64) {
     if f.is_finite() {

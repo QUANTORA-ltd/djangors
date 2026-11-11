@@ -18,12 +18,12 @@ postgres = ["djangors-orm/postgres", "djangors-core/postgres", "djangors-db/post
 sqlite = ["djangors-orm/sqlite", "djangors-core/sqlite", "djangors-db/sqlite", "djangors-sessions/sqlite"]
 
 [dependencies]
-djangors-orm = { path = "../djangors-orm", version = "0.7.0", default-features = false }
-djangors-macros = { path = "../djangors-macros", version = "0.7.0" }
-djangors-core = { path = "../djangors-core", version = "0.7.0", default-features = false }
-djangors-db = { path = "../djangors-db", version = "0.7.0", default-features = false }
-djangors-sessions = { path = "../djangors-sessions", version = "0.7.0", default-features = false }
-djangors-mail = { path = "../djangors-mail", version = "0.7.0" }
+djangors-orm = { path = "../djangors-orm", version = "0.8.0", default-features = false }
+djangors-macros = { path = "../djangors-macros", version = "0.8.0" }
+djangors-core = { path = "../djangors-core", version = "0.8.0", default-features = false }
+djangors-db = { path = "../djangors-db", version = "0.8.0", default-features = false }
+djangors-sessions = { path = "../djangors-sessions", version = "0.8.0", default-features = false }
+djangors-mail = { path = "../djangors-mail", version = "0.8.0" }
 async-trait = "0.1.86"
 argon2 = "0.5.3"
 rand_core = { version = "0.6.4", features = ["getrandom"] }

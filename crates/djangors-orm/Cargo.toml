@@ -18,13 +18,13 @@ postgres = ["djangors-db/postgres"]
 sqlite = ["djangors-db/sqlite"]
 
 [dependencies]
-djangors-forms = { path = "../djangors-forms", version = "0.7.0" }
+djangors-forms = { path = "../djangors-forms", version = "0.8.0" }
 serde = { version = "1.0.228", features = ["derive"] }
 inventory = "0.3.24"
 thiserror = "2.0.18"
 sqlx = { version = "0.9.0", default-features = false, features = ["chrono"] }
 chrono = { version = "0.4", features = ["std"] }
-djangors-db = { path = "../djangors-db", version = "0.7.0", default-features = false }
+djangors-db = { path = "../djangors-db", version = "0.8.0", default-features = false }
 tokio = { version = "1.53.0", features = ["rt"] }
 
 [dev-dependencies]

@@ -10,7 +10,7 @@ members = [
 exclude = ["benchmarks"]
 
 [workspace.package]
-version = "0.7.0"
+version = "0.8.0"
 edition = "2021"
 # MEASURED, not chosen. `cargo metadata` reports the highest rust-version declared
 # anywhere in the dependency tree as 1.96.0, required by `reqx` 0.1.41 <- `s3` 0.1.36

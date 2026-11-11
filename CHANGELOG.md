@@ -5,6 +5,11 @@ All notable changes to Djangors are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.8.0]
+
+This release contains **breaking changes** (`#[non_exhaustive]` on three public structs), so per
+the pre-1.0 policy in [API Stability](docs/src/api-stability.md) it bumps the minor version.
+
 ### Migrating from 0.7.0
 
 `DjangorsSettings`, `djangors_mail::Message`, and `djangors_rest::ViewSetConfig` are now

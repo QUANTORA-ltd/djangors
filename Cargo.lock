@@ -841,7 +841,7 @@ dependencies = [
 
 [[package]]
 name = "djangors"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "djangors-admin",
  "djangors-auth",
@@ -865,7 +865,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-admin"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -889,7 +889,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-auth"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "argon2",
  "async-trait",
@@ -914,7 +914,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-cache"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -934,7 +934,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-cli"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "chrono",
  "clap",
@@ -954,7 +954,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-contrib-contenttypes"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "djangors-db",
  "djangors-macros",
@@ -966,7 +966,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-contrib-flatpages"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "bytes",
  "djangors-admin",
@@ -981,7 +981,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-contrib-guardian"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "chrono",
  "djangors-auth",
@@ -997,7 +997,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-contrib-messages"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "djangors-sessions",
  "serde",
@@ -1006,7 +1006,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-contrib-otp"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "djangors-auth",
  "djangors-macros",
@@ -1018,7 +1018,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-contrib-payments"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1039,7 +1039,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-contrib-redirects"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "bytes",
  "djangors-admin",
@@ -1054,7 +1054,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-contrib-sitemaps"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "chrono",
  "djangors-core",
@@ -1062,7 +1062,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-contrib-syndication"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "chrono",
  "djangors-core",
@@ -1070,7 +1070,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-contrib-tenancy"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "bytes",
  "chrono",
@@ -1090,7 +1090,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-core"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "async-trait",
  "base64",
@@ -1125,7 +1125,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-db"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "chrono",
  "sqlx",
@@ -1135,7 +1135,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-deploy"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "async-trait",
  "reqwest",
@@ -1147,14 +1147,14 @@ dependencies = [
 
 [[package]]
 name = "djangors-forms"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "djangors-macros",
 ]
 
 [[package]]
 name = "djangors-i18n"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "bytes",
  "chrono",
@@ -1172,7 +1172,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-macros"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "chrono",
  "djangors-core",
@@ -1186,7 +1186,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-mail"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "async-trait",
  "lettre",
@@ -1197,7 +1197,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-migrations"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "djangors-db",
  "djangors-macros",
@@ -1211,7 +1211,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-orm"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "chrono",
  "djangors-db",
@@ -1227,7 +1227,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-pdf"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "printpdf",
  "thiserror 2.0.18",
@@ -1235,7 +1235,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-rest"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "async-trait",
  "base64",
@@ -1260,7 +1260,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-sessions"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "base64",
  "bytes",
@@ -1278,7 +1278,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-staticfiles"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1295,7 +1295,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-tasks"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "chrono",
  "cron",
@@ -1314,7 +1314,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-template"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "chrono",
  "djangors-core",
@@ -1327,7 +1327,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-test"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "bytes",
  "djangors-core",
@@ -1345,7 +1345,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-views"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "bytes",
  "djangors-core",
@@ -1363,7 +1363,7 @@ dependencies = [
 
 [[package]]
 name = "doc-code-check"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "async-stream",
  "async-trait",
