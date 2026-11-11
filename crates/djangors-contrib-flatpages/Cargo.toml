@@ -12,11 +12,16 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[features]
+default = ["postgres", "sqlite"]
+postgres = ["djangors-admin/postgres", "djangors-core/postgres", "djangors-orm/postgres"]
+sqlite = ["djangors-admin/sqlite", "djangors-core/sqlite", "djangors-orm/sqlite"]
+
 [dependencies]
-djangors-admin = { path = "../djangors-admin", version = "0.7.0" }
-djangors-core = { path = "../djangors-core", version = "0.7.0" }
+djangors-admin = { path = "../djangors-admin", version = "0.7.0", default-features = false }
+djangors-core = { path = "../djangors-core", version = "0.7.0", default-features = false }
 djangors-macros = { path = "../djangors-macros", version = "0.7.0" }
-djangors-orm = { path = "../djangors-orm", version = "0.7.0" }
+djangors-orm = { path = "../djangors-orm", version = "0.7.0", default-features = false }
 
 [dev-dependencies]
 djangors-test = { path = "../djangors-test" }

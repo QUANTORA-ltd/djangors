@@ -205,6 +205,10 @@ fn test_new_generates_expected_files() {
     let cargo_toml_content = std::fs::read_to_string(project_path.join("Cargo.toml")).unwrap();
     assert!(cargo_toml_content.contains("name = \"my_test_proj\""));
     assert!(cargo_toml_content.contains("djangors-core = { path = "));
+    assert!(cargo_toml_content.contains("[profile.release]"));
+    assert!(cargo_toml_content.contains("lto = \"thin\""));
+    assert!(cargo_toml_content.contains("strip = \"symbols\""));
+    assert!(cargo_toml_content.contains("codegen-units = 1"));
 
     let path_line = cargo_toml_content
         .lines()

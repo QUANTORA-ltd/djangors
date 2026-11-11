@@ -1,5 +1,6 @@
 use crate::error::StaticFilesError;
 use async_trait::async_trait;
+#[cfg(feature = "s3")]
 use s3::{AddressingStyle, Auth, Client, Credentials};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -26,12 +27,14 @@ pub struct LocalDiskStorage {
 }
 
 /// A [`Storage`] backend backed by an S3-compatible object store.
+#[cfg(feature = "s3")]
 pub struct S3Storage {
     client: Client,
     bucket: String,
     base_url: String,
 }
 
+#[cfg(feature = "s3")]
 impl S3Storage {
     /// Creates an S3-backed storage for `bucket`.
     pub fn new(
@@ -74,6 +77,7 @@ impl S3Storage {
     }
 }
 
+#[cfg(feature = "s3")]
 #[async_trait]
 impl Storage for S3Storage {
     async fn save(&self, path: &str, content: Vec<u8>) -> Result<String, StaticFilesError> {

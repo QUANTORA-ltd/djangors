@@ -122,6 +122,11 @@ path = "src/main.rs"
 djangors-core = {djangors_core_dep}
 tokio = {{ version = "1", features = ["full"] }}
 tower = {{ version = "0.5", features = ["util"] }}
+
+[profile.release]
+lto = "thin"
+strip = "symbols"
+codegen-units = 1
 "#
     );
 

@@ -38,6 +38,45 @@ database reference directly (`model.save(db).await?`). They are concrete databas
 not generic over a transaction executor, so code that previously passed `&&Database` or a
 transaction wrapper should use the equivalent API available on that wrapper.
 
+### Added
+
+- **Facade Cargo feature flags (`djangors`)**: `crates/djangors` now exposes granular Cargo
+  feature flags (`postgres`, `sqlite`, `migrations`, `rest`, `admin`, `auth`, `forms`, `sessions`,
+  `template`, `staticfiles`, `s3`, `cache`, `mail`, `i18n`, `tasks`, `pdf`, `payments`, and
+  `tenancy`). All features remain enabled by default so existing applications compile unchanged,
+  while minimal builds (`default-features = false, features = ["postgres"]` or `["sqlite"]`)
+  drop optional subsystems cleanly.
+- **Database backend feature flags (`postgres` and `sqlite`)**: `djangors-db` and downstream
+  framework crates now gate PostgreSQL (`sqlx/postgres`) and SQLite (`sqlx/sqlite`) behind
+  `postgres` and `sqlite` Cargo features (both on by default). Building with only `postgres`
+  excludes `sqlx-sqlite` and `libsqlite3-sys` from the dependency graph; building with only
+  `sqlite` excludes `sqlx-postgres`. Compiling `djangors-db` with `--no-default-features` and
+  neither backend enabled emits a clear `compile_error!`.
+- **Optional `s3` feature on `djangors-staticfiles`** (on by default) and **optional `cache`
+  feature on `djangors-core`** (on by default, gating `djangors_core::ratelimit`).
+- **Compile-time direct JSON serialization (`fast-json-stringify` style)**:
+  - `#[derive(Model)]` generates `Model::write_json` and `Model::write_json_filtered` with
+    pre-baked static JSON key slices (`concat!`) sorted lexicographically to match `serde_json::Map`
+    key order, streaming field values directly into a `Vec<u8>` buffer via `djangors_orm::json`
+    without intermediate `Vec<(&'static str, Value)>` or `serde_json::Value` allocations.
+  - `djangors_core::Response::json_bytes(status, Vec<u8>)` constructs an `application/json`
+    response directly from pre-serialized bytes without copying.
+  - `djangors_rest` adds `serialize_to_vec`, `serialize_many_to_vec`, `Serializer::write_json`,
+    `Serializer::write_json_many`, `Serializer::to_json_bytes`, `Pagination::write_envelope`, and
+    `CursorPagination::write_envelope_with_cursor`, and wires `ViewSet` / `ScopedViewSet`
+    (`list`, `retrieve`, `create`, `update`) to stream JSON responses directly into byte buffers.
+- **Release profile in workspace and `dj new`**: Both the workspace root `Cargo.toml` and projects
+  scaffolded by `dj new` now include `[profile.release]` with `lto = "thin"`, `strip = "symbols"`,
+  and `codegen-units = 1`. Added `examples/minimal-facade` (4.00 MiB stripped release binary with
+  `default-features = false, features = ["postgres"]` vs 11.51 MiB for `examples/polls`) with a
+  6 MiB CI binary size gate on `minimal-facade` and a 14 MiB gate on `polls`.
+
+### Changed
+
+- **`djangors-mail` now uses `rustls` (`lettre/tokio1-rustls-tls`)** instead of `native-tls`,
+  unifying the entire workspace on a single TLS stack (`rustls`) with no OpenSSL/`native-tls`
+  dependency.
+
 ## [0.7.0]
 
 This release contains a **breaking change to the `ModelAdmin` trait**, made to fix a

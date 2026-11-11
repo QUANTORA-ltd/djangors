@@ -1,6 +1,12 @@
 [workspace]
 resolver = "2"
-members = ["crates/*", "examples/polls", "examples/school", "tools/doc-code-check"]
+members = [
+    "crates/*",
+    "examples/minimal-facade",
+    "examples/polls",
+    "examples/school",
+    "tools/doc-code-check",
+]
 exclude = ["benchmarks"]
 
 [workspace.package]
@@ -27,3 +33,9 @@ homepage = "https://djangors.vercel.app"
 # (file + line) at roughly a third of the size.
 [profile.dev]
 debug = "line-tables-only"
+
+[profile.release]
+lto = "thin"
+strip = "symbols"
+codegen-units = 1
+

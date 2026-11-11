@@ -101,6 +101,89 @@ fn field_value_expr(f: &ModelField) -> TokenStream {
     }
 }
 
+fn field_write_json_expr(f: &ModelField) -> TokenStream {
+    let ident = &f.ident;
+    if f.is_relation {
+        quote! { djangors_orm::json::write_json_i64(buf, self.#ident.id) }
+    } else {
+        let last_ident_str = f.last_ident.as_deref().unwrap_or("");
+        if f.is_nullable {
+            match last_ident_str {
+                "String" => quote! {
+                    match &self.#ident {
+                        Some(v) => djangors_orm::json::write_json_str(buf, v),
+                        None => djangors_orm::json::write_json_null(buf),
+                    }
+                },
+                "i64" => quote! {
+                    match self.#ident {
+                        Some(v) => djangors_orm::json::write_json_i64(buf, v),
+                        None => djangors_orm::json::write_json_null(buf),
+                    }
+                },
+                "i32" => quote! {
+                    match self.#ident {
+                        Some(v) => djangors_orm::json::write_json_i64(buf, v as i64),
+                        None => djangors_orm::json::write_json_null(buf),
+                    }
+                },
+                "f64" => quote! {
+                    match self.#ident {
+                        Some(v) => djangors_orm::json::write_json_f64(buf, v),
+                        None => djangors_orm::json::write_json_null(buf),
+                    }
+                },
+                "f32" => quote! {
+                    match self.#ident {
+                        Some(v) => djangors_orm::json::write_json_f64(buf, v as f64),
+                        None => djangors_orm::json::write_json_null(buf),
+                    }
+                },
+                "bool" => quote! {
+                    match self.#ident {
+                        Some(v) => djangors_orm::json::write_json_bool(buf, v),
+                        None => djangors_orm::json::write_json_null(buf),
+                    }
+                },
+                "NaiveDate" | "NaiveTime" | "Uuid" | "Decimal" => quote! {
+                    match &self.#ident {
+                        Some(v) => djangors_orm::json::write_json_display(buf, v),
+                        None => djangors_orm::json::write_json_null(buf),
+                    }
+                },
+                "Duration" => quote! {
+                    match &self.#ident {
+                        Some(v) => djangors_orm::json::write_json_debug(buf, v),
+                        None => djangors_orm::json::write_json_null(buf),
+                    }
+                },
+                _ => quote! {
+                    match &self.#ident {
+                        Some(v) => djangors_orm::json::write_json_datetime(buf, v),
+                        None => djangors_orm::json::write_json_null(buf),
+                    }
+                },
+            }
+        } else {
+            match last_ident_str {
+                "String" => quote! { djangors_orm::json::write_json_str(buf, &self.#ident) },
+                "i64" => quote! { djangors_orm::json::write_json_i64(buf, self.#ident) },
+                "i32" => quote! { djangors_orm::json::write_json_i64(buf, self.#ident as i64) },
+                "f64" => quote! { djangors_orm::json::write_json_f64(buf, self.#ident) },
+                "f32" => quote! { djangors_orm::json::write_json_f64(buf, self.#ident as f64) },
+                "bool" => quote! { djangors_orm::json::write_json_bool(buf, self.#ident) },
+                "NaiveDate" | "NaiveTime" | "Uuid" | "Decimal" => {
+                    quote! { djangors_orm::json::write_json_display(buf, &self.#ident) }
+                }
+                "Duration" => {
+                    quote! { djangors_orm::json::write_json_debug(buf, &self.#ident) }
+                }
+                _ => quote! { djangors_orm::json::write_json_datetime(buf, &self.#ident) },
+            }
+        }
+    }
+}
+
 pub fn expand_derive_model(input: DeriveInput) -> syn::Result<TokenStream> {
     // 1. Parse struct-level attributes
     let mut app = None;
@@ -1027,6 +1110,39 @@ pub fn expand_derive_model(input: DeriveInput) -> syn::Result<TokenStream> {
         quote! { (#name_str, #val_expr) }
     });
 
+    let mut json_sorted_fields: Vec<&ModelField> = model_fields.iter().collect();
+    json_sorted_fields.sort_by_key(|a| a.ident.to_string());
+
+    let write_json_stmts = json_sorted_fields.iter().enumerate().map(|(idx, f)| {
+        let name_str = f.ident.to_string();
+        let prefix = if idx == 0 {
+            format!("{{\"{}\":", name_str)
+        } else {
+            format!(",\"{}\":", name_str)
+        };
+        let val_write = field_write_json_expr(f);
+        quote! {
+            buf.extend_from_slice(#prefix.as_bytes());
+            #val_write;
+        }
+    });
+
+    let write_json_filtered_stmts = json_sorted_fields.iter().map(|f| {
+        let name_str = f.ident.to_string();
+        let key_colon = format!("\"{}\":", name_str);
+        let val_write = field_write_json_expr(f);
+        quote! {
+            if include(#name_str) {
+                if !first {
+                    buf.push(b',');
+                }
+                first = false;
+                buf.extend_from_slice(#key_colon.as_bytes());
+                #val_write;
+            }
+        }
+    });
+
     let field_names_list: Vec<String> = model_fields.iter().map(|f| f.ident.to_string()).collect();
 
     let form_cleaned_name = Ident::new(
@@ -1233,12 +1349,24 @@ pub fn expand_derive_model(input: DeriveInput) -> syn::Result<TokenStream> {
             }
 
             fn field_names() -> Vec<&'static str> {
-                    vec![
-                        #(#field_names_list),*
-                    ]
-                }
+                vec![
+                    #(#field_names_list),*
+                ]
+            }
 
-                #objects_override
+            fn write_json(&self, buf: &mut Vec<u8>) {
+                #(#write_json_stmts)*
+                buf.push(b'}');
+            }
+
+            fn write_json_filtered(&self, buf: &mut Vec<u8>, include: &mut dyn FnMut(&'static str) -> bool) {
+                buf.push(b'{');
+                let mut first = true;
+                #(#write_json_filtered_stmts)*
+                buf.push(b'}');
+            }
+
+            #objects_override
         }
 
         #[allow(missing_docs)]

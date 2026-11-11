@@ -208,6 +208,26 @@ pub trait Model {
     where
         Self: Sized;
 
+    /// Appends this model's complete JSON object representation directly into
+    /// `buf` without allocating an intermediate `Vec` or `serde_json::Map`.
+    ///
+    /// Generated at compile time by `#[derive(Model)]` with pre-baked static
+    /// JSON key fragments (`concat!("\"", field, "\":")`), matching Fastify's
+    /// `fast-json-stringify` strategy.
+    fn write_json(&self, buf: &mut Vec<u8>) {
+        self.write_json_filtered(buf, &mut |_| true);
+    }
+
+    /// Appends this model's JSON object representation directly into `buf`,
+    /// emitting only fields for which `include(field_name)` returns `true`.
+    fn write_json_filtered(
+        &self,
+        buf: &mut Vec<u8>,
+        include: &mut dyn FnMut(&'static str) -> bool,
+    ) {
+        crate::json::write_field_values_filtered(buf, &self.field_values(), include);
+    }
+
     /// Helper to get a QuerySet for this model.
     fn objects() -> crate::queryset::QuerySet<Self>
     where

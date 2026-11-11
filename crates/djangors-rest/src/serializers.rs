@@ -17,6 +17,29 @@ pub fn serialize<M: Model>(instance: &M) -> serde_json::Value {
     serde_json::Value::Object(map)
 }
 
+/// Serializes a [`Model`] directly into a UTF-8 JSON byte buffer without
+/// allocating an intermediate `Vec<(&'static str, Value)>` or `serde_json::Map`.
+pub fn serialize_to_vec<M: Model>(instance: &M) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(128);
+    instance.write_json(&mut buf);
+    buf
+}
+
+/// Serializes a slice of [`Model`] instances directly into a JSON array byte buffer
+/// without intermediate `serde_json::Value` allocations.
+pub fn serialize_many_to_vec<M: Model>(instances: &[M]) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(instances.len().saturating_mul(128).saturating_add(2));
+    buf.push(b'[');
+    for (idx, item) in instances.iter().enumerate() {
+        if idx > 0 {
+            buf.push(b',');
+        }
+        item.write_json(&mut buf);
+    }
+    buf.push(b']');
+    buf
+}
+
 /// Converts a single ORM [`Value`] into JSON.
 ///
 /// Split out from [`serialize`] so the list case can recurse; a `Value::List`
@@ -360,6 +383,13 @@ impl FieldSet {
         self.in_scope(field) && !self.write_only.iter().any(|f| f == field)
     }
 
+    /// Returns `true` when every model field is readable on output (no `only`,
+    /// `exclude`, or `write_only` restrictions), allowing [`ModelSerializer`] to
+    /// take the unbranched compile-time [`Model::write_json`] fast path.
+    pub fn is_all_readable(&self) -> bool {
+        self.only.is_empty() && self.exclude.is_empty() && self.write_only.is_empty()
+    }
+
     /// Whether the field is accepted from client input.
     pub fn is_writable(&self, field: &str) -> bool {
         self.in_scope(field) && !self.read_only.iter().any(|f| f == field)
@@ -427,6 +457,35 @@ pub trait Serializer<M: Model>: Send + Sync + 'static {
             .iter()
             .map(|item| self.to_representation(item))
             .collect()
+    }
+
+    /// Appends the serialized JSON representation of `instance` directly into `buf`.
+    ///
+    /// [`ModelSerializer`] overrides this to call [`Model::write_json`] /
+    /// [`Model::write_json_filtered`], bypassing intermediate `serde_json::Value`
+    /// allocations entirely. Custom serializers inherit a default implementation
+    /// that delegates to [`Serializer::to_representation`].
+    fn write_json(&self, instance: &M, buf: &mut Vec<u8>) {
+        let val = self.to_representation(instance);
+        let _ = serde_json::to_writer(&mut *buf, &val);
+    }
+
+    /// Appends a JSON array of `instances` directly into `buf`.
+    ///
+    /// Custom serializers that override [`Serializer::to_representation_many`]
+    /// are honored by the default implementation; [`ModelSerializer`] overrides
+    /// this to stream each item via [`Serializer::write_json`] without
+    /// allocating a `Vec<serde_json::Value>`.
+    fn write_json_many(&self, instances: &[M], buf: &mut Vec<u8>) {
+        let vals = self.to_representation_many(instances);
+        let _ = serde_json::to_writer(&mut *buf, &vals);
+    }
+
+    /// Renders `instance` into a freshly allocated UTF-8 JSON byte vector.
+    fn to_json_bytes(&self, instance: &M) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(128);
+        self.write_json(instance, &mut buf);
+        buf
     }
 
     /// Parse, then apply [`Serializer::validate`]. ViewSets call this rather
@@ -503,6 +562,25 @@ impl<M: Model + Send + Sync + 'static> Serializer<M> for ModelSerializer<M> {
                 .filter(|(name, _)| self.fields.is_readable(name))
                 .collect(),
         )
+    }
+
+    fn write_json(&self, instance: &M, buf: &mut Vec<u8>) {
+        if self.fields.is_all_readable() {
+            instance.write_json(buf);
+        } else {
+            instance.write_json_filtered(buf, &mut |name| self.fields.is_readable(name));
+        }
+    }
+
+    fn write_json_many(&self, instances: &[M], buf: &mut Vec<u8>) {
+        buf.push(b'[');
+        for (idx, item) in instances.iter().enumerate() {
+            if idx > 0 {
+                buf.push(b',');
+            }
+            self.write_json(item, buf);
+        }
+        buf.push(b']');
     }
 
     fn to_internal_value(

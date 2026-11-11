@@ -469,10 +469,27 @@ impl<M: Scoped> ScopedViewSet<M> {
             } else {
                 None
             };
-            return Response::json(
-                StatusCode::OK,
-                &serde_json::json!({"count": total, "results": items.iter().map(serialize).collect::<Vec<_>>(), "next_cursor": next_cursor, "previous_cursor": serde_json::Value::Null}),
+            let mut buf = Vec::with_capacity(items.len().saturating_mul(128).saturating_add(96));
+            CursorPagination {
+                page_size: per_page,
+                max_page_size: None,
+            }
+            .write_envelope_with_cursor(
+                total,
+                &mut |out| {
+                    out.push(b'[');
+                    for (idx, item) in items.iter().enumerate() {
+                        if idx > 0 {
+                            out.push(b',');
+                        }
+                        item.write_json(out);
+                    }
+                    out.push(b']');
+                },
+                next_cursor.as_deref(),
+                &mut buf,
             );
+            return Ok(Response::json_bytes(StatusCode::OK, buf));
         }
         let paginator = Paginator::new(total, per_page);
         let items = qs
@@ -481,10 +498,22 @@ impl<M: Scoped> ScopedViewSet<M> {
             .all(db)
             .await
             .map_err(|e| DjangorsError::Internal(e.to_string()))?;
-        Response::json(
-            StatusCode::OK,
-            &serde_json::json!({"count": total, "page": page, "total_pages": paginator.total_pages(), "results": items.iter().map(serialize).collect::<Vec<_>>() }),
-        )
+        let mut buf = Vec::with_capacity(items.len().saturating_mul(128).saturating_add(96));
+        buf.extend_from_slice(b"{\"count\":");
+        djangors_orm::json::write_json_i64(&mut buf, total);
+        buf.extend_from_slice(b",\"page\":");
+        djangors_orm::json::write_json_i64(&mut buf, page);
+        buf.extend_from_slice(b",\"total_pages\":");
+        djangors_orm::json::write_json_i64(&mut buf, paginator.total_pages());
+        buf.extend_from_slice(b",\"results\":[");
+        for (idx, item) in items.iter().enumerate() {
+            if idx > 0 {
+                buf.push(b',');
+            }
+            item.write_json(&mut buf);
+        }
+        buf.extend_from_slice(b"]}");
+        Ok(Response::json_bytes(StatusCode::OK, buf))
     }
 
     /// Retrieves a record only if it is in scope.
@@ -508,7 +537,10 @@ impl<M: Scoped> ScopedViewSet<M> {
             }]))
             .map_err(|e| DjangorsError::Internal(e.to_string()))?;
         match qs.get(db).await {
-            Ok(item) => Response::json(StatusCode::OK, &serialize(&item)),
+            Ok(item) => Ok(Response::json_bytes(
+                StatusCode::OK,
+                serialize_to_vec(&item),
+            )),
             Err(djangors_orm::error::OrmError::NotFound { .. }) => Err(DjangorsError::NotFound),
             Err(e) => Err(DjangorsError::Internal(e.to_string())),
         }
@@ -547,7 +579,10 @@ impl<M: Scoped> ScopedViewSet<M> {
             .get(db)
             .await
             .map_err(|e| DjangorsError::Internal(e.to_string()))?;
-        Response::json(StatusCode::CREATED, &serialize(&item))
+        Ok(Response::json_bytes(
+            StatusCode::CREATED,
+            serialize_to_vec(&item),
+        ))
     }
 
     /// Updates a record only if it is in scope.
@@ -599,7 +634,10 @@ impl<M: Scoped> ScopedViewSet<M> {
             .get(db)
             .await
             .map_err(|e| DjangorsError::Internal(e.to_string()))?;
-        Response::json(StatusCode::OK, &serialize(&item))
+        Ok(Response::json_bytes(
+            StatusCode::OK,
+            serialize_to_vec(&item),
+        ))
     }
 
     /// Deletes a record only if it is in scope.
@@ -796,15 +834,18 @@ where
             } else {
                 None
             };
-            let results = options.serializer.to_representation_many(&items);
-            return Response::json(
-                StatusCode::OK,
-                &CursorPagination {
-                    page_size: per_page,
-                    max_page_size: None,
-                }
-                .envelope_with_cursor(total_items, results, next_cursor),
+            let mut buf = Vec::with_capacity(items.len().saturating_mul(128).saturating_add(96));
+            CursorPagination {
+                page_size: per_page,
+                max_page_size: None,
+            }
+            .write_envelope_with_cursor(
+                total_items,
+                &mut |out| options.serializer.write_json_many(&items, out),
+                next_cursor.as_deref(),
+                &mut buf,
             );
+            return Ok(Response::json_bytes(StatusCode::OK, buf));
         }
 
         let slice = options.pagination.slice(&req, total_items);
@@ -817,10 +858,15 @@ where
             .await
             .map_err(|e| DjangorsError::Internal(e.to_string()))?;
 
-        let results = options.serializer.to_representation_many(&items);
-        let body = options.pagination.envelope(&req, total_items, results);
+        let mut buf = Vec::with_capacity(items.len().saturating_mul(128).saturating_add(96));
+        options.pagination.write_envelope(
+            &req,
+            total_items,
+            &mut |out| options.serializer.write_json_many(&items, out),
+            &mut buf,
+        );
 
-        Response::json(StatusCode::OK, &body)
+        Ok(Response::json_bytes(StatusCode::OK, buf))
     }
 
     /// `GET /{pk}` — returns a single record by primary key, or 404.
@@ -867,9 +913,10 @@ where
             .await;
 
         match row_opt {
-            Ok(item) => {
-                Response::json(StatusCode::OK, &options.serializer.to_representation(&item))
-            }
+            Ok(item) => Ok(Response::json_bytes(
+                StatusCode::OK,
+                options.serializer.to_json_bytes(&item),
+            )),
             Err(djangors_orm::error::OrmError::NotFound { .. }) => Err(DjangorsError::NotFound),
             Err(e) => Err(DjangorsError::Internal(e.to_string())),
         }
@@ -923,10 +970,10 @@ where
             .await
             .map_err(|e| DjangorsError::Internal(e.to_string()))?;
 
-        Response::json(
+        Ok(Response::json_bytes(
             StatusCode::CREATED,
-            &options.serializer.to_representation(&created_item),
-        )
+            options.serializer.to_json_bytes(&created_item),
+        ))
     }
 
     /// `PUT /{pk}` / `PATCH /{pk}` — updates an existing record (200 OK, 422 Unprocessable Entity, or 404).
@@ -998,10 +1045,10 @@ where
             .await
             .map_err(|e| DjangorsError::Internal(e.to_string()))?;
 
-        Response::json(
+        Ok(Response::json_bytes(
             StatusCode::OK,
-            &options.serializer.to_representation(&updated_item),
-        )
+            options.serializer.to_json_bytes(&updated_item),
+        ))
     }
 
     /// `DELETE /{pk}` — deletes a record by primary key (204 No Content or 404).

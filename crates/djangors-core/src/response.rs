@@ -62,19 +62,27 @@ impl Response {
         res
     }
 
-    /// Create a JSON response from a serializable value.
+    /// Create a JSON response from pre-serialized UTF-8 JSON bytes without copying.
     ///
-    /// Sets `Content-Type: application/json; charset=utf-8`. Returns
-    /// `DjangorsError::Internal` if serialization fails.
-    pub fn json<T: Serialize>(status: StatusCode, value: &T) -> Result<Self, DjangorsError> {
-        let s = serde_json::to_string(value).map_err(|e| DjangorsError::Internal(e.to_string()))?;
+    /// Sets `Content-Type: application/json; charset=utf-8`.
+    pub fn json_bytes(status: StatusCode, body: Vec<u8>) -> Self {
         let mut res = Response::new(status);
         res.headers.insert(
             CONTENT_TYPE,
             HeaderValue::from_static("application/json; charset=utf-8"),
         );
-        res.body = Bytes::copy_from_slice(s.as_bytes());
-        Ok(res)
+        res.body = Bytes::from(body);
+        res
+    }
+
+    /// Create a JSON response from a serializable value.
+    ///
+    /// Sets `Content-Type: application/json; charset=utf-8`. Returns
+    /// `DjangorsError::Internal` if serialization fails.
+    pub fn json<T: Serialize>(status: StatusCode, value: &T) -> Result<Self, DjangorsError> {
+        let bytes =
+            serde_json::to_vec(value).map_err(|e| DjangorsError::Internal(e.to_string()))?;
+        Ok(Self::json_bytes(status, bytes))
     }
 
     /// Create a 302 Found redirect response.

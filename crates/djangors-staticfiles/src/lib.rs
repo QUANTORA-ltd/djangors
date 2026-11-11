@@ -19,4 +19,6 @@ pub mod upload;
 pub use collect::Manifest;
 pub use error::StaticFilesError;
 pub use serve::{StaticFiles, StaticFilesHandler};
-pub use storage::{LocalDiskStorage, S3Storage, Storage};
+#[cfg(feature = "s3")]
+pub use storage::S3Storage;
+pub use storage::{LocalDiskStorage, Storage};

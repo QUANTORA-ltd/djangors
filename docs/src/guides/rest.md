@@ -335,22 +335,26 @@ assert_eq!(VALIDATION_ERROR_CODE, "validation_error");
 # }
 ```
 
-### Low-level `serialize` free function
+### Low-level `serialize`, `serialize_to_vec`, and `serialize_many_to_vec`
 
 When you only need a model rendered to JSON without a full ViewSet — a custom
 handler, a CSV/export endpoint, a debug route — call `djangors_rest::serialize`
-directly. It returns a `serde_json::Value` you can drop into `Response::json`.
-To serialise a collection, map over the queryset result.
+for a `serde_json::Value`, or `serialize_to_vec` / `serialize_many_to_vec` to
+stream directly into a `Vec<u8>` buffer (paired with `Response::json_bytes`)
+using the compile-time `#[derive(Model)]` JSON writer without allocating
+intermediate `serde_json::Value` maps:
 
 ```rust,compile
 # use polls::models::Question;
 # async fn run(db: &djangors_db::Database) -> Result<(), Box<dyn std::error::Error>> {
+use djangors_core::{Response, StatusCode};
 use djangors_orm::Model;
-use djangors_rest::serialize;
+use djangors_rest::{serialize, serialize_many_to_vec};
 
 let questions = Question::objects().all(db).await?;
 let json = serde_json::Value::Array(questions.iter().map(serialize).collect());
-# let _ = json;
+let response = Response::json_bytes(StatusCode::OK, serialize_many_to_vec(&questions));
+# let _ = (json, response);
 # Ok(())
 # }
 ```
