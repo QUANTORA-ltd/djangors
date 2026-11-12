@@ -201,9 +201,24 @@ fn test_parse_openapi_typescript() {
 
 #[test]
 fn test_parse_openapi_prefix_and_models() {
-    let cli = Cli::try_parse_from(["dj", "openapi", "--api-prefix", "/v2", "--model", "Post", "--model", "User"]).unwrap();
+    let cli = Cli::try_parse_from([
+        "dj",
+        "openapi",
+        "--api-prefix",
+        "/v2",
+        "--model",
+        "Post",
+        "--model",
+        "User",
+    ])
+    .unwrap();
     match cli.command {
-        Commands::Openapi { api_prefix, model, .. } => { assert_eq!(api_prefix, "/v2"); assert_eq!(model, vec!["Post".to_string(), "User".to_string()]); }
+        Commands::Openapi {
+            api_prefix, model, ..
+        } => {
+            assert_eq!(api_prefix, "/v2");
+            assert_eq!(model, vec!["Post".to_string(), "User".to_string()]);
+        }
         _ => panic!("Expected Commands::Openapi"),
     }
 }

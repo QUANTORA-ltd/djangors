@@ -618,3 +618,56 @@ fn test_duplicate_route_name_mount_panics() {
         .name("poll-detail")
         .mount("/sub", sub);
 }
+
+/// `IdempotencyLayer` hands the router a buffered `Full<Bytes>` body, so `RouterService`
+/// must accept any body type and the wrapped service must still be servable.
+#[cfg(feature = "cache")]
+#[tokio::test]
+async fn idempotency_layer_wraps_router_service() {
+    use djangors_cache::{IdempotencyLayer, InMemoryCache};
+    use http_body_util::Full;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tower::{Layer, ServiceExt};
+
+    fn assert_servable<S>(_: &S)
+    where
+        S: tower::Service<
+                hyper::Request<hyper::body::Incoming>,
+                Response = hyper::Response<Full<Bytes>>,
+                Error = std::convert::Infallible,
+            > + Clone
+            + Send
+            + 'static,
+        S::Future: Send + 'static,
+    {
+    }
+
+    static CHARGES: AtomicUsize = AtomicUsize::new(0);
+    async fn charge(_: Request, _: PathParams) -> Result<Response, DjangorsError> {
+        CHARGES.fetch_add(1, Ordering::SeqCst);
+        Ok(Response::text(StatusCode::CREATED, "charged"))
+    }
+
+    let service =
+        IdempotencyLayer::new(Arc::new(InMemoryCache::new(100)), Duration::from_secs(60)).layer(
+            RouterService::new(Router::new().post("/charge", charge), false),
+        );
+    assert_servable(&service);
+
+    let request = || {
+        hyper::Request::builder()
+            .method("POST")
+            .uri("/charge")
+            .header("idempotency-key", "charge-1")
+            .body(Full::new(Bytes::from_static(b"amount=500")))
+            .unwrap()
+    };
+    let first = service.clone().oneshot(request()).await.unwrap();
+    let retry = service.clone().oneshot(request()).await.unwrap();
+    assert_eq!(first.status(), StatusCode::CREATED);
+    assert_eq!(retry.status(), StatusCode::CREATED);
+    assert_eq!(retry.headers().get("idempotent-replayed").unwrap(), "true");
+    assert_eq!(CHARGES.load(Ordering::SeqCst), 1);
+}

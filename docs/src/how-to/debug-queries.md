@@ -52,9 +52,10 @@ async fn serve(settings: DjangorsSettings, router: Router) -> Result<(), djangor
 ```
 
 > **Never enable the panel in production.** It shows the SQL text of every query to
-> whoever loads the page. `for_settings` disables all panel headers and HTML injection
-> when `debug` is false. If an enabled panel is layered while `DJANGORS_DEBUG` is not
-> `true` or `1`, Djangors logs a warning.
+> whoever loads the page. `for_settings` turns the panel off completely (no headers, no
+> toolbar, no query recording) when `debug` is false. A panel built with
+> `debug_panel_layer()` or `DebugPanelLayer::new()` doesn't know your settings, so it logs
+> a warning at startup unless `DJANGORS_DEBUG` is `true` or `1`.
 
 For JSON APIs you can keep the headers and skip the HTML toolbar with
 `DebugPanelLayer::new().with_html_injection(false)`.

@@ -9,17 +9,34 @@ fn internal_error_is_logged_but_redacted_from_production_response() {
     struct Capture(Arc<Mutex<Vec<u8>>>);
     struct CaptureWriter(Arc<Mutex<Vec<u8>>>);
     impl std::io::Write for CaptureWriter {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> { self.0.lock().unwrap().extend_from_slice(bytes); Ok(bytes.len()) }
-        fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
     impl<'a> MakeWriter<'a> for Capture {
         type Writer = CaptureWriter;
-        fn make_writer(&'a self) -> Self::Writer { CaptureWriter(self.0.clone()) }
+        fn make_writer(&'a self) -> Self::Writer {
+            CaptureWriter(self.0.clone())
+        }
     }
     let output = Arc::new(Mutex::new(Vec::new()));
-    let subscriber = tracing_subscriber::fmt().with_ansi(false).with_writer(Capture(output.clone())).finish();
-    let req = crate::Request::new(hyper::Method::GET, hyper::Uri::from_static("/private"), Default::default(), bytes::Bytes::new());
-    let response = tracing::subscriber::with_default(subscriber, || crate::DjangorsError::Internal("db password wrong".into()).render(&req, false));
+    let subscriber = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_writer(Capture(output.clone()))
+        .finish();
+    let req = crate::Request::new(
+        hyper::Method::GET,
+        hyper::Uri::from_static("/private"),
+        Default::default(),
+        bytes::Bytes::new(),
+    );
+    let response = tracing::subscriber::with_default(subscriber, || {
+        crate::DjangorsError::Internal("db password wrong".into()).render(&req, false)
+    });
     let logged = String::from_utf8(output.lock().unwrap().clone()).unwrap();
     let body = String::from_utf8(response.body().to_vec()).unwrap();
     assert!(logged.contains("db password wrong"));
@@ -37,13 +54,80 @@ fn text_response() {
     );
 }
 
-#[test] fn hx_trigger_sets_header() { assert_eq!(Response::new(StatusCode::OK).hx_trigger("saved").headers().get("hx-trigger").unwrap(), "saved"); }
-#[test] fn hx_redirect_sets_header() { assert_eq!(Response::new(StatusCode::OK).hx_redirect("/home").headers().get("hx-redirect").unwrap(), "/home"); }
-#[test] fn hx_refresh_sets_header() { assert_eq!(Response::new(StatusCode::OK).hx_refresh().headers().get("hx-refresh").unwrap(), "true"); }
-#[test] fn hx_push_url_sets_header() { assert_eq!(Response::new(StatusCode::OK).hx_push_url("/items").headers().get("hx-push-url").unwrap(), "/items"); }
-#[test] fn hx_retarget_sets_header() { assert_eq!(Response::new(StatusCode::OK).hx_retarget("#results").headers().get("hx-retarget").unwrap(), "#results"); }
-#[test] fn hx_reswap_sets_header() { assert_eq!(Response::new(StatusCode::OK).hx_reswap("outerHTML").headers().get("hx-reswap").unwrap(), "outerHTML"); }
-#[test] fn invalid_htmx_header_is_skipped_without_panicking() { assert!(Response::new(StatusCode::OK).hx_trigger("bad\nvalue").headers().get("hx-trigger").is_none()); }
+#[test]
+fn hx_trigger_sets_header() {
+    assert_eq!(
+        Response::new(StatusCode::OK)
+            .hx_trigger("saved")
+            .headers()
+            .get("hx-trigger")
+            .unwrap(),
+        "saved"
+    );
+}
+#[test]
+fn hx_redirect_sets_header() {
+    assert_eq!(
+        Response::new(StatusCode::OK)
+            .hx_redirect("/home")
+            .headers()
+            .get("hx-redirect")
+            .unwrap(),
+        "/home"
+    );
+}
+#[test]
+fn hx_refresh_sets_header() {
+    assert_eq!(
+        Response::new(StatusCode::OK)
+            .hx_refresh()
+            .headers()
+            .get("hx-refresh")
+            .unwrap(),
+        "true"
+    );
+}
+#[test]
+fn hx_push_url_sets_header() {
+    assert_eq!(
+        Response::new(StatusCode::OK)
+            .hx_push_url("/items")
+            .headers()
+            .get("hx-push-url")
+            .unwrap(),
+        "/items"
+    );
+}
+#[test]
+fn hx_retarget_sets_header() {
+    assert_eq!(
+        Response::new(StatusCode::OK)
+            .hx_retarget("#results")
+            .headers()
+            .get("hx-retarget")
+            .unwrap(),
+        "#results"
+    );
+}
+#[test]
+fn hx_reswap_sets_header() {
+    assert_eq!(
+        Response::new(StatusCode::OK)
+            .hx_reswap("outerHTML")
+            .headers()
+            .get("hx-reswap")
+            .unwrap(),
+        "outerHTML"
+    );
+}
+#[test]
+fn invalid_htmx_header_is_skipped_without_panicking() {
+    assert!(Response::new(StatusCode::OK)
+        .hx_trigger("bad\nvalue")
+        .headers()
+        .get("hx-trigger")
+        .is_none());
+}
 
 #[test]
 fn html_response() {

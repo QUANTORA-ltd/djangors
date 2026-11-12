@@ -151,11 +151,17 @@ impl Request {
     }
 
     /// Returns the htmx target element ID, if present.
-    pub fn htmx_target(&self) -> Option<&str> { self.header("hx-target").and_then(|v| v.to_str().ok()) }
+    pub fn htmx_target(&self) -> Option<&str> {
+        self.header("hx-target").and_then(|v| v.to_str().ok())
+    }
     /// Returns the htmx trigger element ID, if present.
-    pub fn htmx_trigger(&self) -> Option<&str> { self.header("hx-trigger").and_then(|v| v.to_str().ok()) }
+    pub fn htmx_trigger(&self) -> Option<&str> {
+        self.header("hx-trigger").and_then(|v| v.to_str().ok())
+    }
     /// Returns the current browser URL reported by htmx, if present.
-    pub fn htmx_current_url(&self) -> Option<&str> { self.header("hx-current-url").and_then(|v| v.to_str().ok()) }
+    pub fn htmx_current_url(&self) -> Option<&str> {
+        self.header("hx-current-url").and_then(|v| v.to_str().ok())
+    }
 
     /// Get a decoded query-string parameter by name.
     ///

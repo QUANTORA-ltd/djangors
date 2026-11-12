@@ -7,18 +7,38 @@ All notable changes to Djangors are documented here. Format loosely follows
 
 ### Added
 
-- htmx request metadata and response header helpers.
-- `IdempotencyLayer` and atomic cache `add` support for retry-safe unsafe requests.
-- `dj openapi --api-prefix` and repeatable `--model` selection.
+- **Idempotency keys** (`djangors_cache::IdempotencyLayer`): a `POST`/`PUT`/`PATCH`/`DELETE`
+  with an `Idempotency-Key` header runs once; retries get the stored response
+  (`Idempotent-Replayed: true`), concurrent duplicates get 409, and a reused key with a
+  different body gets 422. Keys are scoped per caller (`Authorization` + `Cookie` by default,
+  or `with_scope`). A request abandoned mid-flight releases its key. See
+  [How to Make Payments and Other POSTs Safe to Retry](docs/src/how-to/idempotency.md).
+- `Cache::add`, an atomic store-if-absent operation, implemented for the in-memory,
+  database, and Redis backends. Custom `Cache` implementations get a default that returns
+  `CacheError::Unsupported`.
+- **htmx helpers**: `Request::is_htmx`, `is_htmx_boosted`, `htmx_target`, `htmx_trigger`,
+  `htmx_current_url`, and `Response::hx_trigger`, `hx_redirect`, `hx_refresh`,
+  `hx_push_url`, `hx_retarget`, `hx_reswap`. See [How to Use htmx](docs/src/how-to/htmx.md).
+- `dj openapi --api-prefix <PREFIX>` and repeatable `--model <NAME>`; the output states
+  the path pattern it assumes.
+- `DebugPanelLayer::for_settings(&settings)`, which turns the panel off entirely when
+  `debug` is false.
 
 ### Changed
 
-- Debug panel layers can follow `DjangorsSettings::debug`; unsafe production activation logs a warning.
-- Model factories now require explicit relation IDs before database creation.
+- `RouterService` accepts any request body type, so body-buffering middleware such as
+  `IdempotencyLayer` can wrap it.
+- **Breaking for tests:** `#[derive(Factory)]` `create()` / `create_many()` return
+  `OrmError::InvalidQuery` when a `ForeignKey` / `OneToOne` field was not set with
+  `.with_<field>_id(..)`, instead of saving a reference to id 1. `build()` is unchanged.
+- A debug panel built without settings logs a warning unless `DJANGORS_DEBUG` is set.
 
 ### Fixed
 
-- Internal errors are logged at error level before their details are redacted from responses.
+- Internal errors are logged at `error` level (method, path, message) before their text
+  is redacted from the response.
+- `save()` on a model whose only field is an auto primary key generated invalid SQL
+  (`INSERT INTO t () VALUES ()`); it now uses `INSERT INTO t DEFAULT VALUES`.
 
 ## [0.9.0]
 

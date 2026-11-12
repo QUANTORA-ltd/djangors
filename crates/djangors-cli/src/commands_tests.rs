@@ -790,7 +790,8 @@ fn test_render_openapi_typescript_client() {
         indexes: Vec::new(),
     };
 
-    let ts = render_openapi_from_snapshots(&[snapshot], true, "Blog API", "1.0.0", "/api", &[]).unwrap();
+    let ts =
+        render_openapi_from_snapshots(&[snapshot], true, "Blog API", "1.0.0", "/api", &[]).unwrap();
     assert!(ts.contains("export interface ProblemDetails {"));
     assert!(ts.contains("export class ProblemDetailsError extends Error {"));
     assert!(ts.contains("export interface Post {"));
@@ -806,13 +807,41 @@ fn test_render_openapi_typescript_client() {
 
 #[test]
 fn openapi_prefix_and_model_filter_are_applied() {
-    let snapshot = djangors_orm::ModelSnapshot { struct_name: "Post".into(), app_label: "posts".into(), table_name: "posts".into(), fields: vec![], relations: vec![], unique_together: vec![], ordering: vec![], indexes: vec![] };
-    let other = djangors_orm::ModelSnapshot { struct_name: "User".into(), app_label: "users".into(), table_name: "users".into(), fields: vec![], relations: vec![], unique_together: vec![], ordering: vec![], indexes: vec![] };
-    let rendered = render_openapi_from_snapshots(&[snapshot.clone(), other], false, "API", "1", "/v2", &["Post".into()]).unwrap();
+    let snapshot = djangors_orm::ModelSnapshot {
+        struct_name: "Post".into(),
+        app_label: "posts".into(),
+        table_name: "posts".into(),
+        fields: vec![],
+        relations: vec![],
+        unique_together: vec![],
+        ordering: vec![],
+        indexes: vec![],
+    };
+    let other = djangors_orm::ModelSnapshot {
+        struct_name: "User".into(),
+        app_label: "users".into(),
+        table_name: "users".into(),
+        fields: vec![],
+        relations: vec![],
+        unique_together: vec![],
+        ordering: vec![],
+        indexes: vec![],
+    };
+    let rendered = render_openapi_from_snapshots(
+        &[snapshot.clone(), other],
+        false,
+        "API",
+        "1",
+        "/v2",
+        &["Post".into()],
+    )
+    .unwrap();
     assert!(rendered.contains("/v2/posts"));
     assert!(!rendered.contains("/v2/users"));
     assert!(rendered.contains("Paths assume each model is mounted at /v2/<plural>/."));
-    let error = render_openapi_from_snapshots(&[snapshot], false, "API", "1", "/api", &["Missing".into()]).unwrap_err();
+    let error =
+        render_openapi_from_snapshots(&[snapshot], false, "API", "1", "/api", &["Missing".into()])
+            .unwrap_err();
     assert!(error.contains("Missing") && error.contains("Post"));
 }
 

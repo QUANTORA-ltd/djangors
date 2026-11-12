@@ -1246,12 +1246,18 @@ pub fn expand_derive_model(input: DeriveInput) -> syn::Result<TokenStream> {
                 let save_cols: Vec<&str> = vec![#(#save_cols_vec),*];
                 let placeholders: Vec<String> = (1..=save_cols.len()).map(|i| dialect.placeholder(i)).collect();
                 let save_cols_quoted: Vec<String> = save_cols.iter().map(|c| format!("\"{}\"", c)).collect();
-                let sql = format!(
-                    "INSERT INTO {} ({}) VALUES ({}) RETURNING *",
-                    #table_name,
-                    save_cols_quoted.join(", "),
-                    placeholders.join(", ")
-                );
+                // A model whose only field is an auto primary key has no columns to insert;
+                // `INSERT INTO t () VALUES ()` is invalid SQL on PostgreSQL and SQLite.
+                let sql = if save_cols.is_empty() {
+                    format!("INSERT INTO {} DEFAULT VALUES RETURNING *", #table_name)
+                } else {
+                    format!(
+                        "INSERT INTO {} ({}) VALUES ({}) RETURNING *",
+                        #table_name,
+                        save_cols_quoted.join(", "),
+                        placeholders.join(", ")
+                    )
+                };
                 let mut bind_values = Vec::new();
                 #(#save_bind_stmts)*
                 let row = db_ref.conn().fetch_one(&sql, &bind_values).await?;

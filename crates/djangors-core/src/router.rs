@@ -851,7 +851,13 @@ impl RouterService {
     }
 }
 
-impl tower::Service<hyper::Request<hyper::body::Incoming>> for RouterService {
+/// Generic over the request body so middleware that buffers the body (for example
+/// `djangors_cache::IdempotencyLayer`, which hands on `Full<Bytes>`) can wrap it.
+impl<B> tower::Service<hyper::Request<B>> for RouterService
+where
+    B: hyper::body::Body<Data = Bytes> + Send + 'static,
+    B::Error: fmt::Display,
+{
     type Response = hyper::Response<http_body_util::Full<Bytes>>;
     type Error = std::convert::Infallible;
     type Future = std::pin::Pin<
@@ -865,7 +871,7 @@ impl tower::Service<hyper::Request<hyper::body::Incoming>> for RouterService {
         std::task::Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, req: hyper::Request<hyper::body::Incoming>) -> Self::Future {
+    fn call(&mut self, req: hyper::Request<B>) -> Self::Future {
         let router = self.router.clone();
         let debug = self.debug;
         Box::pin(async move {
