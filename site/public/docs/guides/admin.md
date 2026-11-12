@@ -181,3 +181,135 @@ default when omitted (`actions`, `fieldsets`, `readonly_fields`,
 `raw_id_fields`, plus the search/filter/editable/hierarchy accessors).
 `DefaultModelAdmin<M>` in `djangors-admin` is the built-in implementation
 `register_with` uses, and you can use it as a reference when writing your own.
+
+---
+
+## Crate layout
+
+`djangors-admin` is organized by view rather than by model. `lib.rs` holds only the
+crate-level docs, the shared template engine (`ADMIN_TEMPLATES`), the module list, and the
+public re-exports — so the public API you `use` is identical regardless of which module an
+item lives in. A contributor can find things like this:
+
+| Module | Owns |
+| --- | --- |
+| `model_admin` | `ModelAdmin` trait, `DefaultModelAdmin`, `ModelAdminConfig`, `ChangelistPage`, `InlineConfig`, `TenantFilter` |
+| `site` | `AdminSite`, `SiteBranding`, `TenantScope`, `with_tenant_scoping`, route assembly (`urls`) |
+| `changelist` | List page: querying, pagination, CSV export, `?o=/`q=/`f=`/date-hierarchy handling |
+| `edit_view` | Add/change form GET+POST handlers |
+| `delete_view` | Delete and bulk-delete GET+POST handlers |
+| `index_view` | The admin index (app/model links) |
+| `history_view` | Per-object change history |
+| `action_view` | Bulk-action handlers |
+| `forms` | Form/field rendering and parsing for the add/change forms |
+| `log` | `LogEntry` auditing (`AdminAction`, field diffs) |
+| `perms` | `require_staff`, `require_perm`, and request-scoped tenant resolution |
+| `favicon` | `favicon_routes` static branding routes |
+
+`site.rs` depends on the view modules; the view modules depend on the `ModelAdmin` trait
+defined in `model_admin.rs`. `lib.rs` re-exports the public surface
+(`AdminSite`, `SiteBranding`, `TenantScope`, `ModelAdmin`, `DefaultModelAdmin`,
+`ModelAdminConfig`, `InlineConfig`, `TenantFilter`, `ChangelistPage`, `AdminAction`,
+`LogEntry`, `favicon_routes`, ...), so the module an item lives in is an implementation
+detail rather than part of the public API.
+
+---
+
+## Implementing `ModelAdmin` by hand
+
+The section above introduced the trait. Whatever you implement, the framework hands you a
+`TenantFilter` — `Option<(&'static str, i64)>`, the tenant FK field name on the model plus the
+tenant id every row must match — as the **final argument** to every method that touches data:
+`changelist`, `export_csv_rows`, `get_by_pk`, `update_from_form`, `update_fields_from_form`,
+`create_from_form`, and `delete_by_pk`. Their real signatures:
+
+```rust,illustrative
+use djangors_admin::{ChangelistPage, ModelAdmin, TenantFilter};
+
+async fn changelist(
+    &self,
+    db: &djangors_db::Database,
+    order: Option<&str>,
+    page: i64,
+    per_page: i64,
+    search: Option<&str>,
+    filters: &[(&'static str, bool)],
+    date_range: Option<(chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)>,
+    tenant: TenantFilter,
+) -> Result<ChangelistPage, djangors_core::DjangorsError>;
+
+async fn export_csv_rows(
+    &self,
+    db: &djangors_db::Database,
+    order: Option<&str>,
+    search: Option<&str>,
+    filters: &[(&'static str, bool)],
+    date_range: Option<(chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)>,
+    tenant: TenantFilter,
+) -> Result<(Vec<&'static str>, Vec<Vec<String>>), djangors_core::DjangorsError>;
+
+async fn get_by_pk(
+    &self,
+    db: &djangors_db::Database,
+    pk: i64,
+    tenant: TenantFilter,
+) -> Result<Option<Vec<(&'static str, djangors_orm::expr::Value)>>, djangors_core::DjangorsError>;
+
+async fn update_from_form(
+    &self,
+    db: &djangors_db::Database,
+    pk: i64,
+    form: &std::collections::HashMap<String, String>,
+    tenant: TenantFilter,
+) -> Result<Result<(), std::collections::HashMap<String, String>>, djangors_core::DjangorsError>;
+
+async fn update_fields_from_form(
+    &self,
+    db: &djangors_db::Database,
+    pk: i64,
+    form: &std::collections::HashMap<String, String>,
+    tenant: TenantFilter,
+) -> Result<Result<(), std::collections::HashMap<String, String>>, djangors_core::DjangorsError>;
+
+async fn create_from_form(
+    &self,
+    db: &djangors_db::Database,
+    form: &std::collections::HashMap<String, String>,
+    tenant: TenantFilter,
+) -> Result<Result<i64, std::collections::HashMap<String, String>>, djangors_core::DjangorsError>;
+
+async fn delete_by_pk(
+    &self,
+    db: &djangors_db::Database,
+    pk: i64,
+    tenant: TenantFilter,
+) -> Result<bool, djangors_core::DjangorsError>;
+```
+
+The one thing a custom implementation must get right is this contract:
+
+> **Apply the `tenant` argument to every query you run, and never cache it on `self`.**
+
+The reason is structural. The admin object is built once at registration and shared across
+every concurrent request behind an `Arc`; there is no per-request copy. If you stored the
+resolved tenant on the admin, a second request could overwrite it while the first awaited the
+database, and one tenant's request would then read another tenant's rows. So the tenant always
+arrives per-call, and it is up to your method to thread it into the query. `None` means
+unrestricted — a superuser, or a site with no tenant scoping configured at all.
+
+The PK-based methods carry the same obligation with specific semantics, and the safe default
+is to scope by both PK and tenant like `DefaultModelAdmin` does:
+
+- **`get_by_pk`** must read a row belonging to another tenant as "not found" (`None`), not
+  return it — a cross-tenant primary key and a missing one are indistinguishable.
+- **`delete_by_pk`** must refuse (return `false`, delete nothing) when the row belongs to
+  another tenant.
+- **`update_from_form` / `update_fields_from_form`** must not touch another tenant's row.
+- **`create_from_form`** must force the new row's tenant field to the resolved tenant rather
+  than trusting the submitted form, so a scoped add-form can never plant a row elsewhere.
+
+The default build does all of this via `tenant_compare` plus PK-scoped querysets, and the
+[Multi-tenancy guide](multi-tenancy.md) walks through the reasoning, the "not stored on the
+admin" design, and the fail-closed resolution rules in full — read it before writing a custom
+`ModelAdmin` for a scoped site.
+

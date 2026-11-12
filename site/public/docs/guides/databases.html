@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-208ebb8b.js";
+            window.path_to_searchindex_js = "../searchindex-ff027cc3.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-15287f60.js"></script>
+        <script src="../toc-fcdb45cd.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -204,6 +204,19 @@ export DATABASE_URL="postgres://postgres:password@localhost:5432/my_app"
 </span>let config = djangors_db::config::DatabaseConfig::new(std::env::var("DATABASE_URL")?);
 let db = djangors_db::Database::connect(&amp;config).await?;
 <span class="boring">}</span></code></pre>
+<h3 id="cargo-feature-flags-postgres-and-sqlite"><a class="header" href="#cargo-feature-flags-postgres-and-sqlite">Cargo Feature Flags (<code>postgres</code> and <code>sqlite</code>)</a></h3>
+<p>At compile time, <code>djangors-db</code> (and the <code>djangors</code> facade crate) gate each SQL driver behind its own Cargo feature flag (<code>postgres</code> and <code>sqlite</code>, both enabled by default). If your production deployment targets only one database engine, disable default features and enable only the backend you need to drop the unused driver (such as bundled <code>libsqlite3-sys</code> or <code>sqlx-postgres</code>) from your dependency graph and release binary:</p>
+<pre><code class="language-toml"># PostgreSQL-only build (drops sqlx-sqlite and libsqlite3-sys)
+djangors = { version = "0.9", default-features = false, features = ["postgres", "rest"] }
+
+# Or when depending on djangors-db / djangors-orm directly:
+djangors-db = { version = "0.9", default-features = false, features = ["postgres"] }
+djangors-orm = { version = "0.9", default-features = false, features = ["postgres"] }
+</code></pre>
+<blockquote class="blockquote-tag blockquote-tag-note">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
+<p>Enabling neither <code>postgres</code> nor <code>sqlite</code> emits a clear <code>compile_error!</code> instructing you to enable at least one backend feature.</p>
+</blockquote>
 <hr>
 <h2 id="dialect-aware-architecture"><a class="header" href="#dialect-aware-architecture">Dialect-Aware Architecture</a></h2>
 <p>Rather than forcing a single SQL syntax across different databases, Djangors uses a dialect-aware architecture. The system checks the active <code>Dialect</code> to generate and execute database-specific SQL.</p>
@@ -237,9 +250,9 @@ let db = djangors_db::Database::connect(&amp;config).await?;
 </ul>
 <hr>
 <h2 id="honest-limitations"><a class="header" href="#honest-limitations">Honest Limitations</a></h2>
-<p>While the dual-backend architecture simplifies local development, there are key differences and limitations to keep in mind:</p>
-<h3 id="1-testing-is-postgresql-only"><a class="header" href="#1-testing-is-postgresql-only">1. Testing is PostgreSQL-Only</a></h3>
-<p>The testing framework in <code>djangors-test</code> is strictly PostgreSQL-only. This is because its transaction isolation and test database management system relies on PostgreSQL session-level advisory locks to run tests concurrently without interference. SQLite cannot be used to run the Djangors test suite.</p>
+<p>While the dual-backend architecture simplifies local development and CI testing, there are key differences and limitations to keep in mind:</p>
+<h3 id="1-dual-backend-testing-vs-postgresql-specific-features"><a class="header" href="#1-dual-backend-testing-vs-postgresql-specific-features">1. Dual-Backend Testing vs. PostgreSQL-Specific Features</a></h3>
+<p><code>djangors-test</code> (<code>TestDatabase</code> and <code>TestBackend</code>) supports <strong>both</strong> in-memory SQLite (<code>TEST_BACKEND=sqlite</code>) and PostgreSQL (<code>TEST_BACKEND=postgres</code>). In-memory SQLite gives fast, zero-container test runs for standard ORM, view, auth, admin, and REST tests. However, PostgreSQL-specific capabilities—such as session-level advisory locks (<code>acquire_cross_process_lock</code>), <code>SELECT ... FOR UPDATE SKIP LOCKED</code> / <code>NOWAIT</code>, PostgreSQL full-text search (<code>tsvector</code>), and PostgreSQL transaction isolation levels—require a real PostgreSQL instance and return <code>UnsupportedOnDialect</code> (or skip) on SQLite.</p>
 <h3 id="2-unsupported-migrations-on-sqlite"><a class="header" href="#2-unsupported-migrations-on-sqlite">2. Unsupported Migrations on SQLite</a></h3>
 <p>SQLite has very limited support for altering existing table schemas. Because of this, certain schema operations are not supported on SQLite. For instance:</p>
 <ul>
@@ -259,16 +272,16 @@ let db = djangors_db::Database::connect(&amp;config).await?;
 <ul>
 <li><strong>SQLite</strong> is ideal for:
 <ul>
-<li>Local development to avoid running a local PostgreSQL container.</li>
-<li>Simple staging environments or internal tools with minimal write concurrency.</li>
+<li>Local development and fast <code>TEST_BACKEND=sqlite cargo test</code> runs without a local PostgreSQL container.</li>
+<li>Simple staging environments, embedded tools, or internal apps with minimal write concurrency.</li>
 <li>Single-writer, read-heavy workloads.</li>
 </ul>
 </li>
 <li><strong>PostgreSQL</strong> is required for:
 <ul>
 <li>Production deployments with concurrent writes or high traffic.</li>
-<li>Running the automated test suite (<code>djangors-test</code>).</li>
-<li>Advanced operations such as alter column type migrations.</li>
+<li>Testing PostgreSQL-specific locking (<code>SKIP LOCKED</code>, advisory locks), full-text search, or isolation levels.</li>
+<li>Advanced schema operations such as <code>AlterColumnType</code> migrations.</li>
 </ul>
 </li>
 </ul>
@@ -345,9 +358,17 @@ if let Err(_) = process_fee(&amp;mut conn).await {
             sender.balance -= amount;
             receiver.balance += amount;
 
-            // Execute debit &amp; credit updates
-            sender.save(&amp;mut **conn).await?;
-            receiver.save(&amp;mut **conn).await?;
+            // Execute debit &amp; credit updates inside the transaction handle
+            conn.execute(
+                "UPDATE accounts SET balance = $1 WHERE id = $2",
+                &amp;[BindValue::I64(sender.balance), BindValue::I64(sender.id)],
+            )
+            .await?;
+            conn.execute(
+                "UPDATE accounts SET balance = $1 WHERE id = $2",
+                &amp;[BindValue::I64(receiver.balance), BindValue::I64(receiver.id)],
+            )
+            .await?;
 
             // Commit savepoint checkpoint
             conn.release_savepoint("ledger_entry").await?;

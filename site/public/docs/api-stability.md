@@ -14,12 +14,7 @@ will never see `djangors-orm` at `1.3.0` while `djangors-core` is at `1.1.0`. Be
 breaking changes between minor (`0.x`) releases without a deprecation cycle; the guarantees below
 apply from `1.0` onward.
 
-**What "the public API" means**: as of the first API-freeze review, this covers `djangors-core`,
-`djangors-orm`, and `djangors-rest` (audited together as the largest and most-depended-on
-surface). The `djangors` facade crate (`djangors::core`, `djangors::orm`, `djangors::rest`, etc.)
-re-exports these and is the intended single entry point for applications. Coverage of the
-remaining crates (`djangors-admin`, `djangors-auth`, `djangors-forms`, and the rest) is an
-explicitly planned follow-up ("Freeze Review Pass 2"), not yet frozen under this policy.
+**What "the public API" means**: across Freeze Review Pass 1 and Pass 2 (`docs/design/10.14-api-freeze-pass-2.md`), this policy covers the core framework and primary battery crates: `djangors-core`, `djangors-orm`, `djangors-rest`, `djangors-db`, `djangors-auth`, `djangors-sessions`, `djangors-admin`, `djangors-forms`, `djangors-views`, `djangors-template`, `djangors-migrations`, `djangors-cache`, `djangors-mail`, `djangors-tasks`, `djangors-i18n`, `djangors-staticfiles`, `djangors-pdf`, and `djangors-test`. The `djangors` facade crate (`djangors::core`, `djangors::orm`, `djangors::rest`, etc.) re-exports these behind granular feature flags and is the intended single entry point for applications. Public configuration structs that are expected to grow new fields over time (such as `DjangorsSettings`, `djangors_mail::Message`, and `djangors_rest::ViewSetConfig`) are marked `#[non_exhaustive]` with builder constructors so adding fields in minor releases never breaks downstream code.
 
 ## Deprecation mechanics
 
@@ -34,10 +29,8 @@ explicitly planned follow-up ("Freeze Review Pass 2"), not yet frozen under this
 
 ## `CHANGELOG.md`
 
-A root [`CHANGELOG.md`](https://github.com/Chidi09/djangors/blob/main/CHANGELOG.md) is maintained
-today, grouped by development phase since there has not yet been a tagged `1.0` release. Once
-`1.0` ships, it switches to the [Keep a Changelog](https://keepachangelog.com/) format:
-`Added`/`Changed`/`Deprecated`/`Removed`/`Fixed`/`Security` sections per version.
+A root [`CHANGELOG.md`](https://github.com/QUANTORA-ltd/djangors/blob/main/CHANGELOG.md) is maintained
+in the [Keep a Changelog](https://keepachangelog.com/) format (`Added`/`Changed`/`Deprecated`/`Removed`/`Fixed`/`Security` sections per tagged release, plus `[Unreleased]`), alongside a historical summary of earlier pre-release development phases.
 
 ## Release cadence
 
@@ -56,9 +49,6 @@ used internally for every architecturally significant change in this project's o
 slice in `docs/design/` is exactly this kind of doc). Formalizing it here means outside
 contributors can propose and review API changes the same way, not just watch them happen.
 
-## Where this stops short today
+## Pre-1.0 Scope Note
 
-This is a **first pass**, not a complete stability contract: it covers 3 of the 32 workspace
-crates by design (the largest, most-used ones), and doesn't cover the contrib crates or CLI
-tooling at all. Treat this page as the honest current state of the policy, not a claim that
-everything is frozen. It will be extended as later freeze-review passes land.
+While Freeze Review Pass 1 and Pass 2 have audited the core and primary battery crates (including `#[non_exhaustive]` hardening and unified `&Database` model CRUD signatures), Djangors is still pre-`1.0`. Before `1.0.0` is tagged, breaking changes may still land between `0.x` minor releases when documented in `CHANGELOG.md` and `docs/design/`.

@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-208ebb8b.js";
+            window.path_to_searchindex_js = "../searchindex-ff027cc3.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-15287f60.js"></script>
+        <script src="../toc-fcdb45cd.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -261,11 +261,9 @@ let public = viewset_routes_with_permission::&lt;Question, _&gt;(
 );
 
 // Same default auth, but with a custom config (filtering + ordering allowlists).
-let config = ViewSetConfig {
-    filterable_fields: &amp;["pub_date"],
-    orderable_fields: &amp;["pub_date"],
-    ..Default::default()
-};
+let config = ViewSetConfig::new()
+    .with_filterable_fields(&amp;["pub_date"])
+    .with_orderable_fields(&amp;["pub_date"]);
 let filtered = viewset_routes_with_config::&lt;Question&gt;(Router::new(), "/questions/filtered", config);
 
 // Both.
@@ -508,21 +506,25 @@ let _ = a.clone().into_result(); // Ok(()) when empty, Err(self) otherwise
 assert_eq!(VALIDATION_ERROR_CODE, "validation_error");
 <span class="boring">let _ = (fields, non_field, json);
 </span><span class="boring">}</span></code></pre>
-<h3 id="low-level-serialize-free-function"><a class="header" href="#low-level-serialize-free-function">Low-level <code>serialize</code> free function</a></h3>
+<h3 id="low-level-serialize-serialize_to_vec-and-serialize_many_to_vec"><a class="header" href="#low-level-serialize-serialize_to_vec-and-serialize_many_to_vec">Low-level <code>serialize</code>, <code>serialize_to_vec</code>, and <code>serialize_many_to_vec</code></a></h3>
 <p>When you only need a model rendered to JSON without a full ViewSet — a custom
 handler, a CSV/export endpoint, a debug route — call <code>djangors_rest::serialize</code>
-directly. It returns a <code>serde_json::Value</code> you can drop into <code>Response::json</code>.
-To serialise a collection, map over the queryset result.</p>
+for a <code>serde_json::Value</code>, or <code>serialize_to_vec</code> / <code>serialize_many_to_vec</code> to
+stream directly into a <code>Vec&lt;u8&gt;</code> buffer (paired with <code>Response::json_bytes</code>)
+using the compile-time <code>#[derive(Model)]</code> JSON writer without allocating
+intermediate <code>serde_json::Value</code> maps:</p>
 <pre class="playground"><code class="language-rust compile"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span><span class="boring">use polls::models::Question;
 </span><span class="boring">async fn run(db: &amp;djangors_db::Database) -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
-</span>use djangors_orm::Model;
-use djangors_rest::serialize;
+</span>use djangors_core::{Response, StatusCode};
+use djangors_orm::Model;
+use djangors_rest::{serialize, serialize_many_to_vec};
 
 let questions = Question::objects().all(db).await?;
 let json = serde_json::Value::Array(questions.iter().map(serialize).collect());
-<span class="boring">let _ = json;
+let response = Response::json_bytes(StatusCode::OK, serialize_many_to_vec(&amp;questions));
+<span class="boring">let _ = (json, response);
 </span><span class="boring">Ok(())
 </span><span class="boring">}
 </span><span class="boring">}</span></code></pre>
@@ -586,6 +588,8 @@ fields</em> — it cannot compute, fuse, or rename a field. For that, implement 
 <tr><td><code>validate(&amp;self, &amp;[(&amp;str, Value)], &amp;mut ValidationErrors)</code></td><td>object-level rules, run after field parsing</td><td>no-op</td></tr>
 <tr><td><code>to_representation_nested(&amp;self, &amp;M, &amp;RelatedObjects) -&gt; Value</code></td><td>embed preloaded relations in place of FK ids</td><td>merges the base representation</td></tr>
 <tr><td><code>to_representation_many(&amp;self, &amp;[M]) -&gt; Vec&lt;Value&gt;</code></td><td>render a collection</td><td>maps <code>to_representation</code></td></tr>
+<tr><td><code>write_json(&amp;self, &amp;M, &amp;mut Vec&lt;u8&gt;)</code></td><td>write one row directly as UTF-8 JSON bytes</td><td>serializes <code>to_representation</code> (<code>ModelSerializer</code> overrides with <code>Model::write_json</code>)</td></tr>
+<tr><td><code>write_json_many(&amp;self, &amp;[M], &amp;mut Vec&lt;u8&gt;)</code></td><td>write a collection directly as a UTF-8 JSON array</td><td>serializes <code>to_representation_many</code> (<code>ModelSerializer</code> overrides to stream <code>write_json</code>)</td></tr>
 <tr><td><code>parse(&amp;self, &amp;Value, partial) -&gt; Result&lt;FieldValues, ValidationErrors&gt;</code></td><td><code>to_internal_value</code> then <code>validate</code></td><td>ViewSets call this</td></tr>
 </tbody>
 </table>

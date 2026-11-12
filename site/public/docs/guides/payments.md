@@ -64,6 +64,78 @@ let proxied = PaystackProvider::with_base_url("sk_live_...", "https://paystack-p
 # }
 ```
 
+## `BachsProvider`
+
+[Bachs](https://bachs.io) is a payments/billing platform aimed at internet businesses with
+African settlement. `BachsProvider` implements the same `PaymentProvider` trait as Paystack, so
+it is a drop-in alternative for one-time charges.
+
+```rust,compile
+use djangors_contrib_payments::BachsProvider;
+
+fn make_provider(secret_key: &str) -> BachsProvider {
+    BachsProvider::new(secret_key.to_string())
+}
+```
+
+There are three constructors. `new(secret_key)` talks to the production API
+(`https://api.bachs.io`), `sandbox(secret_key)` points at `https://sandbox-api.bachs.io`, and
+`with_base_url(secret_key, base_url)` routes everything at an arbitrary base URL (useful for a
+mock server or a proxy). Build against sandbox first — going live is a key swap (`sk_sandbox_`
+→ `sk_live_`), not a code change:
+
+```rust,compile
+# fn main() {
+use djangors_contrib_payments::BachsProvider;
+
+let live = BachsProvider::new("sk_live_..."); // real https://api.bachs.io
+let sandbox = BachsProvider::sandbox("sk_sandbox_..."); // https://sandbox-api.bachs.io
+# let _ = (live, sandbox);
+# }
+```
+
+### Amounts: decimal strings on the wire
+
+This is the part most likely to trip someone up. The `PaymentProvider` trait speaks in
+`amount_minor: i64` (kobo, cents), and you keep using minor units throughout — but Bachs's own
+API uses decimal strings at the currency's precision and explicitly never minor units. The
+provider converts in both directions using exact integer arithmetic, driven by a
+currency-exponent table: 0 decimals for currencies like JPY and XOF, 3 for currencies like KWD
+and BHD, and 2 for everything else (including NGN, USD, GHS, KES, ZAR). You never see a decimal
+string; the conversion happens at the boundary. So `amount_minor: 123456` with `"NGN"` becomes
+`"1234.56"` on the wire, and a `"1234.56"` response round-trips back to `123456`.
+
+### `initiate` / `verify` / `refund`
+
+The one deviation from Paystack you must not miss: **Bachs has no lookup-by-merchant-reference
+endpoint**, so `verify(reference)` and `refund(reference, ..)` interpret their argument as the
+Bachs **checkout id**, not your own merchant reference. `initiate` returns that checkout id in
+the `access_code` field of `InitiateChargeResponse` (Bachs has no "access code" concept of its
+own) and the redirect URL in `authorization_url`. **The caller must persist `access_code` after
+`initiate`**, or it cannot verify or refund the charge later. A reader who misses this ends up
+with a broken integration.
+
+### Webhooks
+
+Bachs signs deliveries with two headers, `X-Bachs-Timestamp` and `X-Bachs-Signature`, where the
+signature is an HMAC-SHA256 hex digest of `"{timestamp}.{raw_body}"`. Because the single-argument
+`verify_webhook_signature` has nowhere to put the timestamp, the trait gained
+`verify_webhook_signature_with_timestamp(raw_body, timestamp, signature)`, whose default
+implementation ignores the timestamp so Paystack is unaffected. Note that `BachsProvider`'s plain
+`verify_webhook_signature` deliberately returns `false` unconditionally — it fails closed rather
+than pretending to verify — so Bachs callers **must** use the timestamped method.
+
+`handle_bachs_webhook` verifies, parses, and records the delivery in one call. Pass the raw body
+bytes exactly as received, never a re-serialized copy, or the signature will not match. The
+`collection.succeeded` event is the one treated as payment confirmation.
+
+### Paystack or Bachs?
+
+At a factual level: Paystack verifies and refunds by your merchant reference and signs webhooks
+with a single HMAC-SHA512 header; Bachs verifies and refunds by checkout id, uses multi-currency
+decimal amounts, and signs webhooks with a timestamped HMAC-SHA256 pair. Pick the provider whose
+API and settlement model match your market.
+
 ## Idempotent transaction recording
 
 `Transaction`'s `reference` column has a real **database-level UNIQUE constraint**, not an

@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-208ebb8b.js";
+            window.path_to_searchindex_js = "../searchindex-ff027cc3.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-15287f60.js"></script>
+        <script src="../toc-fcdb45cd.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -378,6 +378,76 @@ async fn exclusive_setup() {
 </div>
 <p>Release is explicit because Rust can’t run async code in <code>Drop</code>; an un-released lock stays held
 until its dedicated connection closes (i.e. when the test process exits).</p>
+<h3 id="model-factories-derivefactory"><a class="header" href="#model-factories-derivefactory">Model Factories (<code>#[derive(Factory)]</code>)</a></h3>
+<p>Writing out every field of a model for each test gets tedious. Derive <code>Factory</code> next to
+<code>Model</code> and you get <code>Model::factory()</code>, a builder in the style of Python’s <code>factory_boy</code>
+or Laravel’s model factories. It fills every field with a sensible default, and you set
+only the fields the test cares about:</p>
+<pre class="playground"><code class="language-rust compile"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span><span class="boring">use djangors_orm::Model as _;
+</span>use djangors_db::Database;
+use djangors_macros::{Factory, Model};
+
+#[derive(Debug, Clone, Model, Factory)]
+#[djangors(app = "blog")]
+pub struct Article {
+    #[djangors(primary_key, auto)]
+    pub id: i64,
+    #[djangors(max_length = 120)]
+    pub title: String,
+    pub author_email: String,
+    #[djangors(default = 10)]
+    pub views: i64,
+    pub subtitle: Option&lt;String&gt;,
+}
+
+async fn example(db: &amp;Database) -&gt; Result&lt;(), djangors_orm::OrmError&gt; {
+    // In memory only, nothing saved: title "title_&lt;n&gt;", author_email "user&lt;n&gt;@example.com", ...
+    let draft = Article::factory().build();
+    assert_eq!(draft.views, 10); // `default = ...` attributes are respected
+    assert_eq!(draft.subtitle, None); // Option fields default to None
+
+    // Override just what matters, then save it.
+    let popular = Article::factory().with_views(5_000).create(db).await?;
+    assert!(popular.id &gt; 0);
+
+    // Save several at once; each one gets a fresh sequence number.
+    let batch = Article::factory().with_title("Same title").create_many(db, 3).await?;
+    assert_eq!(batch.len(), 3);
+    Ok(())
+}
+<span class="boring">}</span></code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field type</th><th>Default</th></tr>
+</thead>
+<tbody>
+<tr><td><code>String</code></td><td><code>"&lt;field&gt;_&lt;n&gt;"</code>, cut to <code>max_length</code>; names containing <code>email</code> get <code>"user&lt;n&gt;@example.com"</code>, and names containing <code>url</code> or <code>website</code> get <code>"https://example.com/&lt;field&gt;/&lt;n&gt;"</code></td></tr>
+<tr><td>Integers and floats</td><td>The sequence number <code>n</code></td></tr>
+<tr><td><code>bool</code></td><td><code>true</code></td></tr>
+<tr><td><code>DateTime</code></td><td>The current time</td></tr>
+<tr><td><code>Uuid</code> / <code>Decimal</code></td><td>Built from <code>n</code></td></tr>
+<tr><td><code>Option&lt;T&gt;</code></td><td><code>None</code></td></tr>
+<tr><td>Field with <code>choices</code> or <code>default = ...</code></td><td>The first choice, or the default</td></tr>
+<tr><td>Anything else</td><td><code>Default::default()</code></td></tr>
+<tr><td>Auto primary key</td><td><code>0</code> (the database assigns the real ID on <code>create</code>)</td></tr>
+<tr><td><code>ForeignKey&lt;T&gt;</code> / <code>OneToOne&lt;T&gt;</code></td><td>ID <code>1</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>The sequence number <code>n</code> is shared by all factories of a model and increases with every
+<code>build</code>, so unique columns don’t collide.</p>
+<p>Relation fields default to ID <code>1</code> because the factory doesn’t create related rows.
+Unless that row exists, <code>create</code> fails with a foreign-key error, so create the parent
+first and pass its ID with <code>.with_&lt;field&gt;_id(id)</code>:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>let author = Author::factory().create(&amp;db).await?;
+let book = Book::factory().with_author_id(author.id).create(&amp;db).await?;
+<span class="boring">}</span></code></pre>
+<p><code>Factory</code> is also re-exported as <code>djangors_test::Factory</code>.</p>
 <hr>
 <h2 id="2-real-socket-integration-testing"><a class="header" href="#2-real-socket-integration-testing">2. Real-Socket Integration Testing</a></h2>
 <p>For full-stack integration testing (including Tower middleware layers, real HTTP headers, cookie handling, and graceful shutdown), test suites bind a local TCP socket on port <code>0</code>.</p>
@@ -399,12 +469,10 @@ async fn test_full_stack_socket() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
-    let settings = DjangorsSettings {
-        host: "127.0.0.1".to_string(),
-        port: addr.port(),
-        debug: true,
-        ..Default::default()
-    };
+    let settings = DjangorsSettings::new()
+        .with_host("127.0.0.1")
+        .with_port(addr.port())
+        .with_debug(true);
 
     let router = Router::new();
     let router_service = RouterService::new(router, settings.debug);
@@ -485,6 +553,81 @@ naming the feature they need. <strong>They report as passing on SQLite without e
 SQLite run alone does not prove those paths still work.</p>
 <p>Use SQLite for the fast inner development loop, and run against PostgreSQL before changing anything
 dialect-specific and in CI.</p>
+<hr>
+<h2 id="3-test-conventions"><a class="header" href="#3-test-conventions">3. Test Conventions</a></h2>
+<p>The suite is expected to stay green under <strong>both</strong> Postgres and SQLite. Conventions below keep it
+that way.</p>
+<h3 id="where-test-code-lives"><a class="header" href="#where-test-code-lives">Where test code lives</a></h3>
+<p>Production <code>.rs</code> files contain no test code. Every <code>#[cfg(test)]</code> module lives in a <strong>sibling
+file</strong>:</p>
+<ul>
+<li>For a crate’s <code>lib.rs</code>, that is <code>src/tests.rs</code>, declared <code>#[cfg(test)] mod tests;</code> — see the
+bottom of <code>crates/djangors-admin/src/lib.rs</code>.</li>
+<li>For any other module, e.g. <code>src/queryset.rs</code>, it is <code>src/queryset_tests.rs</code>, declared with
+<code>#[cfg(test)] #[path = "queryset_tests.rs"] mod tests;</code> — see
+<code>crates/djangors-contrib-payments/src/bachs.rs</code>. The <code>#[path]</code> is required: without it Rust
+looks for <code>src/queryset/tests.rs</code>.</li>
+</ul>
+<p>This keeps the production files readable, while the tests stay a <strong>child module</strong>, so they can
+still reach private items. That is exactly why they are not in <code>crates/*/tests/</code> — an integration
+test there only sees the crate’s public API, and much of this suite exercises private functions.</p>
+<h3 id="writing-tests-that-pass-on-both-backends"><a class="header" href="#writing-tests-that-pass-on-both-backends">Writing tests that pass on both backends</a></h3>
+<p>Tests run as <code>cargo test --workspace</code> (Postgres, needs <code>DATABASE_URL</code>) and as
+<code>env -u DATABASE_URL TEST_BACKEND=sqlite cargo test --workspace</code>. The rules below keep both green:</p>
+<h4 id="build-ddl-from-the-dialect-never-as-a-fixed-string"><a class="header" href="#build-ddl-from-the-dialect-never-as-a-fixed-string">Build DDL from the dialect, never as a fixed string</a></h4>
+<p><code>BIGSERIAL</code> and <code>TIMESTAMPTZ</code> are Postgres spellings; SQLite needs <code>INTEGER PRIMARY KEY AUTOINCREMENT</code>. Use <code>db.dialect().auto_pk_type()</code> and <code>db.dialect().timestamp_type()</code>:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>let auto_pk = db.dialect().auto_pk_type();
+let ts_type = db.dialect().timestamp_type();
+db.conn().execute(
+    &amp;format!("CREATE TABLE widget (id {auto_pk}, created_at {ts_type} NOT NULL)"),
+    &amp;[],
+)
+.await
+.unwrap();
+<span class="boring">}</span></code></pre>
+<p>SQLite is permissive enough to <em>accept</em> the Postgres text, so the <code>CREATE TABLE</code> succeeds and the
+failure surfaces much later as an insert that returns no row — which is exactly how this bug hid
+(see <code>create_table_sql</code> in <code>crates/djangors-contrib-payments/src/transaction_tests.rs</code>).</p>
+<h4 id="quote-identifiers-through-the-dialect"><a class="header" href="#quote-identifiers-through-the-dialect">Quote identifiers through the dialect</a></h4>
+<p><code>db.dialect().quote_ident("user")</code> — <code>user</code> is a reserved word in Postgres but not in SQLite, so
+an unquoted column name passes on one backend and is a syntax error on the other:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>let user_col = db.dialect().quote_ident("user");
+let create_profile = format!(
+    "CREATE TABLE profile (id {auto_pk}, {user_col} BIGINT NOT NULL UNIQUE)"
+);
+<span class="boring">}</span></code></pre>
+<h4 id="never-use-raw-sqlx-against-databasepool"><a class="header" href="#never-use-raw-sqlx-against-databasepool">Never use raw <code>sqlx</code> against <code>Database::pool()</code></a></h4>
+<p><code>pool()</code> panics outright on a SQLite handle (<code>"Attempted to access Postgres PgPool on a SQLite Database handle"</code>), and <code>$1</code> placeholders are Postgres-only. Go through the ORM
+(<code>Model::objects()</code>, <code>.save()</code>, <code>.count()</code>), which is already dialect-aware.</p>
+<h4 id="never-hardcode-a-connection-string"><a class="header" href="#never-hardcode-a-connection-string">Never hardcode a connection string</a></h4>
+<p>Use <code>djangors_test::TestDatabase</code>, which honours <code>TEST_BACKEND</code> and <code>DATABASE_URL</code>. A hardcoded
+<code>postgres://…@localhost/djangors_test</code> ignores both and can only pass against one specific machine.</p>
+<h4 id="use-testdatabaseisolated-when-a-test-creates-its-own-tables"><a class="header" href="#use-testdatabaseisolated-when-a-test-creates-its-own-tables">Use <code>TestDatabase::isolated()</code> when a test creates its own tables</a></h4>
+<p>Several tests sharing one table name against a single Postgres database will race on
+<code>DROP</code>/<code>CREATE</code> when run in parallel; <code>isolated()</code> gives each test its own database:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>let test_db = djangors_test::TestDatabase::isolated().await.unwrap();
+let db = test_db.database();
+<span class="boring">}</span></code></pre>
+<p><code>connect()</code> is fine for read-only work (see <code>TestDatabase::connect()</code> vs
+<code>TestDatabase::isolated()</code> in <code>crates/djangors-test/src/lib.rs</code>).</p>
+<h3 id="checklist-before-adding-a-test"><a class="header" href="#checklist-before-adding-a-test">Checklist before adding a test</a></h3>
+<ul>
+<li>Put the module in a sibling file (<code>src/tests.rs</code> or <code>src/{name}_tests.rs</code> with <code>#[path]</code>), never
+in the production <code>.rs</code>.</li>
+<li>Build every <code>CREATE TABLE</code> from <code>db.dialect().auto_pk_type()</code> / <code>timestamp_type()</code>, and quote
+identifiers with <code>quote_ident()</code>.</li>
+<li>Go through the ORM; never touch raw <code>pool()</code> or write <code>$1</code> placeholders by hand.</li>
+<li>Obtain the database via <code>djangors_test::TestDatabase</code>, never a hardcoded URL.</li>
+<li>Use <code>isolated()</code> when the test creates and drops tables; <code>connect()</code> only for read-only work.</li>
+<li>Run under <strong>both</strong> backends (<code>cargo test --workspace</code> and the SQLite env-invocation) before
+relying on it staying green.</li>
+</ul>
 
                     </main>
 

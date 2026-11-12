@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-208ebb8b.js";
+            window.path_to_searchindex_js = "searchindex-ff027cc3.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-15287f60.js"></script>
+        <script src="toc-fcdb45cd.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -334,7 +334,7 @@ DetailView::&lt;Article&gt;::detail(req, params, &amp;config).await
 <tr><td style="text-align: left"><code>python manage.py startapp</code></td><td style="text-align: left"><code>dj new-app</code></td><td style="text-align: left">Scaffolds a new app/module inside a project</td></tr>
 <tr><td style="text-align: left"><code>python manage.py runserver</code></td><td style="text-align: left"><code>dj run</code></td><td style="text-align: left">Starts dev server with live-reloading file watch loop</td></tr>
 <tr><td style="text-align: left"><code>python manage.py migrate</code></td><td style="text-align: left"><code>dj migrate</code></td><td style="text-align: left">Applies pending database migrations</td></tr>
-<tr><td style="text-align: left"><code>python manage.py makemigrations</code></td><td style="text-align: left"><code>dj makemigrations</code></td><td style="text-align: left">Introspects the project binary; v1 detects new models and new fields</td></tr>
+<tr><td style="text-align: left"><code>python manage.py makemigrations</code></td><td style="text-align: left"><code>dj makemigrations</code></td><td style="text-align: left">Introspects the project binary and generates numbered schema migrations</td></tr>
 <tr><td style="text-align: left"><code>python manage.py sqlmigrate</code></td><td style="text-align: left"><code>dj sqlmigrate &lt;app&gt; &lt;migration&gt;</code></td><td style="text-align: left">Renders a migration’s SQL without applying it</td></tr>
 <tr><td style="text-align: left"><code>python manage.py showmigrations</code></td><td style="text-align: left"><code>dj showmigrations</code></td><td style="text-align: left">Lists migrations and their applied state</td></tr>
 <tr><td style="text-align: left"><code>python manage.py createsuperuser</code></td><td style="text-align: left"><code>dj createsuperuser</code></td><td style="text-align: left">Prompts for superuser credentials and creates User</td></tr>
@@ -345,11 +345,15 @@ DetailView::&lt;Article&gt;::detail(req, params, &amp;config).await
 <tr><td style="text-align: left"><code>python manage.py dbshell</code></td><td style="text-align: left"><code>dj dbshell</code></td><td style="text-align: left">Connects directly to configured database CLI</td></tr>
 <tr><td style="text-align: left"><code>python manage.py check</code></td><td style="text-align: left"><code>dj check [--deploy]</code></td><td style="text-align: left">Runs static checks (with <code>--deploy</code>, production-safety checks)</td></tr>
 <tr><td style="text-align: left"><code>python manage.py createpermissions</code></td><td style="text-align: left"><code>dj createpermissions</code></td><td style="text-align: left">Generates the standard <code>view</code>/<code>add</code>/<code>change</code>/<code>delete</code> permissions per model</td></tr>
+<tr><td style="text-align: left"><code>python manage.py inspectdb</code></td><td style="text-align: left"><code>dj inspectdb</code></td><td style="text-align: left">Writes <code>#[derive(Model)]</code> structs for an existing database’s tables</td></tr>
+<tr><td style="text-align: left"><code>python manage.py spectacular</code> (drf-spectacular)</td><td style="text-align: left"><code>dj openapi [--typescript]</code></td><td style="text-align: left">Writes the OpenAPI spec, or a typed TypeScript client</td></tr>
+<tr><td style="text-align: left"><em>(no built-in equivalent)</em></td><td style="text-align: left"><code>dj generate resource Post title:string</code></td><td style="text-align: left">Writes a model, serializer, REST views, admin, tests, and migration in one step</td></tr>
 </tbody>
 </table>
 </div>
+<p>These three are covered in <a href="guides/code-generation.html">Code Generation</a>.</p>
 <h3 id="dj-makemigrations-scope"><a class="header" href="#dj-makemigrations-scope"><code>dj makemigrations</code> scope</a></h3>
-<p><code>dj</code> runs the project’s own binary in a hidden model-introspection mode, so registrations from application crates are visible. It stores the last model state in <code>migrations/.schema_snapshot.json</code> and generates numbered SQL migrations. v1 covers new models and new fields; field-type changes, removals, renames, indexes, and relation alterations are deferred.</p>
+<p><code>dj</code> runs the project’s own binary in a hidden model-introspection mode, so registrations from application crates are visible. It stores the last model state in <code>migrations/.schema_snapshot.json</code> and generates numbered SQL migrations. <code>detect_changes</code> automatically detects new tables (<code>CreateTable</code>), added columns (<code>AddColumn</code>), dropped columns (<code>DropColumn</code>), changed column types (<code>AlterColumnType</code>), <code>CreateIndex</code>/<code>DropIndex</code>, <code>ManyToMany</code> join tables, <code>OneToOne</code> unique constraints, and <code>choices</code> <code>CHECK</code> constraints. (Column renames are emitted as a <code>DropColumn</code> + <code>AddColumn</code> pair unless authored manually.)</p>
 <p>Database migrations in Djangors are authored as raw SQL files or generated via programmatic schema utilities.</p>
 <h3 id="ℹ-dj-shell-evcxr-rust-repl"><a class="header" href="#ℹ-dj-shell-evcxr-rust-repl">ℹ️ <code>dj shell</code> (evcxr Rust REPL)</a></h3>
 <p><code>dj shell</code> launches an interactive Rust REPL via <code>evcxr</code> (installed via <code>cargo install evcxr_repl</code>).</p>
@@ -538,16 +542,18 @@ class ArticleViewSet(viewsets.ModelViewSet):
 </span><span class="boring">pub struct Article { #[djangors(primary_key, auto)] pub id: i64 }
 </span><span class="boring">fn main() {
 </span><span class="boring">let article_instance = Article { id: 1 };
-</span>use djangors_rest::{serialize, viewset_routes};
-use djangors_core::Router;
+</span>use djangors_rest::{serialize, serialize_to_vec, viewset_routes};
+use djangors_core::{Response, Router, StatusCode};
 
-// Low-level model serialization
+// Low-level model serialization to serde_json::Value or directly to UTF-8 JSON bytes
 let json_val = serialize::&lt;Article&gt;(&amp;article_instance);
+let response = Response::json_bytes(StatusCode::OK, serialize_to_vec(&amp;article_instance));
 
 // High-level ViewSet registration. `ViewSet&lt;M&gt;` has no instance to construct;
 // its CRUD handlers are mounted directly as a free function, IsAuthenticated by default.
 let router = viewset_routes::&lt;Article&gt;(Router::new(), "/articles");
-<span class="boring">}</span></code></pre>
+<span class="boring">let _ = (json_val, response, router);
+</span><span class="boring">}</span></code></pre>
 <hr>
 <h2 id="10-conceptual-architecture-comparison"><a class="header" href="#10-conceptual-architecture-comparison">10. Conceptual Architecture Comparison</a></h2>
 <div class="table-wrapper">
@@ -910,7 +916,24 @@ dj showmigrations
 <p>Use <code>dj migrate --rollback</code> deliberately and never use <code>--fake</code> unless the
 database already has exactly the schema represented by the migration. Do not
 hide schema changes in a task or an application startup side effect.</p>
-<h2 id="20-what-does-not-translate-one-for-one"><a class="header" href="#20-what-does-not-translate-one-for-one">20. What does not translate one-for-one</a></h2>
+<h2 id="20-third-party-django-packages-that-are-built-in"><a class="header" href="#20-third-party-django-packages-that-are-built-in">20. Third-party Django packages that are built in</a></h2>
+<p>Several packages most Django projects install are part of Djangors:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th style="text-align: left">Django package</th><th style="text-align: left">Djangors</th></tr>
+</thead>
+<tbody>
+<tr><td style="text-align: left">Django Channels</td><td style="text-align: left"><code>Router::ws</code> WebSockets, in the same server, with same-origin checks on by default (<a href="guides/websockets.html">guide</a>)</td></tr>
+<tr><td style="text-align: left">django-debug-toolbar</td><td style="text-align: left">The <code>debug-panel</code> feature: per-request SQL list, timings, and N+1 warnings (<a href="how-to/debug-queries.html">how-to</a>)</td></tr>
+<tr><td style="text-align: left">factory_boy</td><td style="text-align: left"><code>#[derive(Factory)]</code> on your models (<a href="guides/testing.html#model-factories-derivefactory">testing guide</a>)</td></tr>
+<tr><td style="text-align: left">drf-spectacular + openapi-typescript</td><td style="text-align: left"><code>dj openapi</code> and <code>dj openapi --typescript</code></td></tr>
+<tr><td style="text-align: left">drf-standardized-errors</td><td style="text-align: left"><code>ProblemDetailsRenderer</code> for RFC 9457 error bodies (<a href="guides/http-and-middleware.html#standard-problem-details-rfc-9457">guide</a>)</td></tr>
+<tr><td style="text-align: left">django-browser-reload</td><td style="text-align: left">Built into <code>dj run</code></td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="21-what-does-not-translate-one-for-one"><a class="header" href="#21-what-does-not-translate-one-for-one">21. What does not translate one-for-one</a></h2>
 <p>Some Django assumptions need a deliberate design choice:</p>
 <ul>
 <li>There is no automatic <code>reverse()</code> behavior unless you name routes with
@@ -922,10 +945,11 @@ service dependencies.</li>
 <li>Djangors tasks are database-backed and durable; a raw Tokio task is not.</li>
 <li>HTML rendering and API serialization are separate choices; do not return
 database rows directly just because they implement <code>Serialize</code>.</li>
-<li>Djangors provides SSE, not a drop-in WebSocket abstraction; confirm the
-capability before designing a WebSocket-dependent feature.</li>
-<li>SQLite is a useful test backend but does not prove PostgreSQL locking,
-extensions, or dialect-specific behavior.</li>
+<li>Djangors provides both SSE (<code>Router::sse</code> / <code>Response::sse</code>) and RFC 6455
+WebSockets (<code>Router::ws</code> / <code>djangors_core::ws::WebSocket</code>, plus pub/sub
+broadcast channels via <code>djangors_core::Groups</code>).</li>
+<li>SQLite is a useful test backend (and production backend for single-node apps)
+but does not prove PostgreSQL locking, extensions, or dialect-specific behavior.</li>
 </ul>
 <p>The migration is complete when every endpoint has an explicit route, contract,
 permission rule, tenant rule where applicable, service workflow, repository

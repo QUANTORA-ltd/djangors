@@ -1,29 +1,48 @@
 # How to Cache a View Response
 
 ## Problem
-You want to cache HTTP GET view responses to reduce database load and speed up response times using in-memory or Redis backends.
+You want to cache HTTP GET view responses to reduce database load and speed up response times using in-memory, database, or Redis backends.
 
 ## Solution
 `djangors_cache::CacheLayer` is a `tower::Layer` that caches GET responses under two strict
 security requirements:
-1. **Explicit Opt-in**: the response must carry a `CacheableResponse` marker extension.
+1. **Explicit Opt-in**: the response must carry a `CacheableResponse` marker extension (set with `Response::cacheable()` or `.with_extension(CacheableResponse)`).
 2. **No `Set-Cookie`**: responses setting cookies (e.g. session cookies) are **never** cached,
    regardless of the opt-in marker.
 
-## ⚠️ Current integration limitation
+## Code Example
 
-`CacheLayer` operates on the raw `hyper::Response<Full<Bytes>>` that comes out of the connection-
-serving loop, not on `djangors_core::Response`. The framework's own `Response` type has no
-`extensions_mut()` (or any extensions API at all). This means there is currently **no way for an
-ordinary Djangors view handler to opt a response into caching**. The marker has to be inserted on
-the raw hyper response, which only code operating below the framework's own dispatch layer can do.
-This is the same "primitive exists, framework-level wiring doesn't yet" gap several other Phase 7
-crates (`djangors-contrib-messages`, `-guardian`, `-otp`) document rather than paper over. See
-those guides/crates' own docs for the same pattern.
+### 1. Opting a Djangors View into Response Caching
 
-`CacheLayer` is still directly usable **today** if you're composing your own `tower::Service` stack
-below `djangors_core`'s dispatch (i.e. you construct the `CacheableResponse`-marked
-`hyper::Response` yourself, the way `djangors-cache`'s own test suite does):
+Call `.cacheable()` on any `djangors_core::Response` and wrap your `RouterService` with `CacheLayer`:
+
+```rust,compile
+use std::sync::Arc;
+use std::time::Duration;
+use djangors_cache::{CacheLayer, InMemoryCache};
+use djangors_core::{DjangorsError, PathParams, Request, Response, Router, StatusCode};
+use djangors_core::router::RouterService;
+use tower::ServiceBuilder;
+
+async fn public_pricing_view(_req: Request, _params: PathParams) -> Result<Response, DjangorsError> {
+    // Opt this GET response into caching with `.cacheable()`
+    Ok(Response::html(StatusCode::OK, "<h1>Public Pricing</h1>").cacheable())
+}
+
+fn build_cached_service() {
+    let router = Router::new().get("/pricing", public_pricing_view);
+    let router_service = RouterService::new(router, false);
+
+    let cache = Arc::new(InMemoryCache::new(10_000));
+    let _service: djangors_cache::CacheService<RouterService> = ServiceBuilder::new()
+        .layer(CacheLayer::new(cache, Some(Duration::from_secs(300))))
+        .service(router_service);
+}
+```
+
+### 2. Lower-Level Tower Service Usage
+
+`CacheLayer` also works with raw `hyper::Response<Full<Bytes>>` services by inserting `CacheableResponse` into `extensions_mut()` directly:
 
 ```rust,compile
 use std::sync::Arc;
@@ -37,7 +56,6 @@ use djangors_cache::{InMemoryCache, CacheLayer, CacheableResponse};
 async fn build_and_call_cached_service() {
     let handler = service_fn(|_req: Request<Full<Bytes>>| async move {
         let mut r = Response::new(Full::new(Bytes::from_static(b"dashboard body")));
-        // Opt-in: only code with direct access to the raw hyper::Response can set this today.
         r.extensions_mut().insert(CacheableResponse);
         Ok::<_, std::convert::Infallible>(r)
     });
@@ -53,8 +71,3 @@ async fn build_and_call_cached_service() {
     let _response = svc.ready().await.unwrap().call(request).await.unwrap();
 }
 ```
-
-Wiring `CacheableResponse` into an ordinary `djangors_core::Router`-based view handler would
-require a core `djangors_core::Response` change (an extensions API, or a dedicated
-`Response::cacheable()` constructor); not attempted here since it's out of scope for a how-to.
-Track it as a real, open Phase-9-discovered gap if you need it.

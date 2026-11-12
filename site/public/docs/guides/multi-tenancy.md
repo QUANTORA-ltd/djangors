@@ -85,10 +85,70 @@ Every `ScopedViewSet::<SchoolClass>` request now only ever sees rows belonging t
 membership-verified tenant. A user for tenant A genuinely cannot see tenant B's classes, list
 them, or fetch one by id.
 
+## Scoping the admin to the current tenant
+
+The generated admin UI enforces the same tenant boundary as `ScopedViewSet`. An `AdminSite` is
+configured with a `TenantScope`, which names the tenant FK field present on **every** registered
+model plus a function that extracts the current tenant id from a request. The extractor typically
+reads `djangors_contrib_tenancy::CurrentTenant` from request extensions — which
+`TenantResolutionLayer` populates — so the admin and the REST layer resolve the tenant the same
+way:
+
+```rust,illustrative
+use djangors_contrib_tenancy::CurrentTenant;
+use djangors_core::Request;
+
+let site = djangors_admin::AdminSite::new()
+    .with_tenant_scoping("tenant", |req: &Request| req.ext::<CurrentTenant>().map(|t| t.0));
+```
+
+### The tenant is resolved per request, not stored
+
+This is the important part. A `ModelAdmin` is built **once** at registration and shared across
+every concurrent request behind an `Arc`. The tenant restriction is therefore passed as a
+`TenantFilter` argument (`Option<(&'static str, i64)>`) into each admin data method — `changelist`,
+`export_csv_rows`, `get_by_pk`, `update_from_form`, `update_fields_from_form`, `create_from_form`,
+and `delete_by_pk` — and is **never** held on the admin itself.
+
+It must not be stored on the admin: state kept on the shared object could be overwritten by a
+second request while the first was awaiting the database, so one tenant's request could read
+another tenant's rows. A custom `ModelAdmin` must honour the `tenant` argument it receives rather
+than caching a tenant on `self`.
+
+### Superusers are unrestricted
+
+`TenantFilter` is `None` for a superuser, so they see every tenant's rows in the admin.
+
+### It fails closed
+
+For a non-superuser on a tenant-scoped site, if no tenant id can be resolved from the request,
+the handler returns `Forbidden`. It does not fall back to running the query unscoped. Failing open
+here would silently expose every tenant's rows to any admin user whose request happened to lack a
+resolved tenant — the exact leak the scoping exists to prevent.
+
+### What scoping actually guarantees
+
+The trait-level docs make the guarantees precise:
+
+- **Reads and writes by primary key are filtered by tenant too.** A cross-tenant primary key reads
+  as "not found" rather than leaking a row (`get_by_pk`), and updates refuse to touch another
+  tenant's row.
+- **Deletes refuse** to remove a row that belongs to another tenant.
+- **Objects created through a scoped add-form have their tenant field forced to the current
+  tenant**, so a submitted form cannot plant a row in someone else's tenant.
+- **Object history is gated on the object's visibility**, because the log table has no tenant
+  column of its own.
+
+### `TenantResolutionFailed`
+
+Previously a database failure during the membership lookup was indistinguishable from "this user
+is not a member", so an outage surfaced to clients as `Unauthorized`. The middleware now records a
+`TenantResolutionFailed` marker on the request when the lookup itself fails, and `tenant_scope`
+maps that to `Internal` (500) instead of `Unauthorized`. For callers who need to name the type,
+`TenantResolutionService` is now re-exported from the crate root.
+
 ## What this doesn't cover yet
 
-`djangors-admin` has no tenant-scoping integration yet: an admin user for one tenant can browse
-another tenant's rows in the generated admin UI. This is the design doc's own flagged
-highest-value follow-up, not yet built. Schema-per-tenant/database-per-tenant support,
-subdomain-based tenant resolution (v1 is `X-Tenant-Id`-header only), and automatic Postgres
-Row-Level Security policy generation are also deliberately out of scope for this first slice.
+Schema-per-tenant/database-per-tenant support, subdomain-based tenant resolution (v1 is
+`X-Tenant-Id`-header only), and automatic Postgres Row-Level Security policy generation are
+deliberately out of scope for this first slice.

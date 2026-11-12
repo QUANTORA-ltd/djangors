@@ -36,6 +36,22 @@ let config = djangors_db::config::DatabaseConfig::new(std::env::var("DATABASE_UR
 let db = djangors_db::Database::connect(&config).await?;
 ```
 
+### Cargo Feature Flags (`postgres` and `sqlite`)
+
+At compile time, `djangors-db` (and the `djangors` facade crate) gate each SQL driver behind its own Cargo feature flag (`postgres` and `sqlite`, both enabled by default). If your production deployment targets only one database engine, disable default features and enable only the backend you need to drop the unused driver (such as bundled `libsqlite3-sys` or `sqlx-postgres`) from your dependency graph and release binary:
+
+```toml
+# PostgreSQL-only build (drops sqlx-sqlite and libsqlite3-sys)
+djangors = { version = "0.9", default-features = false, features = ["postgres", "rest"] }
+
+# Or when depending on djangors-db / djangors-orm directly:
+djangors-db = { version = "0.9", default-features = false, features = ["postgres"] }
+djangors-orm = { version = "0.9", default-features = false, features = ["postgres"] }
+```
+
+> [!NOTE]
+> Enabling neither `postgres` nor `sqlite` emits a clear `compile_error!` instructing you to enable at least one backend feature.
+
 ---
 
 ## Dialect-Aware Architecture
@@ -75,10 +91,10 @@ It provides the following helper methods to bridge dialect differences:
 
 ## Honest Limitations
 
-While the dual-backend architecture simplifies local development, there are key differences and limitations to keep in mind:
+While the dual-backend architecture simplifies local development and CI testing, there are key differences and limitations to keep in mind:
 
-### 1. Testing is PostgreSQL-Only
-The testing framework in `djangors-test` is strictly PostgreSQL-only. This is because its transaction isolation and test database management system relies on PostgreSQL session-level advisory locks to run tests concurrently without interference. SQLite cannot be used to run the Djangors test suite.
+### 1. Dual-Backend Testing vs. PostgreSQL-Specific Features
+`djangors-test` (`TestDatabase` and `TestBackend`) supports **both** in-memory SQLite (`TEST_BACKEND=sqlite`) and PostgreSQL (`TEST_BACKEND=postgres`). In-memory SQLite gives fast, zero-container test runs for standard ORM, view, auth, admin, and REST tests. However, PostgreSQL-specific capabilities—such as session-level advisory locks (`acquire_cross_process_lock`), `SELECT ... FOR UPDATE SKIP LOCKED` / `NOWAIT`, PostgreSQL full-text search (`tsvector`), and PostgreSQL transaction isolation levels—require a real PostgreSQL instance and return `UnsupportedOnDialect` (or skip) on SQLite.
 
 ### 2. Unsupported Migrations on SQLite
 SQLite has very limited support for altering existing table schemas. Because of this, certain schema operations are not supported on SQLite. For instance:
@@ -98,13 +114,13 @@ When interacting with the connection pool:
 ## When to Choose Which
 
 * **SQLite** is ideal for:
-  * Local development to avoid running a local PostgreSQL container.
-  * Simple staging environments or internal tools with minimal write concurrency.
+  * Local development and fast `TEST_BACKEND=sqlite cargo test` runs without a local PostgreSQL container.
+  * Simple staging environments, embedded tools, or internal apps with minimal write concurrency.
   * Single-writer, read-heavy workloads.
 * **PostgreSQL** is required for:
   * Production deployments with concurrent writes or high traffic.
-  * Running the automated test suite (`djangors-test`).
-  * Advanced operations such as alter column type migrations.
+  * Testing PostgreSQL-specific locking (`SKIP LOCKED`, advisory locks), full-text search, or isolation levels.
+  * Advanced schema operations such as `AlterColumnType` migrations.
 
 ---
 
@@ -186,9 +202,17 @@ pub async fn transfer_funds(
             sender.balance -= amount;
             receiver.balance += amount;
 
-            // Execute debit & credit updates
-            sender.save(&mut **conn).await?;
-            receiver.save(&mut **conn).await?;
+            // Execute debit & credit updates inside the transaction handle
+            conn.execute(
+                "UPDATE accounts SET balance = $1 WHERE id = $2",
+                &[BindValue::I64(sender.balance), BindValue::I64(sender.id)],
+            )
+            .await?;
+            conn.execute(
+                "UPDATE accounts SET balance = $1 WHERE id = $2",
+                &[BindValue::I64(receiver.balance), BindValue::I64(receiver.id)],
+            )
+            .await?;
 
             // Commit savepoint checkpoint
             conn.release_savepoint("ledger_entry").await?;

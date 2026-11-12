@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-208ebb8b.js";
+            window.path_to_searchindex_js = "searchindex-ff027cc3.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-15287f60.js"></script>
+        <script src="toc-fcdb45cd.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -187,12 +187,7 @@ version number via the workspace’s <code>[workspace.package]</code> version, a
 will never see <code>djangors-orm</code> at <code>1.3.0</code> while <code>djangors-core</code> is at <code>1.1.0</code>. Before <code>1.0</code>, expect
 breaking changes between minor (<code>0.x</code>) releases without a deprecation cycle; the guarantees below
 apply from <code>1.0</code> onward.</p>
-<p><strong>What “the public API” means</strong>: as of the first API-freeze review, this covers <code>djangors-core</code>,
-<code>djangors-orm</code>, and <code>djangors-rest</code> (audited together as the largest and most-depended-on
-surface). The <code>djangors</code> facade crate (<code>djangors::core</code>, <code>djangors::orm</code>, <code>djangors::rest</code>, etc.)
-re-exports these and is the intended single entry point for applications. Coverage of the
-remaining crates (<code>djangors-admin</code>, <code>djangors-auth</code>, <code>djangors-forms</code>, and the rest) is an
-explicitly planned follow-up (“Freeze Review Pass 2”), not yet frozen under this policy.</p>
+<p><strong>What “the public API” means</strong>: across Freeze Review Pass 1 and Pass 2 (<code>docs/design/10.14-api-freeze-pass-2.md</code>), this policy covers the core framework and primary battery crates: <code>djangors-core</code>, <code>djangors-orm</code>, <code>djangors-rest</code>, <code>djangors-db</code>, <code>djangors-auth</code>, <code>djangors-sessions</code>, <code>djangors-admin</code>, <code>djangors-forms</code>, <code>djangors-views</code>, <code>djangors-template</code>, <code>djangors-migrations</code>, <code>djangors-cache</code>, <code>djangors-mail</code>, <code>djangors-tasks</code>, <code>djangors-i18n</code>, <code>djangors-staticfiles</code>, <code>djangors-pdf</code>, and <code>djangors-test</code>. The <code>djangors</code> facade crate (<code>djangors::core</code>, <code>djangors::orm</code>, <code>djangors::rest</code>, etc.) re-exports these behind granular feature flags and is the intended single entry point for applications. Public configuration structs that are expected to grow new fields over time (such as <code>DjangorsSettings</code>, <code>djangors_mail::Message</code>, and <code>djangors_rest::ViewSetConfig</code>) are marked <code>#[non_exhaustive]</code> with builder constructors so adding fields in minor releases never breaks downstream code.</p>
 <h2 id="deprecation-mechanics"><a class="header" href="#deprecation-mechanics">Deprecation mechanics</a></h2>
 <ul>
 <li>A public item slated for removal is marked <code>#[deprecated(since = "X.Y.Z", note = "...")]</code> with a
@@ -205,10 +200,8 @@ and “Removed” headings in <code>CHANGELOG.md</code> (see below), not buried 
 paragraph.</li>
 </ul>
 <h2 id="changelogmd"><a class="header" href="#changelogmd"><code>CHANGELOG.md</code></a></h2>
-<p>A root <a href="https://github.com/Chidi09/djangors/blob/main/CHANGELOG.md"><code>CHANGELOG.md</code></a> is maintained
-today, grouped by development phase since there has not yet been a tagged <code>1.0</code> release. Once
-<code>1.0</code> ships, it switches to the <a href="https://keepachangelog.com/">Keep a Changelog</a> format:
-<code>Added</code>/<code>Changed</code>/<code>Deprecated</code>/<code>Removed</code>/<code>Fixed</code>/<code>Security</code> sections per version.</p>
+<p>A root <a href="https://github.com/QUANTORA-ltd/djangors/blob/main/CHANGELOG.md"><code>CHANGELOG.md</code></a> is maintained
+in the <a href="https://keepachangelog.com/">Keep a Changelog</a> format (<code>Added</code>/<code>Changed</code>/<code>Deprecated</code>/<code>Removed</code>/<code>Fixed</code>/<code>Security</code> sections per tagged release, plus <code>[Unreleased]</code>), alongside a historical summary of earlier pre-release development phases.</p>
 <h2 id="release-cadence"><a class="header" href="#release-cadence">Release cadence</a></h2>
 <p>A tagged release ships roughly every 4-6 weeks, each with a changelog entry. This is not a new
 commitment invented for this doc. It restates a cadence the project has intended internally since
@@ -222,11 +215,8 @@ the change and its motivation, open for comment before landing. This mirrors the
 used internally for every architecturally significant change in this project’s own history (every
 slice in <code>docs/design/</code> is exactly this kind of doc). Formalizing it here means outside
 contributors can propose and review API changes the same way, not just watch them happen.</p>
-<h2 id="where-this-stops-short-today"><a class="header" href="#where-this-stops-short-today">Where this stops short today</a></h2>
-<p>This is a <strong>first pass</strong>, not a complete stability contract: it covers 3 of the 32 workspace
-crates by design (the largest, most-used ones), and doesn’t cover the contrib crates or CLI
-tooling at all. Treat this page as the honest current state of the policy, not a claim that
-everything is frozen. It will be extended as later freeze-review passes land.</p>
+<h2 id="pre-10-scope-note"><a class="header" href="#pre-10-scope-note">Pre-1.0 Scope Note</a></h2>
+<p>While Freeze Review Pass 1 and Pass 2 have audited the core and primary battery crates (including <code>#[non_exhaustive]</code> hardening and unified <code>&amp;Database</code> model CRUD signatures), Djangors is still pre-<code>1.0</code>. Before <code>1.0.0</code> is tagged, breaking changes may still land between <code>0.x</code> minor releases when documented in <code>CHANGELOG.md</code> and <code>docs/design/</code>.</p>
 
                     </main>
 

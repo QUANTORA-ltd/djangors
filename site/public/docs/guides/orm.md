@@ -1,6 +1,6 @@
 # Object-Relational Mapping (ORM)
 
-`djangors-orm` provides Django-style querysets, model metadata, expression macros, and database integration for PostgreSQL (via `sqlx`).
+`djangors-orm` provides Django-style querysets, model metadata, expression macros, compile-time JSON writers, and database integration for PostgreSQL and SQLite (via `sqlx`).
 
 ## Defining Models
 
@@ -47,6 +47,8 @@ pub struct Choice {
 - **`table_name = "custom_table"`** *(optional)*: Database table name. Defaults to `{app_label}_{snake_case_struct_name}`.
 - **`ordering = ["field", "-field"]`** *(optional)*: Default ordering for querysets when `.order_by()` is not called. Prefix `-` denotes descending.
 - **`unique_together = [["field1", "field2"]]`** *(optional)*: Defines composite unique constraints.
+- **`indexes = ["index_name", ("index_name", ["field1", "field2"])]`** *(optional)*: Defines custom or composite database indexes. Can be a simple index name or a tuple of `(name, [fields])`.
+- **`manager = "ManagerStruct"`** *(optional)*: Overrides the default model manager with a custom manager struct.
 
 #### Field-Level Attributes
 - **`primary_key`**: Marks the single primary key field. Automatically implies `unique` and `db_index`. Every model must have exactly one primary key field.
@@ -57,19 +59,56 @@ pub struct Choice {
 - **`db_index`**: Creates a database index on the column.
 - **`verbose_name = "..."`**, **`help_text = "..."`**: Descriptive labels for admin/forms metadata.
 - **`column = "col_name"`**: Overrides the database column name if different from the struct field name.
+- **`auto_now_add`**: Populates a `DateTime<Utc>` field with `Utc::now()` automatically when a new row is inserted via `save(db)`.
+- **`auto_now`**: Refreshes a `DateTime<Utc>` field with `Utc::now()` automatically on both `save(db)` and `update(db)`.
+- **`choices = [("VALUE", "Human Label"), ...]`**: Restricts a `String` field to an allowed set of values (validated in forms/serializers and emitted as a SQL `CHECK` constraint by migrations).
 - **`foreign_key(on_delete = "...", related_name = "...")`**: Configures foreign key behavior. `on_delete` options: `"cascade"` (default), `"protect"`, `"set_null"`, `"restrict"`, `"do_nothing"`.
 
 ### Supported Field Types
 - Integer: `i32` (`FieldKind::Integer`), `i64` (`FieldKind::BigInt`)
 - Float: `f32`, `f64` (`FieldKind::Float`)
-- String: `String` (`FieldKind::Char` or `FieldKind::Text`)
+- Decimal: `rust_decimal::Decimal` (`FieldKind::Decimal { max_digits, decimal_places }`)
+- String: `String` (`FieldKind::Char` with `max_length`, or `FieldKind::Text` without)
 - Boolean: `bool` (`FieldKind::Boolean`)
-- Datetime: `chrono::DateTime<chrono::Utc>` (`FieldKind::DateTime`)
+- Datetime & Date/Time: `chrono::DateTime<chrono::Utc>` (`FieldKind::DateTime`), `chrono::NaiveDate` (`FieldKind::Date`), `chrono::NaiveTime` (`FieldKind::Time`), `chrono::Duration` (`FieldKind::Duration`)
+- UUID: `uuid::Uuid` (`FieldKind::Uuid`)
 - Foreign Key: `ForeignKey<TargetModel>`
-- Nullable: `Option<T>` for any of the above types
+- One-to-One Key: `OneToOne<TargetModel>`
+- Many-to-Many Marker: `ManyToMany<TargetModel>`
+- Nullable: `Option<T>` for any of the above types (except `ManyToMany`)
 
-> [!NOTE]
-> Types like `NaiveDate`, `NaiveTime`, `Duration`, `Uuid`, and `Decimal` are defined in `FieldKind` for schema metadata, but currently trigger a compile error on `Model` derive for save/update operations.
+### Custom Managers
+
+You can define custom database query manager behavior by implementing the `Manager` trait and specifying the manager class via the struct-level `manager` attribute:
+
+```rust,compile
+# use djangors_orm::{Model, q};
+# use djangors_macros::Model;
+pub struct ActiveManager;
+
+impl djangors_orm::meta::Manager<ManagedModel> for ActiveManager {
+    fn objects() -> djangors_orm::queryset::QuerySet<ManagedModel> {
+        djangors_orm::queryset::QuerySet::<ManagedModel>::new()
+            .filter(q!(is_active = true))
+            .expect("valid filter")
+    }
+}
+
+#[derive(Model, Debug)]
+#[djangors(
+    app = "polls",
+    table_name = "polls_managed",
+    manager = "ActiveManager"
+)]
+pub struct ManagedModel {
+    #[djangors(primary_key, auto)]
+    pub id: i64,
+    pub name: String,
+    pub is_active: bool,
+}
+```
+
+By overriding the manager, calling `ManagedModel::objects()` will automatically retrieve a queryset pre-filtered or configured according to your manager definition.
 
 ---
 
@@ -120,6 +159,7 @@ as `OrmError::FieldNotFound` rather than silently becoming an equality test.
 - **`.count(db).await`**: Returns `Result<i64, OrmError>` count (`SELECT COUNT(*) ...`).
 - **`.aggregate(db, vec![AggExpr::...]).await`**: Evaluates aggregate functions: `AggExpr::Count`, `AggExpr::Sum`, `AggExpr::Avg`, `AggExpr::Min`, `AggExpr::Max`.
 - **`.update(db, set!(...)).await`**: Performs bulk updates. Returns `Result<u64, OrmError>` (rows affected count).
+- **`.delete(db).await`**: Deletes all rows matching the queryset's filters. Returns `Result<u64, OrmError>` (rows affected count). **Warning**: calling `.delete()` on an unfiltered queryset (e.g. `Model::objects().delete(db)`) will delete every row in the table.
 - **`QuerySet::<T>::delete_by_pk(db, pk).await`**: Static helper deleting a row by its primary key.
 
 ### Eager-loading relations: `select_related` and `prefetch_related`
@@ -426,7 +466,154 @@ rows in one statement.
 
 ## Relationships & Many-to-Many
 
-Foreign keys are stored in `ForeignKey<T>` wrapper fields (e.g. `#[djangors(foreign_key(on_delete = "cascade", related_name = "choices"))] pub question: ForeignKey<Question>`). Foreign keys access `.id` directly.
+`djangors-orm` supports Foreign Key, One-to-One, and Many-to-Many relationships.
 
-> [!NOTE]
-> Direct many-to-many relationship querying via implicit junction table abstraction is not implemented in `djangors-orm`. Explicit join models (such as `UserGroup`, `GroupPermission`, and `UserPermission` in `djangors-auth`) are defined and queried directly as models with foreign keys.
+### Foreign Keys (`ForeignKey<T>`)
+
+Foreign keys reference the primary key of another model:
+
+```rust,illustrative
+#[djangors(foreign_key(on_delete = "cascade", related_name = "choices"))]
+pub question: ForeignKey<Question>,
+```
+
+To access the related ID directly, read `choice.question.id`. To load the related model instance lazily, call `.fetch(&db)`:
+
+```rust,illustrative
+if let Some(question) = choice.question.fetch(db).await? {
+    println!("{}", question.question_text);
+}
+```
+
+### One-to-One (`OneToOne<T>`)
+
+A `OneToOne<T>` relationship is declared using the `OneToOne` wrapper. While it behaves similarly to a `ForeignKey`, migrations will automatically emit a `UNIQUE` constraint on the underlying column to ensure uniqueness:
+
+```rust,illustrative
+#[derive(Model, Debug, Clone)]
+#[djangors(app = "polls", table_name = "polls_user_profile")]
+pub struct UserProfile {
+    #[djangors(primary_key, auto)]
+    pub id: i64,
+    #[djangors(foreign_key(on_delete = "cascade", related_name = "profile"))]
+    pub user: OneToOne<User>,
+}
+```
+
+Like foreign keys, you can resolve the relationship lazily via `.fetch(db)`:
+
+```rust,illustrative
+let profile = UserProfile::objects().get(db).await?;
+if let Some(user) = profile.user.fetch(db).await? {
+    println!("User name: {}", user.name);
+}
+```
+
+### Many-to-Many (`ManyToMany<T>`)
+
+A `ManyToMany<T>` relation uses the `ManyToMany` wrapper as a zero-sized marker field. This field does not correspond to any column in the model's table. Instead, a dedicated through (junction) table named `{source_table_name}_{field_name}` is created automatically by migrations.
+
+```rust,illustrative
+#[derive(Model, Debug, Clone)]
+#[djangors(app = "polls", table_name = "polls_school")]
+pub struct School {
+    #[djangors(primary_key, auto)]
+    pub id: i64,
+    pub name: String,
+    #[djangors(many_to_many(related_name = "schools"))]
+    pub students: ManyToMany<Student>,
+}
+```
+
+You can interact with Many-to-Many relationships using the free helper functions `m2m_related`, `m2m_add`, and `m2m_remove`:
+
+```rust,illustrative
+use djangors_orm::{m2m_add, m2m_related, m2m_remove};
+
+// Add relationship entries
+m2m_add::<School, Student, _>(db, school.id, "students", student.id).await?;
+
+// Query related instances
+let students = m2m_related::<School, Student, _>(db, school.id, "students").await?;
+
+// Remove relationship entries
+m2m_remove::<School, Student, _>(db, school.id, "students", student.id).await?;
+```
+
+## Query Result Caching
+
+`djangors-orm` provides an opt-in, in-process, process-local query cache to avoid hitting the database for duplicate queries. 
+
+### Enabling and Querying the Cache
+
+You can enable result caching on a `QuerySet` via `.cache(duration)` and fetch cached results via `.cached_all(db)`:
+
+```rust,illustrative
+use std::time::Duration;
+
+// First call queries the database and caches the results
+let questions = Question::objects()
+    .filter(q!(pub_date__year = 2026))?
+    .cache(Duration::from_secs(60))
+    .cached_all(db)
+    .await?;
+
+// Subsequent calls with the exact same SQL and parameters
+// will hit the process-local cache instead of the database.
+let cached_questions = Question::objects()
+    .filter(q!(pub_date__year = 2026))?
+    .cache(Duration::from_secs(60))
+    .cached_all(db)
+    .await?;
+```
+
+### Invalidation
+
+Write operations (`save()`, `update()`, and `delete()`) automatically invalidate all cached entries associated with the affected model's table. 
+
+> [!IMPORTANT]
+> The query cache is **process-local** and resides entirely in-memory. In multi-process deployments, writes to one process will not invalidate the caches of other processes, which can lead to stale data being served. Use with caution in distributed environments.
+
+## Database Routing
+
+For multi-database setups, `djangors-orm` provides metadata-level routing via `ModelDatabaseMap`. This allows you to map specific model struct names to distinct database instances:
+
+```rust,illustrative
+use djangors_orm::ModelDatabaseMap;
+
+// Construct routing map
+let routing_map = ModelDatabaseMap::new(
+    default_db,
+    vec![
+        ("User", auth_db),
+        ("Session", session_db),
+    ],
+);
+
+// Retrieve the database configured for a specific model
+let db = routing_map.db_for::<User>();
+```
+
+## Compile-Time Direct JSON Serialization (`write_json`)
+
+Every `#[derive(Model)]` struct automatically generates a specialized, Fastify-style (`fast-json-stringify`) JSON writer on the `Model` trait:
+
+- **`model.write_json(&mut buf)`**: Writes all non-`ManyToMany` model fields directly into a `Vec<u8>` buffer with pre-escaped static `"\"field_name\":"` byte literals in lexicographical key order (using `itoa` for integers and `ryu` for floats), avoiding intermediate `Vec<(&'static str, BindValue)>` and `serde_json::Map` allocations.
+- **`model.write_json_filtered(&mut buf, |field_name| ...)`**: Same direct writer, filtered by a field-name predicate (used by `djangors-rest` when a `FieldSet` restricts readable fields).
+
+```rust,compile
+# use polls::models::Question;
+# use djangors_orm::Model;
+# use chrono::Utc;
+# fn main() {
+let q = Question {
+    id: 1,
+    question_text: "Fast JSON?".to_string(),
+    pub_date: Utc::now(),
+};
+
+let mut buf = Vec::with_capacity(128);
+q.write_json(&mut buf);
+assert!(std::str::from_utf8(&buf).unwrap().contains("\"question_text\":\"Fast JSON?\""));
+# }
+```

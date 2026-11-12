@@ -8,7 +8,7 @@ interface Props {
 
 const {
   title = 'Djangors: The Django of Rust',
-  description = "Djangors is a batteries-included web framework for Rust. It brings Django's ORM, migrations, admin site, forms, auth, REST framework, background tasks, payments, and multi-tenancy to a single static binary with Rust's speed and safety.",
+  description = "Djangors is a batteries-included web framework for Rust. It brings Django's ORM, migrations, admin site, forms, auth, REST framework, WebSockets, background tasks, payments, and multi-tenancy to a single static binary with Rust's speed and safety.",
 } = Astro.props;
 
 const canonicalURL = new URL(Astro.url.pathname, Astro.site);
@@ -22,7 +22,7 @@ const structuredData = {
       name: 'Djangors',
       url: 'https://djangors.vercel.app/',
       logo: 'https://djangors.vercel.app/logo.svg',
-      sameAs: ['https://github.com/Chidi09/djangors', 'https://crates.io/crates/djangors'],
+      sameAs: ['https://github.com/QUANTORA-ltd/djangors', 'https://crates.io/crates/djangors'],
     },
     {
       '@type': 'WebSite',
@@ -36,9 +36,9 @@ const structuredData = {
       '@id': 'https://djangors.vercel.app/#software',
       name: 'Djangors',
       description,
-      codeRepository: 'https://github.com/Chidi09/djangors',
+      codeRepository: 'https://github.com/QUANTORA-ltd/djangors',
       programmingLanguage: 'Rust',
-      license: 'https://github.com/Chidi09/djangors/blob/main/LICENSE-MIT',
+      license: 'https://github.com/QUANTORA-ltd/djangors/blob/main/LICENSE-MIT',
       isPartOf: { '@id': 'https://djangors.vercel.app/#website' },
     },
   ],
@@ -93,5 +93,5 @@ const structuredData = {
     <link rel="manifest" href="/site.webmanifest" />
     <script type="application/ld+json" set:html={JSON.stringify(structuredData)} />
   </head>
-  <body><header><a class="brand" href="/"><img src="/logo.svg" alt="Djangors logo" /><span class="brand-name">Djangors</span></a><nav><a href="/compare">Compare</a><a href="/benchmarks">Benchmarks</a><a href="/changelog">Changelog</a><a href="/docs/">Docs</a><a class="github" href="https://github.com/Chidi09/djangors">GitHub ↗</a></nav></header><main><slot /></main><footer><div class="footer-grid"><div><h4>Learn</h4><ul><li><a href="/docs/">Documentation</a></li><li><a href="/docs/tutorial/01-requests-and-responses.html">Tutorial</a></li><li><a href="/compare">Django comparison</a></li><li><a href="/benchmarks">Benchmarks</a></li></ul></div><div><h4>Project</h4><ul><li><a href="https://github.com/Chidi09/djangors/blob/main/PLAN.md">Roadmap</a></li><li><a href="/changelog">Changelog</a></li><li><a href="https://crates.io/search?q=djangors">crates.io</a></li><li><a href="https://github.com/Chidi09/djangors/blob/main/docs/src/api-stability.md">API stability policy</a></li></ul></div><div><h4>Get involved</h4><ul><li><a href="https://github.com/Chidi09/djangors">Source code</a></li><li><a href="https://github.com/Chidi09/djangors/issues">Report an issue</a></li><li><a href="https://github.com/Chidi09/djangors/pulls">Pull requests</a></li></ul></div><div><h4>License</h4><ul><li><a href="https://github.com/Chidi09/djangors/blob/main/LICENSE-MIT">MIT License</a></li><li><a href="https://github.com/Chidi09/djangors/blob/main/LICENSE-APACHE">Apache License 2.0</a></li></ul></div></div><div class="footer-bottom">Djangors &middot; The Django of Rust</div></footer></body>
+  <body><header><a class="brand" href="/"><img src="/logo.svg" alt="Djangors logo" /><span class="brand-name">Djangors</span></a><nav><a href="/compare">Compare</a><a href="/benchmarks">Benchmarks</a><a href="/changelog">Changelog</a><a href="/docs/">Docs</a><a class="github" href="https://github.com/QUANTORA-ltd/djangors">GitHub ↗</a></nav></header><main><slot /></main><footer><div class="footer-grid"><div><h4>Learn</h4><ul><li><a href="/docs/">Documentation</a></li><li><a href="/docs/tutorial/01-requests-and-responses.html">Tutorial</a></li><li><a href="/compare">Django comparison</a></li><li><a href="/benchmarks">Benchmarks</a></li></ul></div><div><h4>Project</h4><ul><li><a href="https://github.com/QUANTORA-ltd/djangors/blob/main/PLAN.md">Roadmap</a></li><li><a href="/changelog">Changelog</a></li><li><a href="https://crates.io/search?q=djangors">crates.io</a></li><li><a href="https://github.com/QUANTORA-ltd/djangors/blob/main/docs/src/api-stability.md">API stability policy</a></li></ul></div><div><h4>Get involved</h4><ul><li><a href="https://github.com/QUANTORA-ltd/djangors">Source code</a></li><li><a href="https://github.com/QUANTORA-ltd/djangors/issues">Report an issue</a></li><li><a href="https://github.com/QUANTORA-ltd/djangors/pulls">Pull requests</a></li></ul></div><div><h4>License</h4><ul><li><a href="https://github.com/QUANTORA-ltd/djangors/blob/main/LICENSE-MIT">MIT License</a></li><li><a href="https://github.com/QUANTORA-ltd/djangors/blob/main/LICENSE-APACHE">Apache License 2.0</a></li></ul></div></div><div class="footer-bottom">Djangors &middot; The Django of Rust</div></footer></body>
 </html>

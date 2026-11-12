@@ -353,14 +353,13 @@ assert!(err.details().is_some());
 
 By default the router renders errors as the JSON envelope `{"error": {status, code, message, details?}}`
 when the caller accepts JSON or the error is an `Api`, otherwise as a debug page (when `debug`) or a
-minimal production page. To take full control, implement the `ErrorRenderer` trait and register an
-`Arc<dyn ErrorRenderer>` as router state; there is a ready-made `JsonErrorRenderer`:
+minimal production page. To take full control, implement the `ErrorRenderer` trait and register it with
+`Router::set_error_renderer(renderer)`; there is a ready-made `JsonErrorRenderer`:
 
 ```rust,illustrative
 use djangors_core::{DjangorsError, Request};
 use djangors_core::error::{ErrorRenderer, JsonErrorRenderer};
 use djangors_core::Response;
-use std::sync::Arc;
 
 #[derive(Clone)]
 struct MyErrorRenderer; // render every error as JSON, e.g. for a pure API
@@ -372,13 +371,80 @@ impl ErrorRenderer for MyErrorRenderer {
 }
 
 fn configure(router: djangors_core::Router) -> djangors_core::Router {
-    router.with_state(Arc::new(MyErrorRenderer) as Arc<dyn ErrorRenderer>)
+    router.set_error_renderer(MyErrorRenderer)
 }
 ```
 
-> [!NOTE]
-> The renderer is looked up from **state**, so it is configured exactly like the database pool:
-> `.with_state(Arc::new(...) as Arc<dyn ErrorRenderer>)`.
+`set_error_renderer` is the ergonomic equivalent of the manual cast form:
+
+```rust,illustrative
+Router::new().with_state(Arc::new(MyRenderer) as Arc<dyn ErrorRenderer>)
+```
+
+The helper exists because the `as Arc<dyn ErrorRenderer>` cast is easy to omit, and
+`with_state(Arc::new(MyRenderer))` compiles perfectly well while storing the value under its
+concrete type — where the renderer lookup never finds it. The custom renderer is then silently
+ignored, with no error at compile time or run time. That silent-failure mode is exactly what
+`set_error_renderer` removes: it always performs the trait-object cast for you.
+
+### Standard problem details (RFC 9457)
+
+Djangors can also send errors in the standard format from
+[RFC 9457](https://www.rfc-editor.org/rfc/rfc9457), with the `application/problem+json`
+content type. Many API clients and gateways already understand this format, and the
+[generated TypeScript client](code-generation.md#dj-openapi-and-the-typescript-client)
+turns it into a typed `ProblemDetailsError`.
+
+You don't have to configure anything for clients that ask for it: when a request's
+`Accept` header includes `application/problem+json`, the default renderer answers in that
+format. To use it for every error response, register `ProblemDetailsRenderer`:
+
+```rust,compile
+use djangors_core::{ProblemDetailsRenderer, Router};
+
+fn configure(router: Router) -> Router {
+    router.set_error_renderer(ProblemDetailsRenderer::new())
+    // Or with your own documentation URLs for `type`:
+    // router.set_error_renderer(ProblemDetailsRenderer::with_type_prefix("https://api.example.com/problems/"))
+}
+```
+
+The `seat_taken` error from the example above, raised while handling `/flights/DL404/seats`,
+renders as:
+
+```json
+{
+  "type": "urn:djangors:error:seat_taken",
+  "title": "Conflict",
+  "status": 409,
+  "code": "seat_taken",
+  "detail": "That seat is already booked",
+  "instance": "/flights/DL404/seats",
+  "errors": { "seat": "12A", "flight": "DL404" },
+  "details": { "seat": "12A", "flight": "DL404" }
+}
+```
+
+`errors` and `details` carry the same data: `errors` is what problem-details clients look
+for, and `details` matches the default Djangors JSON envelope.
+
+Validation and login failures convert into the same shape with `?`:
+
+| Error | Status | `code` |
+| --- | --- | --- |
+| `djangors_forms::FormErrors` | 422 | `validation_error`, with the field errors in `errors` |
+| `AuthError::RateLimited` | 429 | `rate_limited` |
+| `AuthError::AccountLocked` | 429 | `account_locked`, with `retry_after_secs` in `errors` |
+| `AuthError::InvalidToken` | 401 | `invalid_token` |
+
+To build one by hand, call `err.into_problem_response()`, or `err.write_problem_json(...)`
+to write the body into your own buffer.
+
+**Internal errors stay private.** `DjangorsError::Internal` and panics are always rendered
+as `"Internal Server Error"` by `ProblemDetailsRenderer`, and by the JSON and problem+json
+output of the default renderer whenever `debug` is off, so the real message, which might
+contain SQL or file paths, never reaches the client. The router doesn't log that message
+for you; record it with `tracing::error!` where you create the error if you need it later.
 
 ## Paginator and cursor primitives
 
