@@ -194,6 +194,11 @@ Django uses `python manage.py <command>`. Djangors provides the `dj` command-lin
 | `python manage.py dbshell` | `dj dbshell` | Connects directly to configured database CLI |
 | `python manage.py check` | `dj check [--deploy]` | Runs static checks (with `--deploy`, production-safety checks) |
 | `python manage.py createpermissions` | `dj createpermissions` | Generates the standard `view`/`add`/`change`/`delete` permissions per model |
+| `python manage.py inspectdb` | `dj inspectdb` | Writes `#[derive(Model)]` structs for an existing database's tables |
+| `python manage.py spectacular` (drf-spectacular) | `dj openapi [--typescript]` | Writes the OpenAPI spec, or a typed TypeScript client |
+| *(no built-in equivalent)* | `dj generate resource Post title:string` | Writes a model, serializer, REST views, admin, tests, and migration in one step |
+
+These three are covered in [Code Generation](guides/code-generation.md).
 
 ### `dj makemigrations` scope
 `dj` runs the project's own binary in a hidden model-introspection mode, so registrations from application crates are visible. It stores the last model state in `migrations/.schema_snapshot.json` and generates numbered SQL migrations. `detect_changes` automatically detects new tables (`CreateTable`), added columns (`AddColumn`), dropped columns (`DropColumn`), changed column types (`AlterColumnType`), `CreateIndex`/`DropIndex`, `ManyToMany` join tables, `OneToOne` unique constraints, and `choices` `CHECK` constraints. (Column renames are emitted as a `DropColumn` + `AddColumn` pair unless authored manually.)
@@ -848,7 +853,20 @@ Use `dj migrate --rollback` deliberately and never use `--fake` unless the
 database already has exactly the schema represented by the migration. Do not
 hide schema changes in a task or an application startup side effect.
 
-## 20. What does not translate one-for-one
+## 20. Third-party Django packages that are built in
+
+Several packages most Django projects install are part of Djangors:
+
+| Django package | Djangors |
+| :--- | :--- |
+| Django Channels | `Router::ws` WebSockets, in the same server, with same-origin checks on by default ([guide](guides/websockets.md)) |
+| django-debug-toolbar | The `debug-panel` feature: per-request SQL list, timings, and N+1 warnings ([how-to](how-to/debug-queries.md)) |
+| factory_boy | `#[derive(Factory)]` on your models ([testing guide](guides/testing.md#model-factories-derivefactory)) |
+| drf-spectacular + openapi-typescript | `dj openapi` and `dj openapi --typescript` |
+| drf-standardized-errors | `ProblemDetailsRenderer` for RFC 9457 error bodies ([guide](guides/http-and-middleware.md#standard-problem-details-rfc-9457)) |
+| django-browser-reload | Built into `dj run` |
+
+## 21. What does not translate one-for-one
 
 Some Django assumptions need a deliberate design choice:
 

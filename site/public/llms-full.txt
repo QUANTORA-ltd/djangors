@@ -34,10 +34,10 @@ management systems, high-traffic e-commerce. The kind of system where "it usuall
 good enough.
 
 **Status**: pre-1.0, under active development. The core (ORM, admin, auth, migrations, CLI,
-contrib batteries, a REST framework, real-time/SSE, background tasks, payments, multi-tenancy) is
+contrib batteries, a REST framework, WebSockets/SSE, background tasks, payments, multi-tenancy) is
 built and tested; see [`PLAN.md`](PLAN.md) for the full phase-by-phase roadmap and what's done vs.
 remaining. All 32 crates are published on
-[crates.io](https://crates.io/search?q=djangors) at `0.6.2`, including the full contrib battery:
+[crates.io](https://crates.io/search?q=djangors) at `0.9.0`, including the full contrib battery:
 PDF generation, deployment, payments, multi-tenancy, sitemaps, RSS/Atom syndication, flat pages,
 redirects, flash messages, object-level permissions, TOTP/2FA, and content types / generic FKs.
 
@@ -61,34 +61,58 @@ of composable pieces:
 
 | Crate | What it does |
 |---|---|
-| `djangors-core` | The HTTP kernel: `Request`/`Response`, the `Router`, middleware (CSRF, security headers, HSTS, CSP builder, host validation), sessions-adjacent state, SSE streaming, signals (framework + model lifecycle), real `multipart/form-data` file upload parsing, graceful shutdown, optional Sentry error tracking |
-| `djangors-orm` | The ORM: `QuerySet`, filter/order/aggregate expressions, model metadata, `bulk_create`, idempotent `get_or_create`/`update_or_create`, Postgres full-text search, `EXPLAIN`, and scalar DB function expressions (`COALESCE`/`LOWER`/`UPPER`/`CONCAT`/`LENGTH`) |
-| `djangors-macros` | `#[derive(Model)]` (also generates a `ModelForm` equivalent), `#[derive(Settings)]` (typed, validated app config), `#[task]`, and `#[management_command]` attribute macros; `auto_now`/`auto_now_add` timestamps, field `choices` (with DB CHECK constraints), and UUID/Date/Decimal support |
-| `djangors-db` | Connection pooling and config-driven database setup (Postgres) |
-| `djangors-migrations` | Schema migrations with real per-file history and rollback (`dj migrate --rollback`) |
-| `djangors-auth` | Users, groups, permissions, session-backed auth, password hashing, rate-limited login, persistent account lockout |
+| `djangors` | The batteries-included facade crate: re-exports every subsystem (`djangors::core`, `djangors::orm`, `djangors::rest`, etc.) and `djangors::prelude::*` behind granular Cargo feature flags (`full` by default; `default-features = false` with `postgres` or `sqlite` builds a 4.00 MiB minimal release binary) |
+| `djangors-core` | The HTTP kernel: `Request`/`Response` (including `Response::json_bytes` and `Response::cacheable`), the `Router`, middleware (CSRF with header + form-body fallback, security headers, HSTS, CSP builder, host validation), RFC 6455 WebSockets (`Router::ws`, same-origin by default), SSE streaming, broadcast `Groups`, signals (framework + model lifecycle), `multipart/form-data` file upload parsing, graceful shutdown, RFC 9457 `application/problem+json` errors (`ProblemDetailsRenderer`), a dev-only SQL/N+1 query panel (`debug-panel` feature), optional Sentry error tracking |
+| `djangors-orm` | The ORM: `QuerySet`, filter/order/aggregate expressions, model metadata, `bulk_create`, idempotent `get_or_create`/`update_or_create`, Postgres full-text search, `EXPLAIN`, scalar DB function expressions (`COALESCE`/`LOWER`/`UPPER`/`CONCAT`/`LENGTH`), and compile-time `Model::write_json` direct JSON writers |
+| `djangors-macros` | `#[derive(Model)]` (also generates a `ModelForm` equivalent and compile-time `write_json` / `write_json_filtered`), `#[derive(Factory)]` (test-data builders with `.build()`, `.create(&db)`, `.create_many(&db, n)`), `#[derive(Settings)]` (typed, validated app config), `#[task]`, and `#[management_command]` attribute macros; `auto_now`/`auto_now_add` timestamps, field `choices` (with DB CHECK constraints), and UUID/Date/Decimal support |
+| `djangors-db` | Connection pooling, dialect-aware SQL execution (`Conn`), savepoints, per-request query logging with N+1 detection (`with_query_log`), and config-driven database setup for PostgreSQL and SQLite (each gated behind its own `postgres`/`sqlite` Cargo feature flag) |
+| `djangors-migrations` | Schema migrations with automatic model diffing (`detect_changes`), real per-file history, and rollback (`dj migrate --rollback`) |
+| `djangors-auth` | Users, groups, permissions, session-backed auth, Argon2 password hashing, rate-limited login, persistent DB-backed account lockout (`PersistentLockoutBackend`) |
 | `djangors-sessions` | Signed-cookie session engine |
 | `djangors-admin` | The auto-generated admin site: changelist, filters, search, bulk actions, inline editing, CSV export, audit log, object history, FK inlines, and optional tenant scoping |
 | `djangors-forms` | Form field types and validation, plus the `ModelForm` equivalent auto-derived from `#[derive(Model)]` |
 | `djangors-views` | Server-rendered generic class-based views: `ListView`/`DetailView`/`CreateView`/`UpdateView`/`DeleteView` |
 | `djangors-template` | A Django-template-flavored engine (minijinja-backed) with Django-style filters |
-| `djangors-rest` | A DRF-equivalent: generic serialization, `ViewSet`s (scoped with config via `scoped_viewset_routes_with_config`), token/JWT auth, permission classes, cursor pagination, rate limiting, OpenAPI 3.1 generation, and a `request.user()` convenience accessor |
-| `djangors-cache` | Cache trait + in-memory/database/Redis backends |
-| `djangors-mail` | Email messages with SMTP/file/in-memory backends |
+| `djangors-rest` | A DRF-equivalent: generic serialization, compile-time direct JSON streaming (`serialize_to_vec`, `serialize_many_to_vec`), `ViewSet`s (scoped with config via `scoped_viewset_routes_with_config`), token/JWT auth, permission classes, cursor pagination, rate limiting, OpenAPI generation plus a typed TypeScript client (`dj openapi --typescript`), and a `current_user(&req)` convenience accessor |
+| `djangors-cache` | Cache trait + in-memory/database/Redis backends and opt-in `CacheLayer` HTTP response caching |
+| `djangors-mail` | Email messages (`#[non_exhaustive]` builder) with `rustls`-backed SMTP, file, console, and in-memory backends |
 | `djangors-tasks` | A background task queue (`#[task]`, Postgres `SELECT ... FOR UPDATE SKIP LOCKED`, cron-style recurring jobs, a worker loop) |
 | `djangors-pdf` | Typed PDF generation for report cards, invoices, and receipts: headings, text, and tables with automatic page breaks |
 | `djangors-i18n` | Runtime internationalization (Fluent-backed catalogs, locale fallback chain) |
-| `djangors-staticfiles` | Static file collection and serving, a pluggable `Storage` trait (local disk, S3), optional malware/AV scanning of uploaded bytes via `clamd` |
-| `djangors-test` | In-process test client, real per-test database isolation, and a JSON fixtures loader |
-| `djangors-cli` (`dj`) | The `manage.py` equivalent: `new`, `run`, `migrate` (with rollback), `createsuperuser`, `shell` (a real `evcxr` Rust REPL), `dbshell`, `test`, `check --deploy`, and a plugin mechanism for a project's own `dj <custom-command>` |
+| `djangors-staticfiles` | Static file collection and serving, a pluggable `Storage` trait (local disk, optional `s3` feature for S3/MinIO/R2), optional malware/AV scanning of uploaded bytes via `clamd` |
+| `djangors-test` | In-process test client, real per-test database isolation on both PostgreSQL and in-memory SQLite (`TEST_BACKEND=sqlite`), model factories (`djangors_test::Factory`), and a JSON fixtures loader |
+| `djangors-cli` (`dj`) | The `manage.py` equivalent: `new` (with size-optimized `[profile.release]`), `run` (rebuild on change plus browser live reload), `generate resource` (model, serializer, views, admin, tests, and migration in one command), `inspectdb`, `openapi`, `makemigrations`, `migrate` (with rollback), `createsuperuser`, `shell` (a real `evcxr` Rust REPL), `dbshell`, `test`, `check --deploy`, and a plugin mechanism for a project's own `dj <custom-command>` |
 | `djangors-deploy` | `DeployProvider` trait for `dj deploy`. Ships a Render provider (real REST API) and an SSH/VPS provider (shells out to the system `ssh`); Railway/GCP/AWS not yet implemented |
-| `djangors-contrib-payments` | Payment provider integration (Paystack) with idempotent, DB-constraint-backed transaction recording; amounts always in integer minor units, never a float |
+| `djangors-contrib-payments` | Payment provider integrations (**Paystack** and **Bachs**) with HMAC-SHA512 webhook verification and idempotent, DB-constraint-backed transaction recording; amounts always in integer minor units, never a float |
 | `djangors-contrib-tenancy` | Multi-tenancy: a `Tenant` model, membership-verified per-request tenant resolution, and a one-line `Scoped` helper for real cross-tenant row isolation |
 | `djangors-contrib-*` | Sitemaps, RSS/Atom syndication, flat pages, redirects, flash messages, object-level permissions (guardian-style), TOTP/2FA, content types / generic foreign keys |
 
-Two full example apps exercise the framework end-to-end: `examples/polls` (the tutorial app, mirrors
-Django's own polls tutorial) and `examples/school` (an admin-heavy example proving the generic admin
-alone is enough to build a real CRUD app).
+Three example apps exercise the framework end-to-end: `examples/polls` (the tutorial app, mirrors
+Django's own polls tutorial), `examples/school` (an admin-heavy example proving the generic admin
+alone is enough to build a real CRUD app), and `examples/minimal-facade` (a minimal Postgres-only
+facade build demonstrating the 4.00 MiB release binary footprint).
+
+## Less boilerplate
+
+The `dj` CLI and a few derives write the repetitive parts for you:
+
+```bash
+dj generate resource Post title:string body:text published:bool  # model, serializer, REST views, admin, tests, migration
+dj inspectdb --output src/legacy/models.rs                       # models for an existing database
+dj openapi --typescript --output frontend/src/api.ts             # typed TypeScript client for your API
+dj run                                                           # rebuild on save, and the browser reloads itself
+```
+
+- `#[derive(Factory)]` gives every model a test-data builder:
+  `Post::factory().with_title("Hi").create(&db)`.
+- `Router::ws("/ws/chat", handler)` adds a WebSocket endpoint to the same server, with
+  cross-site connections refused by default.
+- The `debug-panel` feature lists every SQL query a page ran, with timings, and flags N+1 loops.
+- `ProblemDetailsRenderer` sends errors as standard RFC 9457 `application/problem+json`.
+
+See [Code Generation](docs/src/guides/code-generation.md),
+[WebSockets and Live Reload](docs/src/guides/websockets.md), and
+[How to Find Slow and N+1 Queries](docs/src/how-to/debug-queries.md).
 
 ## Quick start
 
@@ -234,7 +258,9 @@ Dual-licensed under `MIT OR Apache-2.0`. See [`LICENSE-MIT`](LICENSE-MIT) and
 - [Object-Level Permissions](guides/object-permissions.md)
 - [Databases and Backends](guides/databases.md)
 - [Schema Migrations](guides/migrations.md)
+- [Code Generation: Resources, inspectdb, TypeScript](guides/code-generation.md)
 - [Background Tasks](guides/tasks.md)
+- [WebSockets and Live Reload](guides/websockets.md)
 - [Caching](guides/caching.md)
 - [Internationalization (i18n)](guides/i18n.md)
 - [Sessions and CSRF Protection](guides/sessions.md)
@@ -249,6 +275,7 @@ Dual-licensed under `MIT OR Apache-2.0`. See [`LICENSE-MIT`](LICENSE-MIT) and
 - [How to Cache a View Response](how-to/cache-views.md)
 - [How to Execute Background Tasks](how-to/background-tasks.md)
 - [How to Stream Server-Sent Events](how-to/stream-sse.md)
+- [How to Find Slow and N+1 Queries](how-to/debug-queries.md)
 - [How to Internationalize Templates](how-to/i18n-templates.md)
 
 
@@ -270,12 +297,7 @@ will never see `djangors-orm` at `1.3.0` while `djangors-core` is at `1.1.0`. Be
 breaking changes between minor (`0.x`) releases without a deprecation cycle; the guarantees below
 apply from `1.0` onward.
 
-**What "the public API" means**: as of the first API-freeze review, this covers `djangors-core`,
-`djangors-orm`, and `djangors-rest` (audited together as the largest and most-depended-on
-surface). The `djangors` facade crate (`djangors::core`, `djangors::orm`, `djangors::rest`, etc.)
-re-exports these and is the intended single entry point for applications. Coverage of the
-remaining crates (`djangors-admin`, `djangors-auth`, `djangors-forms`, and the rest) is an
-explicitly planned follow-up ("Freeze Review Pass 2"), not yet frozen under this policy.
+**What "the public API" means**: across Freeze Review Pass 1 and Pass 2 (`docs/design/10.14-api-freeze-pass-2.md`), this policy covers the core framework and primary battery crates: `djangors-core`, `djangors-orm`, `djangors-rest`, `djangors-db`, `djangors-auth`, `djangors-sessions`, `djangors-admin`, `djangors-forms`, `djangors-views`, `djangors-template`, `djangors-migrations`, `djangors-cache`, `djangors-mail`, `djangors-tasks`, `djangors-i18n`, `djangors-staticfiles`, `djangors-pdf`, and `djangors-test`. The `djangors` facade crate (`djangors::core`, `djangors::orm`, `djangors::rest`, etc.) re-exports these behind granular feature flags and is the intended single entry point for applications. Public configuration structs that are expected to grow new fields over time (such as `DjangorsSettings`, `djangors_mail::Message`, and `djangors_rest::ViewSetConfig`) are marked `#[non_exhaustive]` with builder constructors so adding fields in minor releases never breaks downstream code.
 
 ## Deprecation mechanics
 
@@ -291,9 +313,7 @@ explicitly planned follow-up ("Freeze Review Pass 2"), not yet frozen under this
 ## `CHANGELOG.md`
 
 A root [`CHANGELOG.md`](https://github.com/Chidi09/djangors/blob/main/CHANGELOG.md) is maintained
-today, grouped by development phase since there has not yet been a tagged `1.0` release. Once
-`1.0` ships, it switches to the [Keep a Changelog](https://keepachangelog.com/) format:
-`Added`/`Changed`/`Deprecated`/`Removed`/`Fixed`/`Security` sections per version.
+in the [Keep a Changelog](https://keepachangelog.com/) format (`Added`/`Changed`/`Deprecated`/`Removed`/`Fixed`/`Security` sections per tagged release, plus `[Unreleased]`), alongside a historical summary of earlier pre-release development phases.
 
 ## Release cadence
 
@@ -312,12 +332,9 @@ used internally for every architecturally significant change in this project's o
 slice in `docs/design/` is exactly this kind of doc). Formalizing it here means outside
 contributors can propose and review API changes the same way, not just watch them happen.
 
-## Where this stops short today
+## Pre-1.0 Scope Note
 
-This is a **first pass**, not a complete stability contract: it covers 3 of the 32 workspace
-crates by design (the largest, most-used ones), and doesn't cover the contrib crates or CLI
-tooling at all. Treat this page as the honest current state of the policy, not a claim that
-everything is frozen. It will be extended as later freeze-review passes land.
+While Freeze Review Pass 1 and Pass 2 have audited the core and primary battery crates (including `#[non_exhaustive]` hardening and unified `&Database` model CRUD signatures), Djangors is still pre-`1.0`. Before `1.0.0` is tagged, breaking changes may still land between `0.x` minor releases when documented in `CHANGELOG.md` and `docs/design/`.
 
 
 <!-- docs/src/benchmarks.md -->
@@ -393,6 +410,38 @@ run: Djangors achieved 76.7% of axum's full-stack throughput (23.3% lower), whil
 28.9% higher. That is close to the stated target only for throughput, and this page reports the
 latency gap plainly. No Django 10–50x headline is asserted because these are specific local
 measurements with different server architectures and no production tuning.
+
+---
+
+## JSON Serialization Benchmark (Compile-Time `write_json` vs Axum, Gin, Fastify, FastAPI)
+
+To measure the impact of Djangors's compile-time direct JSON writer (`#[derive(Model)]` generating [`Model::write_json`](guides/orm.md#compile-time-direct-json-serialization-write_json), exposed via [`serialize_to_vec` / `serialize_many_to_vec`](guides/rest.md#low-level-serialize-serialize_to_vec-and-serialize_many_to_vec) and [`Response::json_bytes`](guides/http-and-middleware.md)), we ran a dedicated HTTP JSON serialization benchmark across five frameworks on the same machine (8-vCPU Intel Core i5-8350U @ 1.70 GHz, Linux 7.0, 32 concurrent HTTP/1.1 keep-alive connections, 1s warmup + 5s measurement per endpoint).
+
+Each framework served two endpoints with an identical 7-field `BenchItem` model (`id: i64`, `name: String` with quotes/ampersands requiring JSON escaping, `category: String`, `price: f64`, `in_stock: bool`, `tags_Summary: String`, `created_at: DateTime<Utc>`):
+1. **`/json/single`** (~190 B JSON object): Serializes 1 model instance per request.
+2. **`/json/list`** (~9.5 KB JSON array): Serializes a 50-item `Vec<BenchItem>` per request.
+
+### JSON Benchmark Results
+
+| Endpoint | Framework & Serialization Path | Requests/sec | Throughput (MiB/s) | p50 | p95 | p99 |
+|---|---|---:|---:|---:|---:|---:|
+| `/json/single` (1 item) | **Djangors (`write_json` + `json_bytes`)** | **18,960.70** | **3.42** | **1.500 ms** | **3.427 ms** | **5.051 ms** |
+| `/json/single` (1 item) | **Axum 0.8.9** (`axum::Json` / `serde::Serialize`) | 18,905.44 | 3.32 | 1.492 ms | 3.449 ms | 5.128 ms |
+| `/json/single` (1 item) | **Djangors (legacy `serde_json::Value`)** | 18,014.41 | 3.25 | 1.581 ms | 3.604 ms | 5.488 ms |
+| `/json/single` (1 item) | **Gin (Go 1.27)** (`c.JSON` / `encoding/json`) | 14,779.90 | 2.66 | 1.813 ms | 5.258 ms | 8.321 ms |
+| `/json/single` (1 item) | **Fastify (Node v26)** (`fast-json-stringify` schema) | 5,325.07 | 0.93 | 5.819 ms | 8.338 ms | 12.527 ms |
+| `/json/single` (1 item) | **FastAPI (Python 3.12)** (Uvicorn 4w + Pydantic v2) | 3,922.93 | 0.69 | 7.626 ms | 15.805 ms | 20.217 ms |
+| `/json/list` (50 items) | **Djangors (`write_json` + `json_bytes`)** | **12,610.54** | **116.94** | **2.344 ms** | **4.884 ms** | **7.020 ms** |
+| `/json/list` (50 items) | **Axum 0.8.9** (`axum::Json` / `serde::Serialize`) | 9,957.08 | 89.96 | 3.011 ms | 6.000 ms | 8.555 ms |
+| `/json/list` (50 items) | **Djangors (legacy `serde_json::Value`)** | 7,390.09 | 68.53 | 4.080 ms | 7.923 ms | 10.480 ms |
+| `/json/list` (50 items) | **Gin (Go 1.27)** (`c.JSON` / `encoding/json`) | 6,177.44 | 57.13 | 4.159 ms | 12.900 ms | 18.329 ms |
+| `/json/list` (50 items) | **FastAPI (Python 3.12)** (Uvicorn 4w + Pydantic v2) | 3,047.61 | 27.54 | 7.159 ms | 19.881 ms | 35.276 ms |
+| `/json/list` (50 items) | **Fastify (Node v26)** (`fast-json-stringify` schema) | 2,533.58 | 22.83 | 12.433 ms | 15.648 ms | 26.367 ms |
+
+### Key Takeaways
+- **+70.6% faster 50-item list serialization inside Djangors**: Switching from `djangors_rest::serialize` (`serde_json::Value` tree allocation) to compile-time `Model::write_json` (`serialize_many_to_vec` + `Response::json_bytes`) jumped 50-item list throughput from **7,390 req/s** to **12,611 req/s** (and cut p50 latency from **4.08 ms** to **2.34 ms**).
+- **Parity with (and ahead of) Axum on list payloads**: On single objects, Djangors (`18,961 req/s`) and Axum (`18,905 req/s`) are neck-and-neck because HTTP/1.1 framing dominates. On 50-item lists where JSON serialization is a larger share of CPU time, Djangors's pre-sized `Vec::with_capacity(items.len() * 128)` + compile-time static key writers (`itoa`/`ryu` + fast string escaping) achieved **12,611 req/s (116.94 MiB/s)** vs Axum's **9,957 req/s (89.96 MiB/s)** (+26.6%).
+- **2.0x Gin (Go), 4.1x FastAPI (Pydantic v2), and 5.0x Fastify (`fast-json-stringify`) on 50-item lists**: Note that Fastify runs on a single Node.js event-loop thread by default whereas Rust (Tokio), Go (goroutines), and FastAPI (4 Uvicorn workers) utilize multiple cores.
 
 
 <!-- docs/src/django-comparison.md -->
@@ -582,7 +631,7 @@ Django uses `python manage.py <command>`. Djangors provides the `dj` command-lin
 | `python manage.py startapp` | `dj new-app` | Scaffolds a new app/module inside a project |
 | `python manage.py runserver` | `dj run` | Starts dev server with live-reloading file watch loop |
 | `python manage.py migrate` | `dj migrate` | Applies pending database migrations |
-| `python manage.py makemigrations` | `dj makemigrations` | Introspects the project binary; v1 detects new models and new fields |
+| `python manage.py makemigrations` | `dj makemigrations` | Introspects the project binary and generates numbered schema migrations |
 | `python manage.py sqlmigrate` | `dj sqlmigrate <app> <migration>` | Renders a migration's SQL without applying it |
 | `python manage.py showmigrations` | `dj showmigrations` | Lists migrations and their applied state |
 | `python manage.py createsuperuser` | `dj createsuperuser` | Prompts for superuser credentials and creates User |
@@ -593,9 +642,14 @@ Django uses `python manage.py <command>`. Djangors provides the `dj` command-lin
 | `python manage.py dbshell` | `dj dbshell` | Connects directly to configured database CLI |
 | `python manage.py check` | `dj check [--deploy]` | Runs static checks (with `--deploy`, production-safety checks) |
 | `python manage.py createpermissions` | `dj createpermissions` | Generates the standard `view`/`add`/`change`/`delete` permissions per model |
+| `python manage.py inspectdb` | `dj inspectdb` | Writes `#[derive(Model)]` structs for an existing database's tables |
+| `python manage.py spectacular` (drf-spectacular) | `dj openapi [--typescript]` | Writes the OpenAPI spec, or a typed TypeScript client |
+| *(no built-in equivalent)* | `dj generate resource Post title:string` | Writes a model, serializer, REST views, admin, tests, and migration in one step |
+
+These three are covered in [Code Generation](guides/code-generation.md).
 
 ### `dj makemigrations` scope
-`dj` runs the project's own binary in a hidden model-introspection mode, so registrations from application crates are visible. It stores the last model state in `migrations/.schema_snapshot.json` and generates numbered SQL migrations. v1 covers new models and new fields; field-type changes, removals, renames, indexes, and relation alterations are deferred.
+`dj` runs the project's own binary in a hidden model-introspection mode, so registrations from application crates are visible. It stores the last model state in `migrations/.schema_snapshot.json` and generates numbered SQL migrations. `detect_changes` automatically detects new tables (`CreateTable`), added columns (`AddColumn`), dropped columns (`DropColumn`), changed column types (`AlterColumnType`), `CreateIndex`/`DropIndex`, `ManyToMany` join tables, `OneToOne` unique constraints, and `choices` `CHECK` constraints. (Column renames are emitted as a `DropColumn` + `AddColumn` pair unless authored manually.)
 
 Database migrations in Djangors are authored as raw SQL files or generated via programmatic schema utilities.
 
@@ -835,15 +889,17 @@ class ArticleViewSet(viewsets.ModelViewSet):
 # pub struct Article { #[djangors(primary_key, auto)] pub id: i64 }
 # fn main() {
 # let article_instance = Article { id: 1 };
-use djangors_rest::{serialize, viewset_routes};
-use djangors_core::Router;
+use djangors_rest::{serialize, serialize_to_vec, viewset_routes};
+use djangors_core::{Response, Router, StatusCode};
 
-// Low-level model serialization
+// Low-level model serialization to serde_json::Value or directly to UTF-8 JSON bytes
 let json_val = serialize::<Article>(&article_instance);
+let response = Response::json_bytes(StatusCode::OK, serialize_to_vec(&article_instance));
 
 // High-level ViewSet registration. `ViewSet<M>` has no instance to construct;
 // its CRUD handlers are mounted directly as a free function, IsAuthenticated by default.
 let router = viewset_routes::<Article>(Router::new(), "/articles");
+# let _ = (json_val, response, router);
 # }
 ```
 
@@ -1245,7 +1301,20 @@ Use `dj migrate --rollback` deliberately and never use `--fake` unless the
 database already has exactly the schema represented by the migration. Do not
 hide schema changes in a task or an application startup side effect.
 
-## 20. What does not translate one-for-one
+## 20. Third-party Django packages that are built in
+
+Several packages most Django projects install are part of Djangors:
+
+| Django package | Djangors |
+| :--- | :--- |
+| Django Channels | `Router::ws` WebSockets, in the same server, with same-origin checks on by default ([guide](guides/websockets.md)) |
+| django-debug-toolbar | The `debug-panel` feature: per-request SQL list, timings, and N+1 warnings ([how-to](how-to/debug-queries.md)) |
+| factory_boy | `#[derive(Factory)]` on your models ([testing guide](guides/testing.md#model-factories-derivefactory)) |
+| drf-spectacular + openapi-typescript | `dj openapi` and `dj openapi --typescript` |
+| drf-standardized-errors | `ProblemDetailsRenderer` for RFC 9457 error bodies ([guide](guides/http-and-middleware.md#standard-problem-details-rfc-9457)) |
+| django-browser-reload | Built into `dj run` |
+
+## 21. What does not translate one-for-one
 
 Some Django assumptions need a deliberate design choice:
 
@@ -1258,10 +1327,11 @@ Some Django assumptions need a deliberate design choice:
 - Djangors tasks are database-backed and durable; a raw Tokio task is not.
 - HTML rendering and API serialization are separate choices; do not return
   database rows directly just because they implement `Serialize`.
-- Djangors provides SSE, not a drop-in WebSocket abstraction; confirm the
-  capability before designing a WebSocket-dependent feature.
-- SQLite is a useful test backend but does not prove PostgreSQL locking,
-  extensions, or dialect-specific behavior.
+- Djangors provides both SSE (`Router::sse` / `Response::sse`) and RFC 6455
+  WebSockets (`Router::ws` / `djangors_core::ws::WebSocket`, plus pub/sub
+  broadcast channels via `djangors_core::Groups`).
+- SQLite is a useful test backend (and production backend for single-node apps)
+  but does not prove PostgreSQL locking, extensions, or dialect-specific behavior.
 
 The migration is complete when every endpoint has an explicit route, contract,
 permission rule, tenant rule where applicable, service workflow, repository
@@ -1454,6 +1524,138 @@ default when omitted (`actions`, `fieldsets`, `readonly_fields`,
 `raw_id_fields`, plus the search/filter/editable/hierarchy accessors).
 `DefaultModelAdmin<M>` in `djangors-admin` is the built-in implementation
 `register_with` uses, and you can use it as a reference when writing your own.
+
+---
+
+## Crate layout
+
+`djangors-admin` is organized by view rather than by model. `lib.rs` holds only the
+crate-level docs, the shared template engine (`ADMIN_TEMPLATES`), the module list, and the
+public re-exports — so the public API you `use` is identical regardless of which module an
+item lives in. A contributor can find things like this:
+
+| Module | Owns |
+| --- | --- |
+| `model_admin` | `ModelAdmin` trait, `DefaultModelAdmin`, `ModelAdminConfig`, `ChangelistPage`, `InlineConfig`, `TenantFilter` |
+| `site` | `AdminSite`, `SiteBranding`, `TenantScope`, `with_tenant_scoping`, route assembly (`urls`) |
+| `changelist` | List page: querying, pagination, CSV export, `?o=/`q=/`f=`/date-hierarchy handling |
+| `edit_view` | Add/change form GET+POST handlers |
+| `delete_view` | Delete and bulk-delete GET+POST handlers |
+| `index_view` | The admin index (app/model links) |
+| `history_view` | Per-object change history |
+| `action_view` | Bulk-action handlers |
+| `forms` | Form/field rendering and parsing for the add/change forms |
+| `log` | `LogEntry` auditing (`AdminAction`, field diffs) |
+| `perms` | `require_staff`, `require_perm`, and request-scoped tenant resolution |
+| `favicon` | `favicon_routes` static branding routes |
+
+`site.rs` depends on the view modules; the view modules depend on the `ModelAdmin` trait
+defined in `model_admin.rs`. `lib.rs` re-exports the public surface
+(`AdminSite`, `SiteBranding`, `TenantScope`, `ModelAdmin`, `DefaultModelAdmin`,
+`ModelAdminConfig`, `InlineConfig`, `TenantFilter`, `ChangelistPage`, `AdminAction`,
+`LogEntry`, `favicon_routes`, ...), so the module an item lives in is an implementation
+detail rather than part of the public API.
+
+---
+
+## Implementing `ModelAdmin` by hand
+
+The section above introduced the trait. Whatever you implement, the framework hands you a
+`TenantFilter` — `Option<(&'static str, i64)>`, the tenant FK field name on the model plus the
+tenant id every row must match — as the **final argument** to every method that touches data:
+`changelist`, `export_csv_rows`, `get_by_pk`, `update_from_form`, `update_fields_from_form`,
+`create_from_form`, and `delete_by_pk`. Their real signatures:
+
+```rust,illustrative
+use djangors_admin::{ChangelistPage, ModelAdmin, TenantFilter};
+
+async fn changelist(
+    &self,
+    db: &djangors_db::Database,
+    order: Option<&str>,
+    page: i64,
+    per_page: i64,
+    search: Option<&str>,
+    filters: &[(&'static str, bool)],
+    date_range: Option<(chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)>,
+    tenant: TenantFilter,
+) -> Result<ChangelistPage, djangors_core::DjangorsError>;
+
+async fn export_csv_rows(
+    &self,
+    db: &djangors_db::Database,
+    order: Option<&str>,
+    search: Option<&str>,
+    filters: &[(&'static str, bool)],
+    date_range: Option<(chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)>,
+    tenant: TenantFilter,
+) -> Result<(Vec<&'static str>, Vec<Vec<String>>), djangors_core::DjangorsError>;
+
+async fn get_by_pk(
+    &self,
+    db: &djangors_db::Database,
+    pk: i64,
+    tenant: TenantFilter,
+) -> Result<Option<Vec<(&'static str, djangors_orm::expr::Value)>>, djangors_core::DjangorsError>;
+
+async fn update_from_form(
+    &self,
+    db: &djangors_db::Database,
+    pk: i64,
+    form: &std::collections::HashMap<String, String>,
+    tenant: TenantFilter,
+) -> Result<Result<(), std::collections::HashMap<String, String>>, djangors_core::DjangorsError>;
+
+async fn update_fields_from_form(
+    &self,
+    db: &djangors_db::Database,
+    pk: i64,
+    form: &std::collections::HashMap<String, String>,
+    tenant: TenantFilter,
+) -> Result<Result<(), std::collections::HashMap<String, String>>, djangors_core::DjangorsError>;
+
+async fn create_from_form(
+    &self,
+    db: &djangors_db::Database,
+    form: &std::collections::HashMap<String, String>,
+    tenant: TenantFilter,
+) -> Result<Result<i64, std::collections::HashMap<String, String>>, djangors_core::DjangorsError>;
+
+async fn delete_by_pk(
+    &self,
+    db: &djangors_db::Database,
+    pk: i64,
+    tenant: TenantFilter,
+) -> Result<bool, djangors_core::DjangorsError>;
+```
+
+The one thing a custom implementation must get right is this contract:
+
+> **Apply the `tenant` argument to every query you run, and never cache it on `self`.**
+
+The reason is structural. The admin object is built once at registration and shared across
+every concurrent request behind an `Arc`; there is no per-request copy. If you stored the
+resolved tenant on the admin, a second request could overwrite it while the first awaited the
+database, and one tenant's request would then read another tenant's rows. So the tenant always
+arrives per-call, and it is up to your method to thread it into the query. `None` means
+unrestricted — a superuser, or a site with no tenant scoping configured at all.
+
+The PK-based methods carry the same obligation with specific semantics, and the safe default
+is to scope by both PK and tenant like `DefaultModelAdmin` does:
+
+- **`get_by_pk`** must read a row belonging to another tenant as "not found" (`None`), not
+  return it — a cross-tenant primary key and a missing one are indistinguishable.
+- **`delete_by_pk`** must refuse (return `false`, delete nothing) when the row belongs to
+  another tenant.
+- **`update_from_form` / `update_fields_from_form`** must not touch another tenant's row.
+- **`create_from_form`** must force the new row's tenant field to the resolved tenant rather
+  than trusting the submitted form, so a scoped add-form can never plant a row elsewhere.
+
+The default build does all of this via `tenant_compare` plus PK-scoped querysets, and the
+[Multi-tenancy guide](multi-tenancy.md) walks through the reasoning, the "not stored on the
+admin" design, and the fail-closed resolution rules in full — read it before writing a custom
+`ModelAdmin` for a scoped site.
+
 
 
 <!-- docs/src/guides/application-architecture.md -->
@@ -2516,22 +2718,30 @@ HTTP response caching is notoriously prone to security leaks:
 
 ### Using the Cache Middleware
 
-To wire up response caching in your application:
+To wire up response caching in your application, wrap your `RouterService` in `CacheLayer` and mark cacheable responses with `.cacheable()` (or `.with_extension(CacheableResponse)`):
 
-```rust,illustrative
-use djangors::cache::{CacheLayer, CacheableResponse};
+```rust,compile
+use djangors::cache::{CacheLayer, InMemoryCache};
+use djangors::core::{DjangorsError, PathParams, Request, Response, Router, StatusCode};
+use djangors::core::router::RouterService;
 use std::sync::Arc;
 use std::time::Duration;
+use tower::ServiceBuilder;
 
-// 1. Set up the CacheLayer with your preferred cache backend
-let cache_backend = Arc::new(InMemoryCache::new(1000));
-let cache_layer = CacheLayer::new(cache_backend, Some(Duration::from_secs(300)));
+// 1. Mark specific responses as cacheable in your view handler
+async fn my_public_view(_req: Request, _params: PathParams) -> Result<Response, DjangorsError> {
+    Ok(Response::text(StatusCode::OK, "Hello, Cached World!").cacheable())
+}
 
-// 2. Mark specific responses as cacheable in your view handler
-async fn my_public_view() -> Response {
-    let mut response = Response::new("Hello, Cached World!".into());
-    response.extensions_mut().insert(CacheableResponse);
-    response
+fn wire_cache() {
+    // 2. Set up the CacheLayer with your preferred cache backend
+    let cache_backend = Arc::new(InMemoryCache::new(1000));
+    let cache_layer = CacheLayer::new(cache_backend, Some(Duration::from_secs(300)));
+
+    let router = Router::new().get("/public", my_public_view);
+    let _service: djangors::cache::CacheService<RouterService> = ServiceBuilder::new()
+        .layer(cache_layer)
+        .service(RouterService::new(router, false));
 }
 ```
 
@@ -2775,6 +2985,164 @@ A minimal create form template for `Question`:
 - **The `pk` name is fixed.** Detail/update/delete look up the `pk` path
   parameter by name, so your route must use `{pk}`.
 
+<!-- docs/src/guides/code-generation.md -->
+
+# Code Generation: Resources, `inspectdb`, and TypeScript Clients
+
+Three `dj` commands write code for you, so you don't type the same boilerplate for
+every model:
+
+| Command | Writes | Closest equivalent elsewhere |
+| :--- | :--- | :--- |
+| `dj generate resource` | Model, serializer, REST views, admin, tests, and a SQL migration | `rails generate scaffold`, `php artisan make:model -a` |
+| `dj inspectdb` | `#[derive(Model)]` structs from an existing database | Django's `manage.py inspectdb` |
+| `dj openapi --typescript` | A typed TypeScript client for your REST API | `openapi-typescript`, tRPC-style typed clients |
+
+All three print to the terminal, or to a file with `--output`, and every file they
+write is ordinary Rust or TypeScript that you own and can edit.
+
+## `dj generate resource`
+
+Run it from your project root, giving a PascalCase model name and `name:type` field
+specs:
+
+```bash
+dj generate resource Post title:string body:text published:bool
+```
+
+This creates a module under `src/posts/` plus a numbered migration:
+
+```text
+src/posts/mod.rs
+src/posts/models.rs        # #[derive(Model)] struct Post
+src/posts/serializers.rs   # REST serializer
+src/posts/views.rs         # ViewSet + register_routes(router)
+src/posts/admin.rs         # register_admin(&site)
+src/posts/tests.rs         # a working test for the generated model
+migrations/0001_create_posts_post.sql
+```
+
+The module name defaults to the snake_case plural of the model (`BlogComment` becomes
+`blog_comments`). Pass `--app <name>` to choose it yourself.
+
+### Field types
+
+| Spec | Rust type | PostgreSQL column | SQLite column |
+| :--- | :--- | :--- | :--- |
+| `string` (`varchar`, `char`) | `String` with `max_length = 255` | `VARCHAR(255)` | `TEXT` |
+| `text` | `String` | `TEXT` | `TEXT` |
+| `int` (`i32`, `integer`) | `i32` | `INTEGER` | `INTEGER` |
+| `bigint` (`i64`) | `i64` | `BIGINT` | `INTEGER` |
+| `float` (`f64`) | `f64` | `DOUBLE PRECISION` | `REAL` |
+| `bool` (`boolean`) | `bool` | `BOOLEAN DEFAULT FALSE` | `INTEGER DEFAULT 0` |
+| `datetime` (`timestamp`) | `chrono::DateTime<chrono::Utc>` | `TIMESTAMPTZ` | `TEXT` |
+| `uuid` | `uuid::Uuid` | `UUID` | `TEXT` |
+| `decimal` | `rust_decimal::Decimal` | `NUMERIC(19, 4)` | `NUMERIC` |
+
+Every column is `NOT NULL`. The migration uses SQLite column types when `DATABASE_URL`
+is a SQLite URL and PostgreSQL types otherwise, so set `DATABASE_URL` before generating.
+
+### Wiring the resource in
+
+The command prints these steps when it finishes:
+
+1. Add `mod posts;` to `src/main.rs`.
+2. Make sure `Cargo.toml` depends on `djangors-macros`, `djangors-orm`, `djangors-rest`,
+   `djangors-admin`, `serde` (with the `derive` feature), and `serde_json`, plus
+   `chrono`, `uuid`, or `rust_decimal` if your fields use them. Depending on the
+   `djangors` facade crate covers the framework crates.
+3. Mount the routes: `let router = posts::views::register_routes(router);`
+4. Register the admin: `posts::admin::register_admin(&site);`
+5. Run `dj migrate`.
+
+After that, `cargo test` runs the generated test against your database.
+
+## `dj inspectdb`
+
+Point `dj inspectdb` at an existing PostgreSQL or SQLite database to get model structs
+for its tables:
+
+```bash
+dj inspectdb --database-url postgres://localhost/legacy --app legacy --output src/legacy/models.rs
+```
+
+| Flag | Default | Meaning |
+| :--- | :--- | :--- |
+| `--database-url` | `DATABASE_URL` | Database to read |
+| `--app` | `app` | Value for each struct's `#[djangors(app = "...")]` |
+| `--output`, `-o` | stdout | File to write |
+
+The output keeps each table name (`table_name = "..."`), marks the primary key, turns
+nullable columns into `Option<T>`, and carries `VARCHAR(n)` lengths over as
+`max_length`. A column whose name isn't a valid Rust identifier, such as `type`,
+`self`, or `first name`, gets a valid field name plus a `column = "..."` attribute
+that maps it back to the real column.
+
+Djangors has no field type yet for some columns: JSON, `bytea`, `inet`, arrays,
+intervals, and geometric types. `dj inspectdb` generates those fields as `String` so the
+file still compiles, and prints a warning to stderr for each one. Reads and writes of
+those fields fail until you change them, so handle every warning before using the model:
+
+```text
+[dj inspectdb] warning: legacy_event.payload: column type `jsonb` has no Djangors field type; generated as String (reads and writes will fail until you change it)
+```
+
+Read the generated models before you use them: like Django's version, `inspectdb` is a
+starting point, not a guarantee.
+
+## `dj openapi` and the TypeScript client
+
+`dj openapi` reads the models compiled into your project and writes an OpenAPI
+specification for their REST endpoints:
+
+```bash
+dj openapi --output openapi.json
+```
+
+Add `--typescript` to get a typed client with no dependencies instead:
+
+```bash
+dj openapi --typescript --output frontend/src/api.ts
+```
+
+The generated file contains:
+
+- An interface per model (`Post`), plus `PostCreateInput` and `PostUpdateInput`
+  (all fields optional, for `PATCH`).
+- `PaginatedList<T>` for list responses.
+- `ProblemDetails` and a `ProblemDetailsError` class: every failed request throws a
+  `ProblemDetailsError`, whether the server sent
+  [RFC 9457 problem details](http-and-middleware.md#standard-problem-details-rfc-9457)
+  or the default Djangors JSON error.
+- A `DjangorsApiClient` class with `list`, `retrieve`, `create`, `update`,
+  `partialUpdate`, and `destroy` methods per model.
+
+```ts
+import { DjangorsApiClient, ProblemDetailsError } from "./api";
+
+const api = new DjangorsApiClient({
+  baseUrl: "https://example.com",
+  headers: { Authorization: `Token ${token}` },
+});
+
+const page = await api.listPost({ published: true });
+try {
+  await api.createPost({ title: "Hello", body: "First post", published: false });
+} catch (err) {
+  if (err instanceof ProblemDetailsError) console.error(err.problem.errors);
+}
+```
+
+`ClientOptions.fetch` lets you pass your own `fetch` implementation, for example in
+tests or older runtimes.
+
+**Check the paths.** The generator assumes each model is served at
+`/api/<plural>/`, the layout `dj generate resource` produces. If you mount a ViewSet
+somewhere else, or don't expose a model over REST at all, edit the generated paths or
+delete those methods. Regenerate the client whenever your models change; the file
+starts with a "do not edit" header for that reason.
+
+
 <!-- docs/src/guides/databases.md -->
 
 # Databases and Backends
@@ -2815,6 +3183,22 @@ let config = djangors_db::config::DatabaseConfig::new(std::env::var("DATABASE_UR
 let db = djangors_db::Database::connect(&config).await?;
 ```
 
+### Cargo Feature Flags (`postgres` and `sqlite`)
+
+At compile time, `djangors-db` (and the `djangors` facade crate) gate each SQL driver behind its own Cargo feature flag (`postgres` and `sqlite`, both enabled by default). If your production deployment targets only one database engine, disable default features and enable only the backend you need to drop the unused driver (such as bundled `libsqlite3-sys` or `sqlx-postgres`) from your dependency graph and release binary:
+
+```toml
+# PostgreSQL-only build (drops sqlx-sqlite and libsqlite3-sys)
+djangors = { version = "0.9", default-features = false, features = ["postgres", "rest"] }
+
+# Or when depending on djangors-db / djangors-orm directly:
+djangors-db = { version = "0.9", default-features = false, features = ["postgres"] }
+djangors-orm = { version = "0.9", default-features = false, features = ["postgres"] }
+```
+
+> [!NOTE]
+> Enabling neither `postgres` nor `sqlite` emits a clear `compile_error!` instructing you to enable at least one backend feature.
+
 ---
 
 ## Dialect-Aware Architecture
@@ -2854,10 +3238,10 @@ It provides the following helper methods to bridge dialect differences:
 
 ## Honest Limitations
 
-While the dual-backend architecture simplifies local development, there are key differences and limitations to keep in mind:
+While the dual-backend architecture simplifies local development and CI testing, there are key differences and limitations to keep in mind:
 
-### 1. Testing is PostgreSQL-Only
-The testing framework in `djangors-test` is strictly PostgreSQL-only. This is because its transaction isolation and test database management system relies on PostgreSQL session-level advisory locks to run tests concurrently without interference. SQLite cannot be used to run the Djangors test suite.
+### 1. Dual-Backend Testing vs. PostgreSQL-Specific Features
+`djangors-test` (`TestDatabase` and `TestBackend`) supports **both** in-memory SQLite (`TEST_BACKEND=sqlite`) and PostgreSQL (`TEST_BACKEND=postgres`). In-memory SQLite gives fast, zero-container test runs for standard ORM, view, auth, admin, and REST tests. However, PostgreSQL-specific capabilities—such as session-level advisory locks (`acquire_cross_process_lock`), `SELECT ... FOR UPDATE SKIP LOCKED` / `NOWAIT`, PostgreSQL full-text search (`tsvector`), and PostgreSQL transaction isolation levels—require a real PostgreSQL instance and return `UnsupportedOnDialect` (or skip) on SQLite.
 
 ### 2. Unsupported Migrations on SQLite
 SQLite has very limited support for altering existing table schemas. Because of this, certain schema operations are not supported on SQLite. For instance:
@@ -2877,13 +3261,13 @@ When interacting with the connection pool:
 ## When to Choose Which
 
 * **SQLite** is ideal for:
-  * Local development to avoid running a local PostgreSQL container.
-  * Simple staging environments or internal tools with minimal write concurrency.
+  * Local development and fast `TEST_BACKEND=sqlite cargo test` runs without a local PostgreSQL container.
+  * Simple staging environments, embedded tools, or internal apps with minimal write concurrency.
   * Single-writer, read-heavy workloads.
 * **PostgreSQL** is required for:
   * Production deployments with concurrent writes or high traffic.
-  * Running the automated test suite (`djangors-test`).
-  * Advanced operations such as alter column type migrations.
+  * Testing PostgreSQL-specific locking (`SKIP LOCKED`, advisory locks), full-text search, or isolation levels.
+  * Advanced schema operations such as `AlterColumnType` migrations.
 
 ---
 
@@ -2965,9 +3349,17 @@ pub async fn transfer_funds(
             sender.balance -= amount;
             receiver.balance += amount;
 
-            // Execute debit & credit updates
-            sender.save(&mut **conn).await?;
-            receiver.save(&mut **conn).await?;
+            // Execute debit & credit updates inside the transaction handle
+            conn.execute(
+                "UPDATE accounts SET balance = $1 WHERE id = $2",
+                &[BindValue::I64(sender.balance), BindValue::I64(sender.id)],
+            )
+            .await?;
+            conn.execute(
+                "UPDATE accounts SET balance = $1 WHERE id = $2",
+                &[BindValue::I64(receiver.balance), BindValue::I64(receiver.id)],
+            )
+            .await?;
 
             // Commit savepoint checkpoint
             conn.release_savepoint("ledger_entry").await?;
@@ -3129,6 +3521,38 @@ pub async fn healthz(_req: Request, _params: PathParams) -> Result<Response, Dja
     Ok(Response::text(StatusCode::OK, "ok"))
 }
 ```
+
+---
+
+## Binary Size & Cargo Feature Flags
+
+Projects generated by `dj new` include a production-tuned `[profile.release]` in `Cargo.toml`:
+
+```toml
+[profile.release]
+lto = "thin"
+strip = "symbols"
+codegen-units = 1
+```
+
+When depending on the `djangors` facade crate, all subsystems and both database backends (`postgres` and `sqlite`) are enabled by default. To minimize compile times and binary size in production, disable default features and opt into only the database backend and subsystems your application uses:
+
+```toml
+[dependencies]
+djangors = { version = "0.9", default-features = false, features = [
+    "postgres",   # or "sqlite" — drops libsqlite3-sys when only "postgres" is enabled
+    "migrations",
+    "rest",
+    "auth",
+    "sessions",
+] }
+```
+
+Available `djangors` facade features:
+- **Database backends**: `postgres`, `sqlite` (at least one is required by `djangors-db`).
+- **Subsystems**: `migrations`, `rest`, `admin`, `auth`, `forms`, `sessions`, `template`, `staticfiles`, `s3` (enables `staticfiles` + S3 storage backend), `cache`, `mail` (uses `rustls`), `i18n`, `tasks`, `pdf`, `payments`, `tenancy`.
+
+See `examples/minimal-facade` in the repository for a reference Postgres-only facade build (`default-features = false, features = ["postgres"]`), which compiles to a **4.00 MiB** stripped release binary (compared to **11.51 MiB** for the multi-crate `examples/polls` application).
 
 ---
 
@@ -4060,14 +4484,13 @@ assert!(err.details().is_some());
 
 By default the router renders errors as the JSON envelope `{"error": {status, code, message, details?}}`
 when the caller accepts JSON or the error is an `Api`, otherwise as a debug page (when `debug`) or a
-minimal production page. To take full control, implement the `ErrorRenderer` trait and register an
-`Arc<dyn ErrorRenderer>` as router state; there is a ready-made `JsonErrorRenderer`:
+minimal production page. To take full control, implement the `ErrorRenderer` trait and register it with
+`Router::set_error_renderer(renderer)`; there is a ready-made `JsonErrorRenderer`:
 
 ```rust,illustrative
 use djangors_core::{DjangorsError, Request};
 use djangors_core::error::{ErrorRenderer, JsonErrorRenderer};
 use djangors_core::Response;
-use std::sync::Arc;
 
 #[derive(Clone)]
 struct MyErrorRenderer; // render every error as JSON, e.g. for a pure API
@@ -4079,13 +4502,80 @@ impl ErrorRenderer for MyErrorRenderer {
 }
 
 fn configure(router: djangors_core::Router) -> djangors_core::Router {
-    router.with_state(Arc::new(MyErrorRenderer) as Arc<dyn ErrorRenderer>)
+    router.set_error_renderer(MyErrorRenderer)
 }
 ```
 
-> [!NOTE]
-> The renderer is looked up from **state**, so it is configured exactly like the database pool:
-> `.with_state(Arc::new(...) as Arc<dyn ErrorRenderer>)`.
+`set_error_renderer` is the ergonomic equivalent of the manual cast form:
+
+```rust,illustrative
+Router::new().with_state(Arc::new(MyRenderer) as Arc<dyn ErrorRenderer>)
+```
+
+The helper exists because the `as Arc<dyn ErrorRenderer>` cast is easy to omit, and
+`with_state(Arc::new(MyRenderer))` compiles perfectly well while storing the value under its
+concrete type — where the renderer lookup never finds it. The custom renderer is then silently
+ignored, with no error at compile time or run time. That silent-failure mode is exactly what
+`set_error_renderer` removes: it always performs the trait-object cast for you.
+
+### Standard problem details (RFC 9457)
+
+Djangors can also send errors in the standard format from
+[RFC 9457](https://www.rfc-editor.org/rfc/rfc9457), with the `application/problem+json`
+content type. Many API clients and gateways already understand this format, and the
+[generated TypeScript client](code-generation.md#dj-openapi-and-the-typescript-client)
+turns it into a typed `ProblemDetailsError`.
+
+You don't have to configure anything for clients that ask for it: when a request's
+`Accept` header includes `application/problem+json`, the default renderer answers in that
+format. To use it for every error response, register `ProblemDetailsRenderer`:
+
+```rust,compile
+use djangors_core::{ProblemDetailsRenderer, Router};
+
+fn configure(router: Router) -> Router {
+    router.set_error_renderer(ProblemDetailsRenderer::new())
+    // Or with your own documentation URLs for `type`:
+    // router.set_error_renderer(ProblemDetailsRenderer::with_type_prefix("https://api.example.com/problems/"))
+}
+```
+
+The `seat_taken` error from the example above, raised while handling `/flights/DL404/seats`,
+renders as:
+
+```json
+{
+  "type": "urn:djangors:error:seat_taken",
+  "title": "Conflict",
+  "status": 409,
+  "code": "seat_taken",
+  "detail": "That seat is already booked",
+  "instance": "/flights/DL404/seats",
+  "errors": { "seat": "12A", "flight": "DL404" },
+  "details": { "seat": "12A", "flight": "DL404" }
+}
+```
+
+`errors` and `details` carry the same data: `errors` is what problem-details clients look
+for, and `details` matches the default Djangors JSON envelope.
+
+Validation and login failures convert into the same shape with `?`:
+
+| Error | Status | `code` |
+| --- | --- | --- |
+| `djangors_forms::FormErrors` | 422 | `validation_error`, with the field errors in `errors` |
+| `AuthError::RateLimited` | 429 | `rate_limited` |
+| `AuthError::AccountLocked` | 429 | `account_locked`, with `retry_after_secs` in `errors` |
+| `AuthError::InvalidToken` | 401 | `invalid_token` |
+
+To build one by hand, call `err.into_problem_response()`, or `err.write_problem_json(...)`
+to write the body into your own buffer.
+
+**Internal errors stay private.** `DjangorsError::Internal` and panics are always rendered
+as `"Internal Server Error"` by `ProblemDetailsRenderer`, and by the JSON and problem+json
+output of the default renderer whenever `debug` is off, so the real message, which might
+contain SQL or file paths, never reaches the client. The router doesn't log that message
+for you; record it with `tracing::error!` where you create the error if you need it later.
 
 ## Paginator and cursor primitives
 
@@ -4544,6 +5034,14 @@ pub enum Operation {
     DropTable {
         table_name: String,
     },
+    CreateIndex {
+        index_name: String,
+        table_name: String,
+        columns: Vec<String>,
+    },
+    DropIndex {
+        index_name: String,
+    },
 }
 ```
 
@@ -4561,6 +5059,8 @@ Reversible operations can automatically generate the correct SQL for the `-- dow
 | `DropColumn` | **No** | None (data is lost, cannot be automatically reconstructed) |
 | `DropTable` | **No** | None (table columns and data are lost) |
 | `AlterColumnType` | **No** | None (reverting requires knowledge of the original type) |
+| `CreateIndex` | **Yes** | `DropIndex` |
+| `DropIndex` | **No** | None (recreating the index requires knowing its table and columns) |
 
 If a migration contains a non-reversible operation, Djangors inserts the `-- no-down` marker in the generated SQL file.
 
@@ -4672,6 +5172,94 @@ assert!(matches!(create.reverse(), Some(Operation::DropTable { .. })));
 `build_create_all_plan(dialect)` (also `build_create_plan_from_snapshots`) produces the
 `Vec<Operation>` plan for all registered models, topologically sorted by foreign-key dependency —
 this is what `migrate` feeds into `to_sql` and executes transactionally.
+
+---
+
+## Detecting Model Changes with `detect_changes`
+
+`detect_changes(previous, current, dialect)` diffs two sets of `ModelSnapshot` and returns the
+incremental operations needed to bring the database from `previous` to `current`. For each model
+present in `current` it emits:
+
+* **New tables** — a model that exists in `current` but not in `previous` produces a `CreateTable`.
+* **Added columns** — a field in `current` with no matching name in `previous` produces an
+  `AddColumn`.
+* **Dropped columns** — a field in `previous` with no matching name in `current` produces a
+  `DropColumn`.
+* **Changed column types** — a field present in both sets whose `kind` or `max_length` differs
+  produces an `AlterColumnType`. Because `AlterColumnType` is unsupported on SQLite, diffing on a
+  SQLite dialect surfaces an `UnsupportedOnDialect` error only when such a change is encountered.
+
+The comparison keys off **field names**, not column identity. `detect_changes` does **not** detect
+renames: renaming a column is seen as a *drop* of the old name plus an *add* of the new one, which
+are emitted as separate `DropColumn` and `AddColumn` operations.
+
+---
+
+## Index Operations
+
+Indexes declared through a model's struct-level `indexes` attribute are emitted into the generated
+plan as `CreateIndex` operations, placed after the model's `CreateTable`. Each non-empty index
+produces:
+
+```rust,illustrative
+Operation::CreateIndex {
+    index_name: "idx_item_slug".to_string(), // from the index's name
+    table_name: "app_item".to_string(),      // the model's table
+    columns: vec!["slug".to_string()],       // the index's field names
+}
+```
+
+rendered as `CREATE INDEX IF NOT EXISTS "idx_item_slug" ON "app_item" ("slug");`.
+
+`DropIndex` carries only the index name and renders as
+`DROP INDEX IF EXISTS "idx_item_slug";`. A `CreateIndex` reverses to `DropIndex`; a `DropIndex` has
+no mechanical inverse.
+
+---
+
+## Many-to-Many Join Tables
+
+A `ManyToMany` relation is not represented as a column on either model. Instead the plan emits a
+dedicated join (through) table for it, named after the Django convention:
+
+```
+{source_table}_{field_name}
+```
+
+so a `students` `ManyToMany` field on a model whose table is `app_school` produces a through table
+named `app_school_students`.
+
+The through table carries exactly two non-nullable foreign-key columns, each `NOT NULL` and
+referencing the target's primary key with `ON DELETE CASCADE`:
+
+* **Source column**: `{source_struct_name_lowercase}_id` → references `{source_table}.{source_pk}`
+* **Target column**: `{target_struct_name_lowercase}_id` → references `{target_table}.{target_pk}`
+
+For the example above the plan emits:
+
+```sql
+CREATE TABLE IF NOT EXISTS "app_school_students" (
+    "school_id" BIGINT NOT NULL REFERENCES "app_school"("id") ON DELETE CASCADE,
+    "student_id" BIGINT NOT NULL REFERENCES "app_student"("id") ON DELETE CASCADE
+);
+```
+
+The join table's own `id` column is not auto-added; the two FK columns are the only columns it
+declares.
+
+---
+
+## OneToOne and the UNIQUE Constraint
+
+A `OneToOne` relation is emitted as a plain foreign-key column like `ForeignKey`,
+**plus** a UNIQUE constraint. The plan sets `unique: true` on the FK column specifically when the
+relation kind is `OneToOne`, which is what distinguishes a one-to-one column from an ordinary
+foreign key in the generated schema:
+
+```sql
+"profile_id" BIGINT UNIQUE REFERENCES "app_user"("id") ON DELETE CASCADE
+```
 
 ---
 
@@ -4820,13 +5408,73 @@ Every `ScopedViewSet::<SchoolClass>` request now only ever sees rows belonging t
 membership-verified tenant. A user for tenant A genuinely cannot see tenant B's classes, list
 them, or fetch one by id.
 
+## Scoping the admin to the current tenant
+
+The generated admin UI enforces the same tenant boundary as `ScopedViewSet`. An `AdminSite` is
+configured with a `TenantScope`, which names the tenant FK field present on **every** registered
+model plus a function that extracts the current tenant id from a request. The extractor typically
+reads `djangors_contrib_tenancy::CurrentTenant` from request extensions — which
+`TenantResolutionLayer` populates — so the admin and the REST layer resolve the tenant the same
+way:
+
+```rust,illustrative
+use djangors_contrib_tenancy::CurrentTenant;
+use djangors_core::Request;
+
+let site = djangors_admin::AdminSite::new()
+    .with_tenant_scoping("tenant", |req: &Request| req.ext::<CurrentTenant>().map(|t| t.0));
+```
+
+### The tenant is resolved per request, not stored
+
+This is the important part. A `ModelAdmin` is built **once** at registration and shared across
+every concurrent request behind an `Arc`. The tenant restriction is therefore passed as a
+`TenantFilter` argument (`Option<(&'static str, i64)>`) into each admin data method — `changelist`,
+`export_csv_rows`, `get_by_pk`, `update_from_form`, `update_fields_from_form`, `create_from_form`,
+and `delete_by_pk` — and is **never** held on the admin itself.
+
+It must not be stored on the admin: state kept on the shared object could be overwritten by a
+second request while the first was awaiting the database, so one tenant's request could read
+another tenant's rows. A custom `ModelAdmin` must honour the `tenant` argument it receives rather
+than caching a tenant on `self`.
+
+### Superusers are unrestricted
+
+`TenantFilter` is `None` for a superuser, so they see every tenant's rows in the admin.
+
+### It fails closed
+
+For a non-superuser on a tenant-scoped site, if no tenant id can be resolved from the request,
+the handler returns `Forbidden`. It does not fall back to running the query unscoped. Failing open
+here would silently expose every tenant's rows to any admin user whose request happened to lack a
+resolved tenant — the exact leak the scoping exists to prevent.
+
+### What scoping actually guarantees
+
+The trait-level docs make the guarantees precise:
+
+- **Reads and writes by primary key are filtered by tenant too.** A cross-tenant primary key reads
+  as "not found" rather than leaking a row (`get_by_pk`), and updates refuse to touch another
+  tenant's row.
+- **Deletes refuse** to remove a row that belongs to another tenant.
+- **Objects created through a scoped add-form have their tenant field forced to the current
+  tenant**, so a submitted form cannot plant a row in someone else's tenant.
+- **Object history is gated on the object's visibility**, because the log table has no tenant
+  column of its own.
+
+### `TenantResolutionFailed`
+
+Previously a database failure during the membership lookup was indistinguishable from "this user
+is not a member", so an outage surfaced to clients as `Unauthorized`. The middleware now records a
+`TenantResolutionFailed` marker on the request when the lookup itself fails, and `tenant_scope`
+maps that to `Internal` (500) instead of `Unauthorized`. For callers who need to name the type,
+`TenantResolutionService` is now re-exported from the crate root.
+
 ## What this doesn't cover yet
 
-`djangors-admin` has no tenant-scoping integration yet: an admin user for one tenant can browse
-another tenant's rows in the generated admin UI. This is the design doc's own flagged
-highest-value follow-up, not yet built. Schema-per-tenant/database-per-tenant support,
-subdomain-based tenant resolution (v1 is `X-Tenant-Id`-header only), and automatic Postgres
-Row-Level Security policy generation are also deliberately out of scope for this first slice.
+Schema-per-tenant/database-per-tenant support, subdomain-based tenant resolution (v1 is
+`X-Tenant-Id`-header only), and automatic Postgres Row-Level Security policy generation are
+deliberately out of scope for this first slice.
 
 
 <!-- docs/src/guides/object-permissions.md -->
@@ -5079,7 +5727,7 @@ align with no custom naming.
 
 # Object-Relational Mapping (ORM)
 
-`djangors-orm` provides Django-style querysets, model metadata, expression macros, and database integration for PostgreSQL (via `sqlx`).
+`djangors-orm` provides Django-style querysets, model metadata, expression macros, compile-time JSON writers, and database integration for PostgreSQL and SQLite (via `sqlx`).
 
 ## Defining Models
 
@@ -5126,6 +5774,8 @@ pub struct Choice {
 - **`table_name = "custom_table"`** *(optional)*: Database table name. Defaults to `{app_label}_{snake_case_struct_name}`.
 - **`ordering = ["field", "-field"]`** *(optional)*: Default ordering for querysets when `.order_by()` is not called. Prefix `-` denotes descending.
 - **`unique_together = [["field1", "field2"]]`** *(optional)*: Defines composite unique constraints.
+- **`indexes = ["index_name", ("index_name", ["field1", "field2"])]`** *(optional)*: Defines custom or composite database indexes. Can be a simple index name or a tuple of `(name, [fields])`.
+- **`manager = "ManagerStruct"`** *(optional)*: Overrides the default model manager with a custom manager struct.
 
 #### Field-Level Attributes
 - **`primary_key`**: Marks the single primary key field. Automatically implies `unique` and `db_index`. Every model must have exactly one primary key field.
@@ -5136,19 +5786,56 @@ pub struct Choice {
 - **`db_index`**: Creates a database index on the column.
 - **`verbose_name = "..."`**, **`help_text = "..."`**: Descriptive labels for admin/forms metadata.
 - **`column = "col_name"`**: Overrides the database column name if different from the struct field name.
+- **`auto_now_add`**: Populates a `DateTime<Utc>` field with `Utc::now()` automatically when a new row is inserted via `save(db)`.
+- **`auto_now`**: Refreshes a `DateTime<Utc>` field with `Utc::now()` automatically on both `save(db)` and `update(db)`.
+- **`choices = [("VALUE", "Human Label"), ...]`**: Restricts a `String` field to an allowed set of values (validated in forms/serializers and emitted as a SQL `CHECK` constraint by migrations).
 - **`foreign_key(on_delete = "...", related_name = "...")`**: Configures foreign key behavior. `on_delete` options: `"cascade"` (default), `"protect"`, `"set_null"`, `"restrict"`, `"do_nothing"`.
 
 ### Supported Field Types
 - Integer: `i32` (`FieldKind::Integer`), `i64` (`FieldKind::BigInt`)
 - Float: `f32`, `f64` (`FieldKind::Float`)
-- String: `String` (`FieldKind::Char` or `FieldKind::Text`)
+- Decimal: `rust_decimal::Decimal` (`FieldKind::Decimal { max_digits, decimal_places }`)
+- String: `String` (`FieldKind::Char` with `max_length`, or `FieldKind::Text` without)
 - Boolean: `bool` (`FieldKind::Boolean`)
-- Datetime: `chrono::DateTime<chrono::Utc>` (`FieldKind::DateTime`)
+- Datetime & Date/Time: `chrono::DateTime<chrono::Utc>` (`FieldKind::DateTime`), `chrono::NaiveDate` (`FieldKind::Date`), `chrono::NaiveTime` (`FieldKind::Time`), `chrono::Duration` (`FieldKind::Duration`)
+- UUID: `uuid::Uuid` (`FieldKind::Uuid`)
 - Foreign Key: `ForeignKey<TargetModel>`
-- Nullable: `Option<T>` for any of the above types
+- One-to-One Key: `OneToOne<TargetModel>`
+- Many-to-Many Marker: `ManyToMany<TargetModel>`
+- Nullable: `Option<T>` for any of the above types (except `ManyToMany`)
 
-> [!NOTE]
-> Types like `NaiveDate`, `NaiveTime`, `Duration`, `Uuid`, and `Decimal` are defined in `FieldKind` for schema metadata, but currently trigger a compile error on `Model` derive for save/update operations.
+### Custom Managers
+
+You can define custom database query manager behavior by implementing the `Manager` trait and specifying the manager class via the struct-level `manager` attribute:
+
+```rust,compile
+# use djangors_orm::{Model, q};
+# use djangors_macros::Model;
+pub struct ActiveManager;
+
+impl djangors_orm::meta::Manager<ManagedModel> for ActiveManager {
+    fn objects() -> djangors_orm::queryset::QuerySet<ManagedModel> {
+        djangors_orm::queryset::QuerySet::<ManagedModel>::new()
+            .filter(q!(is_active = true))
+            .expect("valid filter")
+    }
+}
+
+#[derive(Model, Debug)]
+#[djangors(
+    app = "polls",
+    table_name = "polls_managed",
+    manager = "ActiveManager"
+)]
+pub struct ManagedModel {
+    #[djangors(primary_key, auto)]
+    pub id: i64,
+    pub name: String,
+    pub is_active: bool,
+}
+```
+
+By overriding the manager, calling `ManagedModel::objects()` will automatically retrieve a queryset pre-filtered or configured according to your manager definition.
 
 ---
 
@@ -5199,6 +5886,7 @@ as `OrmError::FieldNotFound` rather than silently becoming an equality test.
 - **`.count(db).await`**: Returns `Result<i64, OrmError>` count (`SELECT COUNT(*) ...`).
 - **`.aggregate(db, vec![AggExpr::...]).await`**: Evaluates aggregate functions: `AggExpr::Count`, `AggExpr::Sum`, `AggExpr::Avg`, `AggExpr::Min`, `AggExpr::Max`.
 - **`.update(db, set!(...)).await`**: Performs bulk updates. Returns `Result<u64, OrmError>` (rows affected count).
+- **`.delete(db).await`**: Deletes all rows matching the queryset's filters. Returns `Result<u64, OrmError>` (rows affected count). **Warning**: calling `.delete()` on an unfiltered queryset (e.g. `Model::objects().delete(db)`) will delete every row in the table.
 - **`QuerySet::<T>::delete_by_pk(db, pk).await`**: Static helper deleting a row by its primary key.
 
 ### Eager-loading relations: `select_related` and `prefetch_related`
@@ -5505,10 +6193,157 @@ rows in one statement.
 
 ## Relationships & Many-to-Many
 
-Foreign keys are stored in `ForeignKey<T>` wrapper fields (e.g. `#[djangors(foreign_key(on_delete = "cascade", related_name = "choices"))] pub question: ForeignKey<Question>`). Foreign keys access `.id` directly.
+`djangors-orm` supports Foreign Key, One-to-One, and Many-to-Many relationships.
 
-> [!NOTE]
-> Direct many-to-many relationship querying via implicit junction table abstraction is not implemented in `djangors-orm`. Explicit join models (such as `UserGroup`, `GroupPermission`, and `UserPermission` in `djangors-auth`) are defined and queried directly as models with foreign keys.
+### Foreign Keys (`ForeignKey<T>`)
+
+Foreign keys reference the primary key of another model:
+
+```rust,illustrative
+#[djangors(foreign_key(on_delete = "cascade", related_name = "choices"))]
+pub question: ForeignKey<Question>,
+```
+
+To access the related ID directly, read `choice.question.id`. To load the related model instance lazily, call `.fetch(&db)`:
+
+```rust,illustrative
+if let Some(question) = choice.question.fetch(db).await? {
+    println!("{}", question.question_text);
+}
+```
+
+### One-to-One (`OneToOne<T>`)
+
+A `OneToOne<T>` relationship is declared using the `OneToOne` wrapper. While it behaves similarly to a `ForeignKey`, migrations will automatically emit a `UNIQUE` constraint on the underlying column to ensure uniqueness:
+
+```rust,illustrative
+#[derive(Model, Debug, Clone)]
+#[djangors(app = "polls", table_name = "polls_user_profile")]
+pub struct UserProfile {
+    #[djangors(primary_key, auto)]
+    pub id: i64,
+    #[djangors(foreign_key(on_delete = "cascade", related_name = "profile"))]
+    pub user: OneToOne<User>,
+}
+```
+
+Like foreign keys, you can resolve the relationship lazily via `.fetch(db)`:
+
+```rust,illustrative
+let profile = UserProfile::objects().get(db).await?;
+if let Some(user) = profile.user.fetch(db).await? {
+    println!("User name: {}", user.name);
+}
+```
+
+### Many-to-Many (`ManyToMany<T>`)
+
+A `ManyToMany<T>` relation uses the `ManyToMany` wrapper as a zero-sized marker field. This field does not correspond to any column in the model's table. Instead, a dedicated through (junction) table named `{source_table_name}_{field_name}` is created automatically by migrations.
+
+```rust,illustrative
+#[derive(Model, Debug, Clone)]
+#[djangors(app = "polls", table_name = "polls_school")]
+pub struct School {
+    #[djangors(primary_key, auto)]
+    pub id: i64,
+    pub name: String,
+    #[djangors(many_to_many(related_name = "schools"))]
+    pub students: ManyToMany<Student>,
+}
+```
+
+You can interact with Many-to-Many relationships using the free helper functions `m2m_related`, `m2m_add`, and `m2m_remove`:
+
+```rust,illustrative
+use djangors_orm::{m2m_add, m2m_related, m2m_remove};
+
+// Add relationship entries
+m2m_add::<School, Student, _>(db, school.id, "students", student.id).await?;
+
+// Query related instances
+let students = m2m_related::<School, Student, _>(db, school.id, "students").await?;
+
+// Remove relationship entries
+m2m_remove::<School, Student, _>(db, school.id, "students", student.id).await?;
+```
+
+## Query Result Caching
+
+`djangors-orm` provides an opt-in, in-process, process-local query cache to avoid hitting the database for duplicate queries. 
+
+### Enabling and Querying the Cache
+
+You can enable result caching on a `QuerySet` via `.cache(duration)` and fetch cached results via `.cached_all(db)`:
+
+```rust,illustrative
+use std::time::Duration;
+
+// First call queries the database and caches the results
+let questions = Question::objects()
+    .filter(q!(pub_date__year = 2026))?
+    .cache(Duration::from_secs(60))
+    .cached_all(db)
+    .await?;
+
+// Subsequent calls with the exact same SQL and parameters
+// will hit the process-local cache instead of the database.
+let cached_questions = Question::objects()
+    .filter(q!(pub_date__year = 2026))?
+    .cache(Duration::from_secs(60))
+    .cached_all(db)
+    .await?;
+```
+
+### Invalidation
+
+Write operations (`save()`, `update()`, and `delete()`) automatically invalidate all cached entries associated with the affected model's table. 
+
+> [!IMPORTANT]
+> The query cache is **process-local** and resides entirely in-memory. In multi-process deployments, writes to one process will not invalidate the caches of other processes, which can lead to stale data being served. Use with caution in distributed environments.
+
+## Database Routing
+
+For multi-database setups, `djangors-orm` provides metadata-level routing via `ModelDatabaseMap`. This allows you to map specific model struct names to distinct database instances:
+
+```rust,illustrative
+use djangors_orm::ModelDatabaseMap;
+
+// Construct routing map
+let routing_map = ModelDatabaseMap::new(
+    default_db,
+    vec![
+        ("User", auth_db),
+        ("Session", session_db),
+    ],
+);
+
+// Retrieve the database configured for a specific model
+let db = routing_map.db_for::<User>();
+```
+
+## Compile-Time Direct JSON Serialization (`write_json`)
+
+Every `#[derive(Model)]` struct automatically generates a specialized, Fastify-style (`fast-json-stringify`) JSON writer on the `Model` trait:
+
+- **`model.write_json(&mut buf)`**: Writes all non-`ManyToMany` model fields directly into a `Vec<u8>` buffer with pre-escaped static `"\"field_name\":"` byte literals in lexicographical key order (using `itoa` for integers and `ryu` for floats), avoiding intermediate `Vec<(&'static str, BindValue)>` and `serde_json::Map` allocations.
+- **`model.write_json_filtered(&mut buf, |field_name| ...)`**: Same direct writer, filtered by a field-name predicate (used by `djangors-rest` when a `FieldSet` restricts readable fields).
+
+```rust,compile
+# use polls::models::Question;
+# use djangors_orm::Model;
+# use chrono::Utc;
+# fn main() {
+let q = Question {
+    id: 1,
+    question_text: "Fast JSON?".to_string(),
+    pub_date: Utc::now(),
+};
+
+let mut buf = Vec::with_capacity(128);
+q.write_json(&mut buf);
+assert!(std::str::from_utf8(&buf).unwrap().contains("\"question_text\":\"Fast JSON?\""));
+# }
+```
 
 
 <!-- docs/src/guides/payments.md -->
@@ -5578,6 +6413,78 @@ let proxied = PaystackProvider::with_base_url("sk_live_...", "https://paystack-p
 # let _ = (live, sandbox, proxied);
 # }
 ```
+
+## `BachsProvider`
+
+[Bachs](https://bachs.io) is a payments/billing platform aimed at internet businesses with
+African settlement. `BachsProvider` implements the same `PaymentProvider` trait as Paystack, so
+it is a drop-in alternative for one-time charges.
+
+```rust,compile
+use djangors_contrib_payments::BachsProvider;
+
+fn make_provider(secret_key: &str) -> BachsProvider {
+    BachsProvider::new(secret_key.to_string())
+}
+```
+
+There are three constructors. `new(secret_key)` talks to the production API
+(`https://api.bachs.io`), `sandbox(secret_key)` points at `https://sandbox-api.bachs.io`, and
+`with_base_url(secret_key, base_url)` routes everything at an arbitrary base URL (useful for a
+mock server or a proxy). Build against sandbox first — going live is a key swap (`sk_sandbox_`
+→ `sk_live_`), not a code change:
+
+```rust,compile
+# fn main() {
+use djangors_contrib_payments::BachsProvider;
+
+let live = BachsProvider::new("sk_live_..."); // real https://api.bachs.io
+let sandbox = BachsProvider::sandbox("sk_sandbox_..."); // https://sandbox-api.bachs.io
+# let _ = (live, sandbox);
+# }
+```
+
+### Amounts: decimal strings on the wire
+
+This is the part most likely to trip someone up. The `PaymentProvider` trait speaks in
+`amount_minor: i64` (kobo, cents), and you keep using minor units throughout — but Bachs's own
+API uses decimal strings at the currency's precision and explicitly never minor units. The
+provider converts in both directions using exact integer arithmetic, driven by a
+currency-exponent table: 0 decimals for currencies like JPY and XOF, 3 for currencies like KWD
+and BHD, and 2 for everything else (including NGN, USD, GHS, KES, ZAR). You never see a decimal
+string; the conversion happens at the boundary. So `amount_minor: 123456` with `"NGN"` becomes
+`"1234.56"` on the wire, and a `"1234.56"` response round-trips back to `123456`.
+
+### `initiate` / `verify` / `refund`
+
+The one deviation from Paystack you must not miss: **Bachs has no lookup-by-merchant-reference
+endpoint**, so `verify(reference)` and `refund(reference, ..)` interpret their argument as the
+Bachs **checkout id**, not your own merchant reference. `initiate` returns that checkout id in
+the `access_code` field of `InitiateChargeResponse` (Bachs has no "access code" concept of its
+own) and the redirect URL in `authorization_url`. **The caller must persist `access_code` after
+`initiate`**, or it cannot verify or refund the charge later. A reader who misses this ends up
+with a broken integration.
+
+### Webhooks
+
+Bachs signs deliveries with two headers, `X-Bachs-Timestamp` and `X-Bachs-Signature`, where the
+signature is an HMAC-SHA256 hex digest of `"{timestamp}.{raw_body}"`. Because the single-argument
+`verify_webhook_signature` has nowhere to put the timestamp, the trait gained
+`verify_webhook_signature_with_timestamp(raw_body, timestamp, signature)`, whose default
+implementation ignores the timestamp so Paystack is unaffected. Note that `BachsProvider`'s plain
+`verify_webhook_signature` deliberately returns `false` unconditionally — it fails closed rather
+than pretending to verify — so Bachs callers **must** use the timestamped method.
+
+`handle_bachs_webhook` verifies, parses, and records the delivery in one call. Pass the raw body
+bytes exactly as received, never a re-serialized copy, or the signature will not match. The
+`collection.succeeded` event is the one treated as payment confirmation.
+
+### Paystack or Bachs?
+
+At a factual level: Paystack verifies and refunds by your merchant reference and signs webhooks
+with a single HMAC-SHA512 header; Bachs verifies and refunds by checkout id, uses multi-currency
+decimal amounts, and signs webhooks with a timestamped HMAC-SHA256 pair. Pick the provider whose
+API and settlement model match your market.
 
 ## Idempotent transaction recording
 
@@ -5993,11 +6900,9 @@ let public = viewset_routes_with_permission::<Question, _>(
 );
 
 // Same default auth, but with a custom config (filtering + ordering allowlists).
-let config = ViewSetConfig {
-    filterable_fields: &["pub_date"],
-    orderable_fields: &["pub_date"],
-    ..Default::default()
-};
+let config = ViewSetConfig::new()
+    .with_filterable_fields(&["pub_date"])
+    .with_orderable_fields(&["pub_date"]);
 let filtered = viewset_routes_with_config::<Question>(Router::new(), "/questions/filtered", config);
 
 // Both.
@@ -6253,22 +7158,26 @@ assert_eq!(VALIDATION_ERROR_CODE, "validation_error");
 # }
 ```
 
-### Low-level `serialize` free function
+### Low-level `serialize`, `serialize_to_vec`, and `serialize_many_to_vec`
 
 When you only need a model rendered to JSON without a full ViewSet — a custom
 handler, a CSV/export endpoint, a debug route — call `djangors_rest::serialize`
-directly. It returns a `serde_json::Value` you can drop into `Response::json`.
-To serialise a collection, map over the queryset result.
+for a `serde_json::Value`, or `serialize_to_vec` / `serialize_many_to_vec` to
+stream directly into a `Vec<u8>` buffer (paired with `Response::json_bytes`)
+using the compile-time `#[derive(Model)]` JSON writer without allocating
+intermediate `serde_json::Value` maps:
 
 ```rust,compile
 # use polls::models::Question;
 # async fn run(db: &djangors_db::Database) -> Result<(), Box<dyn std::error::Error>> {
+use djangors_core::{Response, StatusCode};
 use djangors_orm::Model;
-use djangors_rest::serialize;
+use djangors_rest::{serialize, serialize_many_to_vec};
 
 let questions = Question::objects().all(db).await?;
 let json = serde_json::Value::Array(questions.iter().map(serialize).collect());
-# let _ = json;
+let response = Response::json_bytes(StatusCode::OK, serialize_many_to_vec(&questions));
+# let _ = (json, response);
 # Ok(())
 # }
 ```
@@ -6338,6 +7247,8 @@ fields* — it cannot compute, fuse, or rename a field. For that, implement the
 | `validate(&self, &[(&str, Value)], &mut ValidationErrors)` | object-level rules, run after field parsing | no-op |
 | `to_representation_nested(&self, &M, &RelatedObjects) -> Value` | embed preloaded relations in place of FK ids | merges the base representation |
 | `to_representation_many(&self, &[M]) -> Vec<Value>` | render a collection | maps `to_representation` |
+| `write_json(&self, &M, &mut Vec<u8>)` | write one row directly as UTF-8 JSON bytes | serializes `to_representation` (`ModelSerializer` overrides with `Model::write_json`) |
+| `write_json_many(&self, &[M], &mut Vec<u8>)` | write a collection directly as a UTF-8 JSON array | serializes `to_representation_many` (`ModelSerializer` overrides to stream `write_json`) |
 | `parse(&self, &Value, partial) -> Result<FieldValues, ValidationErrors>` | `to_internal_value` then `validate` | ViewSets call this |
 
 ViewSets call `parse`, never `to_internal_value` directly, so a `validate`
@@ -7721,6 +8632,9 @@ storage.create_bucket().await?; // BucketAlreadyOwnedByYou / BucketAlreadyExists
 Both `S3Storage` and `LocalDiskStorage` implement the same [`Storage`](#the-storage-trait) trait, so
 `collect_to` and `save_upload` work identically against local disk or an object store.
 
+> [!TIP]
+> `S3Storage` is gated behind the default-on `s3` Cargo feature on `djangors-staticfiles` (and `staticfiles-s3` on the `djangors` facade). If you only serve or collect static files to local disk, disable `s3` (`default-features = false`) to omit `rust-s3` and its HTTP/XML dependencies from your build.
+
 ---
 
 ## Production Collection (`collectstatic`)
@@ -7787,7 +8701,7 @@ let back: Manifest = serde_json::from_str(&json).unwrap();
 
 ## Uploading User Files (`save_upload`)
 
-[`save_upload`](file:///root/dev/Rango/crates/djangors-staticfiles/src/upload.rs) writes an uploaded
+`djangors_staticfiles::upload::save_upload` writes an uploaded
 file through any `Storage` backend under a collision-avoiding name and returns the stored path:
 
 ```rust,illustrative
@@ -7831,7 +8745,7 @@ async fn upload_handler(req: Request) -> Result<Response, DjangorsError> {
 
 ## Serving Static Files (`StaticFiles::serve`)
 
-[`StaticFiles::serve`](file:///root/dev/Rango/crates/djangors-staticfiles/src/serve.rs) is the async
+`StaticFiles::serve` (`crates/djangors-staticfiles/src/serve.rs`) is the async
 handler behind the dev-time serving story:
 
 ```rust,illustrative
@@ -8420,6 +9334,75 @@ async fn exclusive_setup() {
 Release is explicit because Rust can't run async code in `Drop`; an un-released lock stays held
 until its dedicated connection closes (i.e. when the test process exits).
 
+### Model Factories (`#[derive(Factory)]`)
+
+Writing out every field of a model for each test gets tedious. Derive `Factory` next to
+`Model` and you get `Model::factory()`, a builder in the style of Python's `factory_boy`
+or Laravel's model factories. It fills every field with a sensible default, and you set
+only the fields the test cares about:
+
+```rust,compile
+# use djangors_orm::Model as _;
+use djangors_db::Database;
+use djangors_macros::{Factory, Model};
+
+#[derive(Debug, Clone, Model, Factory)]
+#[djangors(app = "blog")]
+pub struct Article {
+    #[djangors(primary_key, auto)]
+    pub id: i64,
+    #[djangors(max_length = 120)]
+    pub title: String,
+    pub author_email: String,
+    #[djangors(default = 10)]
+    pub views: i64,
+    pub subtitle: Option<String>,
+}
+
+async fn example(db: &Database) -> Result<(), djangors_orm::OrmError> {
+    // In memory only, nothing saved: title "title_<n>", author_email "user<n>@example.com", ...
+    let draft = Article::factory().build();
+    assert_eq!(draft.views, 10); // `default = ...` attributes are respected
+    assert_eq!(draft.subtitle, None); // Option fields default to None
+
+    // Override just what matters, then save it.
+    let popular = Article::factory().with_views(5_000).create(db).await?;
+    assert!(popular.id > 0);
+
+    // Save several at once; each one gets a fresh sequence number.
+    let batch = Article::factory().with_title("Same title").create_many(db, 3).await?;
+    assert_eq!(batch.len(), 3);
+    Ok(())
+}
+```
+
+| Field type | Default |
+| --- | --- |
+| `String` | `"<field>_<n>"`, cut to `max_length`; names containing `email` get `"user<n>@example.com"`, and names containing `url` or `website` get `"https://example.com/<field>/<n>"` |
+| Integers and floats | The sequence number `n` |
+| `bool` | `true` |
+| `DateTime` | The current time |
+| `Uuid` / `Decimal` | Built from `n` |
+| `Option<T>` | `None` |
+| Field with `choices` or `default = ...` | The first choice, or the default |
+| Anything else | `Default::default()` |
+| Auto primary key | `0` (the database assigns the real ID on `create`) |
+| `ForeignKey<T>` / `OneToOne<T>` | ID `1` |
+
+The sequence number `n` is shared by all factories of a model and increases with every
+`build`, so unique columns don't collide.
+
+Relation fields default to ID `1` because the factory doesn't create related rows.
+Unless that row exists, `create` fails with a foreign-key error, so create the parent
+first and pass its ID with `.with_<field>_id(id)`:
+
+```rust,illustrative
+let author = Author::factory().create(&db).await?;
+let book = Book::factory().with_author_id(author.id).create(&db).await?;
+```
+
+`Factory` is also re-exported as `djangors_test::Factory`.
+
 ---
 
 ## 2. Real-Socket Integration Testing
@@ -8443,12 +9426,10 @@ async fn test_full_stack_socket() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
-    let settings = DjangorsSettings {
-        host: "127.0.0.1".to_string(),
-        port: addr.port(),
-        debug: true,
-        ..Default::default()
-    };
+    let settings = DjangorsSettings::new()
+        .with_host("127.0.0.1")
+        .with_port(addr.port())
+        .with_debug(true);
 
     let router = Router::new();
     let router_service = RouterService::new(router, settings.debug);
@@ -8533,6 +9514,249 @@ SQLite run alone does not prove those paths still work.
 Use SQLite for the fast inner development loop, and run against PostgreSQL before changing anything
 dialect-specific and in CI.
 
+---
+
+## 3. Test Conventions
+
+The suite is expected to stay green under **both** Postgres and SQLite. Conventions below keep it
+that way.
+
+### Where test code lives
+
+Production `.rs` files contain no test code. Every `#[cfg(test)]` module lives in a **sibling
+file**:
+
+- For a crate's `lib.rs`, that is `src/tests.rs`, declared `#[cfg(test)] mod tests;` — see the
+  bottom of `crates/djangors-admin/src/lib.rs`.
+- For any other module, e.g. `src/queryset.rs`, it is `src/queryset_tests.rs`, declared with
+  `#[cfg(test)] #[path = "queryset_tests.rs"] mod tests;` — see
+  `crates/djangors-contrib-payments/src/bachs.rs`. The `#[path]` is required: without it Rust
+  looks for `src/queryset/tests.rs`.
+
+This keeps the production files readable, while the tests stay a **child module**, so they can
+still reach private items. That is exactly why they are not in `crates/*/tests/` — an integration
+test there only sees the crate's public API, and much of this suite exercises private functions.
+
+### Writing tests that pass on both backends
+
+Tests run as `cargo test --workspace` (Postgres, needs `DATABASE_URL`) and as
+`env -u DATABASE_URL TEST_BACKEND=sqlite cargo test --workspace`. The rules below keep both green:
+
+#### Build DDL from the dialect, never as a fixed string
+
+`BIGSERIAL` and `TIMESTAMPTZ` are Postgres spellings; SQLite needs `INTEGER PRIMARY KEY
+AUTOINCREMENT`. Use `db.dialect().auto_pk_type()` and `db.dialect().timestamp_type()`:
+
+```rust,illustrative
+let auto_pk = db.dialect().auto_pk_type();
+let ts_type = db.dialect().timestamp_type();
+db.conn().execute(
+    &format!("CREATE TABLE widget (id {auto_pk}, created_at {ts_type} NOT NULL)"),
+    &[],
+)
+.await
+.unwrap();
+```
+
+SQLite is permissive enough to *accept* the Postgres text, so the `CREATE TABLE` succeeds and the
+failure surfaces much later as an insert that returns no row — which is exactly how this bug hid
+(see `create_table_sql` in `crates/djangors-contrib-payments/src/transaction_tests.rs`).
+
+#### Quote identifiers through the dialect
+
+`db.dialect().quote_ident("user")` — `user` is a reserved word in Postgres but not in SQLite, so
+an unquoted column name passes on one backend and is a syntax error on the other:
+
+```rust,illustrative
+let user_col = db.dialect().quote_ident("user");
+let create_profile = format!(
+    "CREATE TABLE profile (id {auto_pk}, {user_col} BIGINT NOT NULL UNIQUE)"
+);
+```
+
+#### Never use raw `sqlx` against `Database::pool()`
+
+`pool()` panics outright on a SQLite handle (`"Attempted to access Postgres PgPool on a SQLite
+Database handle"`), and `$1` placeholders are Postgres-only. Go through the ORM
+(`Model::objects()`, `.save()`, `.count()`), which is already dialect-aware.
+
+#### Never hardcode a connection string
+
+Use `djangors_test::TestDatabase`, which honours `TEST_BACKEND` and `DATABASE_URL`. A hardcoded
+`postgres://…@localhost/djangors_test` ignores both and can only pass against one specific machine.
+
+#### Use `TestDatabase::isolated()` when a test creates its own tables
+
+Several tests sharing one table name against a single Postgres database will race on
+`DROP`/`CREATE` when run in parallel; `isolated()` gives each test its own database:
+
+```rust,illustrative
+let test_db = djangors_test::TestDatabase::isolated().await.unwrap();
+let db = test_db.database();
+```
+
+`connect()` is fine for read-only work (see `TestDatabase::connect()` vs
+`TestDatabase::isolated()` in `crates/djangors-test/src/lib.rs`).
+
+### Checklist before adding a test
+
+- Put the module in a sibling file (`src/tests.rs` or `src/{name}_tests.rs` with `#[path]`), never
+  in the production `.rs`.
+- Build every `CREATE TABLE` from `db.dialect().auto_pk_type()` / `timestamp_type()`, and quote
+  identifiers with `quote_ident()`.
+- Go through the ORM; never touch raw `pool()` or write `$1` placeholders by hand.
+- Obtain the database via `djangors_test::TestDatabase`, never a hardcoded URL.
+- Use `isolated()` when the test creates and drops tables; `connect()` only for read-only work.
+- Run under **both** backends (`cargo test --workspace` and the SQLite env-invocation) before
+  relying on it staying green.
+
+
+<!-- docs/src/guides/websockets.md -->
+
+# WebSockets and Live Reload
+
+Djangors has built-in RFC 6455 WebSockets: no separate ASGI server, and nothing like
+Django Channels to install. A WebSocket endpoint is a route like any other, and it
+runs in the same binary as the rest of your app.
+
+The `ws` Cargo feature turns this on. It's enabled by default in both `djangors` and
+`djangors-core`; builds with `default-features = false` need `features = ["ws"]`.
+
+## A WebSocket endpoint
+
+Register a handler with `Router::ws`. It runs once the handshake succeeds and receives
+the upgraded `WebSocket` along with the original request and path parameters:
+
+```rust,compile
+use djangors_core::{PathParams, Request, Router, WebSocket, WsMessage};
+
+async fn echo(mut ws: WebSocket, _req: Request, _params: PathParams) {
+    // `recv` returns Ok(None) when the client closes the connection.
+    while let Ok(Some(message)) = ws.recv().await {
+        let sent = match message {
+            WsMessage::Text(text) => ws.send_text(text).await,
+            WsMessage::Binary(bytes) => ws.send_binary(&bytes).await,
+            // Pings are answered automatically; nothing else to do.
+            _ => Ok(()),
+        };
+        if sent.is_err() {
+            break;
+        }
+    }
+}
+
+pub fn routes() -> Router {
+    Router::new().ws("/ws/echo", echo)
+}
+```
+
+From the browser:
+
+```js
+const socket = new WebSocket(`ws://${location.host}/ws/echo`);
+socket.onmessage = (event) => console.log(event.data);
+socket.onopen = () => socket.send("hello");
+```
+
+### Messages
+
+| `WsMessage` variant | Meaning |
+| :--- | :--- |
+| `Text(String)` | A UTF-8 text message |
+| `Binary(Vec<u8>)` | A binary message |
+| `Ping(Vec<u8>)` / `Pong(Vec<u8>)` | Control frames. `recv` already answers each ping with a pong |
+| `Close` | Send this to close the connection |
+
+`WebSocket` has `recv`, `send`, `send_text`, `send_binary`, and `close` methods.
+Messages split across several frames come back from `recv` as one message, up to
+16 MiB. A client that breaks the protocol (sends unmasked frames, malformed control
+frames, or an unknown opcode) is disconnected with close code 1002, and `recv` returns
+an error.
+
+## Broadcasting with groups
+
+To push one message to many connected clients, such as notifications or a live
+dashboard, combine a WebSocket handler with the in-process broadcast
+[`Groups`](../how-to/stream-sse.md#in-process-broadcast-groups) that SSE uses:
+
+```rust,compile
+use djangors_core::{Groups, PathParams, Request, Router, WebSocket};
+use tokio_stream::StreamExt;
+
+async fn notifications(mut ws: WebSocket, req: Request, _params: PathParams) {
+    let Some(groups) = req.state::<Groups>() else { return };
+    let mut feed = groups.group("notifications").subscribe();
+    while let Some(message) = feed.next().await {
+        // A failed send means the client has gone away.
+        if ws.send_text(message).await.is_err() {
+            break;
+        }
+    }
+}
+
+pub fn routes(groups: Groups) -> Router {
+    // Anywhere else in the app: groups.group("notifications").send("new order");
+    Router::new()
+        .with_state(groups)
+        .ws("/ws/notifications", notifications)
+}
+```
+
+`Groups` lives in one process. If you run several instances behind a load balancer,
+each one only reaches its own clients; send the message to every instance (for example
+through Postgres `LISTEN/NOTIFY` or Redis) and let each one broadcast locally.
+
+## Cross-origin protection
+
+Browsers attach the user's cookies to a WebSocket handshake even when another website
+opens it, and CSRF protection doesn't run on the `GET` that starts a WebSocket. A
+WebSocket that accepted any origin would let a malicious site act as the logged-in
+user. This attack is called cross-site WebSocket hijacking.
+
+So `Router::ws` only accepts browser handshakes whose `Origin` matches the request's
+`Host`, and answers anything else with `403 Forbidden`. Clients that send no `Origin`
+header, such as mobile apps, CLI tools, and server-to-server connections, are not
+browsers and are allowed.
+
+If your frontend lives on another domain, list it explicitly:
+
+```rust,compile
+# use djangors_core::{PathParams, Request, Router, WebSocket};
+# async fn chat(_ws: WebSocket, _req: Request, _params: PathParams) {}
+use djangors_core::OriginPolicy;
+
+pub fn routes() -> Router {
+    Router::new().ws_with_origin_policy(
+        "/ws/chat",
+        OriginPolicy::Allow(vec!["https://app.example.com".to_string()]),
+        chat,
+    )
+}
+```
+
+`OriginPolicy::Any` accepts every origin. Use it only for sockets that send nothing
+private and act on nothing a user is allowed to do.
+
+To upgrade from inside your own handler, for example after checking a permission, call
+`djangors_core::upgrade_websocket(&req, params, handler)` or
+`upgrade_websocket_with_policy` and return the `Response` it gives you.
+
+## Live reload in `dj run`
+
+`dj run` rebuilds and restarts your app whenever a file under `src/` or `templates/`
+changes, and now also refreshes the open browser tabs:
+
+1. `dj run` starts a small live-reload WebSocket server on the next port up (8001 when
+   your app is on 8000) and passes its port to your app in the
+   `DJANGORS_LIVERELOAD_PORT` environment variable.
+2. While that variable is set, every full HTML page built with `Response::html` gets a
+   short script added before `</body>` that connects to the live-reload server. HTML
+   fragments, such as htmx partials, are left alone.
+3. After each successful rebuild, `dj run` tells connected browsers to reload.
+
+There's nothing to configure. In production nothing sets `DJANGORS_LIVERELOAD_PORT`,
+so no script is added.
+
 
 <!-- docs/src/how-to/background-tasks.md -->
 
@@ -8591,29 +9815,48 @@ pub async fn start_background_worker(db: Database) {
 # How to Cache a View Response
 
 ## Problem
-You want to cache HTTP GET view responses to reduce database load and speed up response times using in-memory or Redis backends.
+You want to cache HTTP GET view responses to reduce database load and speed up response times using in-memory, database, or Redis backends.
 
 ## Solution
 `djangors_cache::CacheLayer` is a `tower::Layer` that caches GET responses under two strict
 security requirements:
-1. **Explicit Opt-in**: the response must carry a `CacheableResponse` marker extension.
+1. **Explicit Opt-in**: the response must carry a `CacheableResponse` marker extension (set with `Response::cacheable()` or `.with_extension(CacheableResponse)`).
 2. **No `Set-Cookie`**: responses setting cookies (e.g. session cookies) are **never** cached,
    regardless of the opt-in marker.
 
-## ⚠️ Current integration limitation
+## Code Example
 
-`CacheLayer` operates on the raw `hyper::Response<Full<Bytes>>` that comes out of the connection-
-serving loop, not on `djangors_core::Response`. The framework's own `Response` type has no
-`extensions_mut()` (or any extensions API at all). This means there is currently **no way for an
-ordinary Djangors view handler to opt a response into caching**. The marker has to be inserted on
-the raw hyper response, which only code operating below the framework's own dispatch layer can do.
-This is the same "primitive exists, framework-level wiring doesn't yet" gap several other Phase 7
-crates (`djangors-contrib-messages`, `-guardian`, `-otp`) document rather than paper over. See
-those guides/crates' own docs for the same pattern.
+### 1. Opting a Djangors View into Response Caching
 
-`CacheLayer` is still directly usable **today** if you're composing your own `tower::Service` stack
-below `djangors_core`'s dispatch (i.e. you construct the `CacheableResponse`-marked
-`hyper::Response` yourself, the way `djangors-cache`'s own test suite does):
+Call `.cacheable()` on any `djangors_core::Response` and wrap your `RouterService` with `CacheLayer`:
+
+```rust,compile
+use std::sync::Arc;
+use std::time::Duration;
+use djangors_cache::{CacheLayer, InMemoryCache};
+use djangors_core::{DjangorsError, PathParams, Request, Response, Router, StatusCode};
+use djangors_core::router::RouterService;
+use tower::ServiceBuilder;
+
+async fn public_pricing_view(_req: Request, _params: PathParams) -> Result<Response, DjangorsError> {
+    // Opt this GET response into caching with `.cacheable()`
+    Ok(Response::html(StatusCode::OK, "<h1>Public Pricing</h1>").cacheable())
+}
+
+fn build_cached_service() {
+    let router = Router::new().get("/pricing", public_pricing_view);
+    let router_service = RouterService::new(router, false);
+
+    let cache = Arc::new(InMemoryCache::new(10_000));
+    let _service: djangors_cache::CacheService<RouterService> = ServiceBuilder::new()
+        .layer(CacheLayer::new(cache, Some(Duration::from_secs(300))))
+        .service(router_service);
+}
+```
+
+### 2. Lower-Level Tower Service Usage
+
+`CacheLayer` also works with raw `hyper::Response<Full<Bytes>>` services by inserting `CacheableResponse` into `extensions_mut()` directly:
 
 ```rust,compile
 use std::sync::Arc;
@@ -8627,7 +9870,6 @@ use djangors_cache::{InMemoryCache, CacheLayer, CacheableResponse};
 async fn build_and_call_cached_service() {
     let handler = service_fn(|_req: Request<Full<Bytes>>| async move {
         let mut r = Response::new(Full::new(Bytes::from_static(b"dashboard body")));
-        // Opt-in: only code with direct access to the raw hyper::Response can set this today.
         r.extensions_mut().insert(CacheableResponse);
         Ok::<_, std::convert::Infallible>(r)
     });
@@ -8643,11 +9885,6 @@ async fn build_and_call_cached_service() {
     let _response = svc.ready().await.unwrap().call(request).await.unwrap();
 }
 ```
-
-Wiring `CacheableResponse` into an ordinary `djangors_core::Router`-based view handler would
-require a core `djangors_core::Response` change (an extensions API, or a dedicated
-`Response::cacheable()` constructor); not attempted here since it's out of scope for a how-to.
-Track it as a real, open Phase-9-discovered gap if you need it.
 
 
 <!-- docs/src/how-to/custom-admin-action.md -->
@@ -8707,6 +9944,113 @@ fn register_admin(site: &mut AdminSite) {
 ```
 
 
+<!-- docs/src/how-to/debug-queries.md -->
+
+# How to Find Slow and N+1 Queries
+
+## Problem
+
+A page is slow, and you suspect the database: too many queries, a slow one, or the same
+query running once per row in a loop (the N+1 problem).
+
+## Solution
+
+Djangors includes a development query panel similar to Django Debug Toolbar or Rails'
+Bullet. For every request it records each SQL statement and how long it took, flags
+queries that ran more than once, and shows the results:
+
+- in response headers, on every response, including JSON APIs:
+
+  | Header | Value |
+  | :--- | :--- |
+  | `X-Djangors-Query-Count` | Number of SQL queries the request ran |
+  | `X-Djangors-Query-Time-Us` | Total time spent in SQL, in microseconds |
+  | `X-Djangors-Request-Time-Us` | Total request time, in microseconds |
+  | `X-Djangors-Duplicate-Queries` | Number of distinct queries that ran more than once |
+
+- in a collapsible toolbar at the bottom of full HTML pages, listing every query with
+  its timing and a warning for each repeated one.
+
+### 1. Enable the feature
+
+The panel is behind the `debug-panel` Cargo feature, which is off by default:
+
+```toml
+[dependencies]
+djangors = { version = "0.9", features = ["debug-panel"] }
+```
+
+### 2. Wrap your router, in development only
+
+`debug_panel_layer()` is a Tower layer. Wrap your `RouterService` with it and serve
+the result with `serve_service`:
+
+```rust,illustrative
+use djangors_core::{debug_panel_layer, Djangors, DjangorsSettings, Router};
+use djangors_core::router::RouterService;
+use tower::Layer;
+
+async fn serve(settings: DjangorsSettings, router: Router) -> Result<(), djangors_core::DjangorsError> {
+    let debug = settings.debug;
+    let service = RouterService::new(router.clone(), debug);
+    let app = Djangors::new(settings, router);
+    let listener = app.bind().await?;
+
+    if debug {
+        app.serve_service(listener, debug_panel_layer().layer(service)).await
+    } else {
+        app.serve_service(listener, service).await
+    }
+}
+```
+
+> **Never enable the panel in production.** It shows the SQL text of every query to
+> whoever loads the page. The layer doesn't check the `debug` setting itself, so gate
+> it on `settings.debug` as above, or only enable the `debug-panel` feature in
+> development builds.
+
+For JSON APIs you can keep the headers and skip the HTML toolbar with
+`DebugPanelLayer::new().with_html_injection(false)`.
+
+### 3. Read the results
+
+Load the page and look at the toolbar, or check the headers:
+
+```bash
+curl -sI http://127.0.0.1:8000/posts/ | grep -i x-djangors
+```
+
+A duplicate count above zero usually means a loop that queries once per row. Fetch
+the related rows in one query instead, for example with a `filter` on the list of IDs.
+
+## Counting queries in tests
+
+The panel is built on `djangors_db::with_query_log`, which you can call directly. It
+runs a future, records every query executed inside it, and returns the statistics. Use
+it in a test to make sure a page doesn't grow an N+1 problem later:
+
+```rust,compile
+use djangors_db::{with_query_log, Database};
+
+async fn list_posts(db: &Database) {
+    // ... the code under test ...
+#   let _ = db;
+}
+
+async fn check_query_budget(db: &Database) {
+    let ((), stats) = with_query_log(list_posts(db)).await;
+
+    assert!(stats.queries.len() <= 2, "too many queries: {:#?}", stats.queries);
+    assert!(stats.duplicates.is_empty(), "N+1 loop: {:#?}", stats.duplicates);
+}
+```
+
+`QueryStats` holds `queries` (each with its `sql`, `param_count`, and
+`duration_micros`), `total_duration_micros`, and `duplicates` (each with its `sql`,
+`count`, and `total_duration_micros`). Outside `with_query_log`, recording costs
+almost nothing: one task-local lookup per query.
+
+
 <!-- docs/src/how-to/i18n-templates.md -->
 
 # How to Internationalize Templates
@@ -8757,7 +10101,7 @@ fn render_translated_template(user_locale: &str) -> Result<String, Box<dyn std::
 You want to send plain-text or HTML emails in your Djangors application using SMTP, or write outgoing messages to local disk during development.
 
 ## Solution
-Use `djangors_mail::Message` and configure a backend implementing the `MailBackend` trait, such as `SmtpBackend`, `FileBackend`, or `ConsoleBackend`.
+Use `djangors_mail::Message` and configure a backend implementing the `MailBackend` trait, such as `SmtpBackend` (powered by `lettre` with `rustls` TLS — zero OpenSSL or `native-tls` C dependencies), `FileBackend`, `ConsoleBackend`, or `InMemoryBackend`. Note that `Message` is `#[non_exhaustive]`; construct it via `Message::new(to, from, subject, text_body)` and attach optional HTML bodies with `.html_body(...)`.
 
 ## Code Example
 
@@ -8768,13 +10112,13 @@ use djangors_mail::{Message, SmtpConfig, SmtpBackend, MailBackend};
 
 pub async fn send_welcome_email(user_email: &str) -> Result<(), djangors_mail::MailError> {
     // Construct email message
-    let message = Message {
-        to: vec![user_email.to_string()],
-        from: "noreply@example.com".to_string(),
-        subject: "Welcome to our platform!".to_string(),
-        body: "Hello, welcome to our service!".to_string(),
-        html_body: Some("<h1>Hello!</h1><p>Welcome to our service!</p>".to_string()),
-    };
+    let message = Message::new(
+        [user_email],
+        "noreply@example.com",
+        "Welcome to our platform!",
+        "Hello, welcome to our service!",
+    )
+    .html_body("<h1>Hello!</h1><p>Welcome to our service!</p>");
 
     // Configure SMTP backend
     let config = SmtpConfig::new("smtp.example.com")
@@ -8811,7 +10155,7 @@ when your test asserts that "an email was sent with this subject":
 
 ```rust,compile
 # use djangors_mail::{Message, InMemoryBackend, MailBackend};
-# fn build_message() -> Message { Message { to: vec!["a@b.c".into()], from: "noreply@example.com".into(), subject: "reset".into(), body: "hi".into(), html_body: None } }
+# fn build_message() -> Message { Message::new(["a@b.c"], "noreply@example.com", "reset", "hi") }
 # async fn run() -> Result<(), djangors_mail::MailError> {
 let backend = InMemoryBackend::default();
 let sent: Result<(), _> = backend.send(&build_message()).await;
@@ -8889,7 +10233,7 @@ async fn main() -> Result<(), DjangorsError> {
 
 For fanning the same message out to many connected SSE clients (live dashboards, chat rooms,
 notification streams), `djangors-core` ships an in-process pub/sub registry,
-[`Groups`](file:///root/dev/Rango/crates/djangors-core/src/groups.rs). Unlike a per-connection
+`djangors_core::Groups` (`crates/djangors-core/src/groups.rs`). Unlike a per-connection
 stream, a `Groups` channel is a *broadcast* channel: one `send` reaches every subscriber.
 
 | Method | Signature | Notes |
@@ -10427,12 +11771,10 @@ async fn test_polls_voting_integration() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
-    let settings = DjangorsSettings {
-        host: "127.0.0.1".to_string(),
-        port: addr.port(),
-        debug: true,
-        ..Default::default()
-    };
+    let settings = DjangorsSettings::new()
+        .with_host("127.0.0.1")
+        .with_port(addr.port())
+        .with_debug(true);
 
     let router = urls::urls().with_state(db.clone());
     let router_service = RouterService::new(router, settings.debug);

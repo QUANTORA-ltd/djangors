@@ -69,3 +69,35 @@ run: Djangors achieved 76.7% of axum's full-stack throughput (23.3% lower), whil
 28.9% higher. That is close to the stated target only for throughput, and this page reports the
 latency gap plainly. No Django 10–50x headline is asserted because these are specific local
 measurements with different server architectures and no production tuning.
+
+---
+
+## JSON Serialization Benchmark (Compile-Time `write_json` vs Axum, Gin, Fastify, FastAPI)
+
+To measure the impact of Djangors's compile-time direct JSON writer (`#[derive(Model)]` generating [`Model::write_json`](guides/orm.md#compile-time-direct-json-serialization-write_json), exposed via [`serialize_to_vec` / `serialize_many_to_vec`](guides/rest.md#low-level-serialize-serialize_to_vec-and-serialize_many_to_vec) and [`Response::json_bytes`](guides/http-and-middleware.md)), we ran a dedicated HTTP JSON serialization benchmark across five frameworks on the same machine (8-vCPU Intel Core i5-8350U @ 1.70 GHz, Linux 7.0, 32 concurrent HTTP/1.1 keep-alive connections, 1s warmup + 5s measurement per endpoint).
+
+Each framework served two endpoints with an identical 7-field `BenchItem` model (`id: i64`, `name: String` with quotes/ampersands requiring JSON escaping, `category: String`, `price: f64`, `in_stock: bool`, `tags_Summary: String`, `created_at: DateTime<Utc>`):
+1. **`/json/single`** (~190 B JSON object): Serializes 1 model instance per request.
+2. **`/json/list`** (~9.5 KB JSON array): Serializes a 50-item `Vec<BenchItem>` per request.
+
+### JSON Benchmark Results
+
+| Endpoint | Framework & Serialization Path | Requests/sec | Throughput (MiB/s) | p50 | p95 | p99 |
+|---|---|---:|---:|---:|---:|---:|
+| `/json/single` (1 item) | **Djangors (`write_json` + `json_bytes`)** | **18,960.70** | **3.42** | **1.500 ms** | **3.427 ms** | **5.051 ms** |
+| `/json/single` (1 item) | **Axum 0.8.9** (`axum::Json` / `serde::Serialize`) | 18,905.44 | 3.32 | 1.492 ms | 3.449 ms | 5.128 ms |
+| `/json/single` (1 item) | **Djangors (legacy `serde_json::Value`)** | 18,014.41 | 3.25 | 1.581 ms | 3.604 ms | 5.488 ms |
+| `/json/single` (1 item) | **Gin (Go 1.27)** (`c.JSON` / `encoding/json`) | 14,779.90 | 2.66 | 1.813 ms | 5.258 ms | 8.321 ms |
+| `/json/single` (1 item) | **Fastify (Node v26)** (`fast-json-stringify` schema) | 5,325.07 | 0.93 | 5.819 ms | 8.338 ms | 12.527 ms |
+| `/json/single` (1 item) | **FastAPI (Python 3.12)** (Uvicorn 4w + Pydantic v2) | 3,922.93 | 0.69 | 7.626 ms | 15.805 ms | 20.217 ms |
+| `/json/list` (50 items) | **Djangors (`write_json` + `json_bytes`)** | **12,610.54** | **116.94** | **2.344 ms** | **4.884 ms** | **7.020 ms** |
+| `/json/list` (50 items) | **Axum 0.8.9** (`axum::Json` / `serde::Serialize`) | 9,957.08 | 89.96 | 3.011 ms | 6.000 ms | 8.555 ms |
+| `/json/list` (50 items) | **Djangors (legacy `serde_json::Value`)** | 7,390.09 | 68.53 | 4.080 ms | 7.923 ms | 10.480 ms |
+| `/json/list` (50 items) | **Gin (Go 1.27)** (`c.JSON` / `encoding/json`) | 6,177.44 | 57.13 | 4.159 ms | 12.900 ms | 18.329 ms |
+| `/json/list` (50 items) | **FastAPI (Python 3.12)** (Uvicorn 4w + Pydantic v2) | 3,047.61 | 27.54 | 7.159 ms | 19.881 ms | 35.276 ms |
+| `/json/list` (50 items) | **Fastify (Node v26)** (`fast-json-stringify` schema) | 2,533.58 | 22.83 | 12.433 ms | 15.648 ms | 26.367 ms |
+
+### Key Takeaways
+- **+70.6% faster 50-item list serialization inside Djangors**: Switching from `djangors_rest::serialize` (`serde_json::Value` tree allocation) to compile-time `Model::write_json` (`serialize_many_to_vec` + `Response::json_bytes`) jumped 50-item list throughput from **7,390 req/s** to **12,611 req/s** (and cut p50 latency from **4.08 ms** to **2.34 ms**).
+- **Parity with (and ahead of) Axum on list payloads**: On single objects, Djangors (`18,961 req/s`) and Axum (`18,905 req/s`) are neck-and-neck because HTTP/1.1 framing dominates. On 50-item lists where JSON serialization is a larger share of CPU time, Djangors's pre-sized `Vec::with_capacity(items.len() * 128)` + compile-time static key writers (`itoa`/`ryu` + fast string escaping) achieved **12,611 req/s (116.94 MiB/s)** vs Axum's **9,957 req/s (89.96 MiB/s)** (+26.6%).
+- **2.0x Gin (Go), 4.1x FastAPI (Pydantic v2), and 5.0x Fastify (`fast-json-stringify`) on 50-item lists**: Note that Fastify runs on a single Node.js event-loop thread by default whereas Rust (Tokio), Go (goroutines), and FastAPI (4 Uvicorn workers) utilize multiple cores.

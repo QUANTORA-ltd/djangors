@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-208ebb8b.js";
+            window.path_to_searchindex_js = "../searchindex-ff027cc3.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-15287f60.js"></script>
+        <script src="../toc-fcdb45cd.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -247,6 +247,14 @@ DROP TABLE "polls_question";
     DropTable {
         table_name: String,
     },
+    CreateIndex {
+        index_name: String,
+        table_name: String,
+        columns: Vec&lt;String&gt;,
+    },
+    DropIndex {
+        index_name: String,
+    },
 }
 <span class="boring">}</span></code></pre>
 <h3 id="reversibility"><a class="header" href="#reversibility">Reversibility</a></h3>
@@ -264,6 +272,8 @@ DROP TABLE "polls_question";
 <tr><td><code>DropColumn</code></td><td><strong>No</strong></td><td>None (data is lost, cannot be automatically reconstructed)</td></tr>
 <tr><td><code>DropTable</code></td><td><strong>No</strong></td><td>None (table columns and data are lost)</td></tr>
 <tr><td><code>AlterColumnType</code></td><td><strong>No</strong></td><td>None (reverting requires knowledge of the original type)</td></tr>
+<tr><td><code>CreateIndex</code></td><td><strong>Yes</strong></td><td><code>DropIndex</code></td></tr>
+<tr><td><code>DropIndex</code></td><td><strong>No</strong></td><td>None (recreating the index requires knowing its table and columns)</td></tr>
 </tbody>
 </table>
 </div>
@@ -378,6 +388,71 @@ assert!(matches!(create.reverse(), Some(Operation::DropTable { .. })));
 <code>Vec&lt;Operation&gt;</code> plan for all registered models, topologically sorted by foreign-key dependency —
 this is what <code>migrate</code> feeds into <code>to_sql</code> and executes transactionally.</p>
 <hr>
+<h2 id="detecting-model-changes-with-detect_changes"><a class="header" href="#detecting-model-changes-with-detect_changes">Detecting Model Changes with <code>detect_changes</code></a></h2>
+<p><code>detect_changes(previous, current, dialect)</code> diffs two sets of <code>ModelSnapshot</code> and returns the
+incremental operations needed to bring the database from <code>previous</code> to <code>current</code>. For each model
+present in <code>current</code> it emits:</p>
+<ul>
+<li><strong>New tables</strong> — a model that exists in <code>current</code> but not in <code>previous</code> produces a <code>CreateTable</code>.</li>
+<li><strong>Added columns</strong> — a field in <code>current</code> with no matching name in <code>previous</code> produces an
+<code>AddColumn</code>.</li>
+<li><strong>Dropped columns</strong> — a field in <code>previous</code> with no matching name in <code>current</code> produces a
+<code>DropColumn</code>.</li>
+<li><strong>Changed column types</strong> — a field present in both sets whose <code>kind</code> or <code>max_length</code> differs
+produces an <code>AlterColumnType</code>. Because <code>AlterColumnType</code> is unsupported on SQLite, diffing on a
+SQLite dialect surfaces an <code>UnsupportedOnDialect</code> error only when such a change is encountered.</li>
+</ul>
+<p>The comparison keys off <strong>field names</strong>, not column identity. <code>detect_changes</code> does <strong>not</strong> detect
+renames: renaming a column is seen as a <em>drop</em> of the old name plus an <em>add</em> of the new one, which
+are emitted as separate <code>DropColumn</code> and <code>AddColumn</code> operations.</p>
+<hr>
+<h2 id="index-operations"><a class="header" href="#index-operations">Index Operations</a></h2>
+<p>Indexes declared through a model’s struct-level <code>indexes</code> attribute are emitted into the generated
+plan as <code>CreateIndex</code> operations, placed after the model’s <code>CreateTable</code>. Each non-empty index
+produces:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>Operation::CreateIndex {
+    index_name: "idx_item_slug".to_string(), // from the index's name
+    table_name: "app_item".to_string(),      // the model's table
+    columns: vec!["slug".to_string()],       // the index's field names
+}
+<span class="boring">}</span></code></pre>
+<p>rendered as <code>CREATE INDEX IF NOT EXISTS "idx_item_slug" ON "app_item" ("slug");</code>.</p>
+<p><code>DropIndex</code> carries only the index name and renders as
+<code>DROP INDEX IF EXISTS "idx_item_slug";</code>. A <code>CreateIndex</code> reverses to <code>DropIndex</code>; a <code>DropIndex</code> has
+no mechanical inverse.</p>
+<hr>
+<h2 id="many-to-many-join-tables"><a class="header" href="#many-to-many-join-tables">Many-to-Many Join Tables</a></h2>
+<p>A <code>ManyToMany</code> relation is not represented as a column on either model. Instead the plan emits a
+dedicated join (through) table for it, named after the Django convention:</p>
+<pre><code>{source_table}_{field_name}
+</code></pre>
+<p>so a <code>students</code> <code>ManyToMany</code> field on a model whose table is <code>app_school</code> produces a through table
+named <code>app_school_students</code>.</p>
+<p>The through table carries exactly two non-nullable foreign-key columns, each <code>NOT NULL</code> and
+referencing the target’s primary key with <code>ON DELETE CASCADE</code>:</p>
+<ul>
+<li><strong>Source column</strong>: <code>{source_struct_name_lowercase}_id</code> → references <code>{source_table}.{source_pk}</code></li>
+<li><strong>Target column</strong>: <code>{target_struct_name_lowercase}_id</code> → references <code>{target_table}.{target_pk}</code></li>
+</ul>
+<p>For the example above the plan emits:</p>
+<pre><code class="language-sql">CREATE TABLE IF NOT EXISTS "app_school_students" (
+    "school_id" BIGINT NOT NULL REFERENCES "app_school"("id") ON DELETE CASCADE,
+    "student_id" BIGINT NOT NULL REFERENCES "app_student"("id") ON DELETE CASCADE
+);
+</code></pre>
+<p>The join table’s own <code>id</code> column is not auto-added; the two FK columns are the only columns it
+declares.</p>
+<hr>
+<h2 id="onetoone-and-the-unique-constraint"><a class="header" href="#onetoone-and-the-unique-constraint">OneToOne and the UNIQUE Constraint</a></h2>
+<p>A <code>OneToOne</code> relation is emitted as a plain foreign-key column like <code>ForeignKey</code>,
+<strong>plus</strong> a UNIQUE constraint. The plan sets <code>unique: true</code> on the FK column specifically when the
+relation kind is <code>OneToOne</code>, which is what distinguishes a one-to-one column from an ordinary
+foreign key in the generated schema:</p>
+<pre><code class="language-sql">"profile_id" BIGINT UNIQUE REFERENCES "app_user"("id") ON DELETE CASCADE
+</code></pre>
+<hr>
 <h2 id="migration-inspection--cli-options"><a class="header" href="#migration-inspection--cli-options">Migration Inspection &amp; CLI Options</a></h2>
 <p>Djangors provides several commands and flags for inspecting and managing migration states:</p>
 <h3 id="dj-sqlmigrate-app-migration"><a class="header" href="#dj-sqlmigrate-app-migration"><code>dj sqlmigrate &lt;app&gt; &lt;migration&gt;</code></a></h3>
@@ -422,7 +497,7 @@ dj sqlmigrate polls 0001
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="../guides/tasks.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../guides/code-generation.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -436,7 +511,7 @@ dj sqlmigrate polls 0001
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="../guides/tasks.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../guides/code-generation.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

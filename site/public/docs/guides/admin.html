@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-208ebb8b.js";
+            window.path_to_searchindex_js = "../searchindex-ff027cc3.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-15287f60.js"></script>
+        <script src="../toc-fcdb45cd.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -334,6 +334,134 @@ default when omitted (<code>actions</code>, <code>fieldsets</code>, <code>readon
 <code>raw_id_fields</code>, plus the search/filter/editable/hierarchy accessors).
 <code>DefaultModelAdmin&lt;M&gt;</code> in <code>djangors-admin</code> is the built-in implementation
 <code>register_with</code> uses, and you can use it as a reference when writing your own.</p>
+<hr>
+<h2 id="crate-layout"><a class="header" href="#crate-layout">Crate layout</a></h2>
+<p><code>djangors-admin</code> is organized by view rather than by model. <code>lib.rs</code> holds only the
+crate-level docs, the shared template engine (<code>ADMIN_TEMPLATES</code>), the module list, and the
+public re-exports — so the public API you <code>use</code> is identical regardless of which module an
+item lives in. A contributor can find things like this:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Module</th><th>Owns</th></tr>
+</thead>
+<tbody>
+<tr><td><code>model_admin</code></td><td><code>ModelAdmin</code> trait, <code>DefaultModelAdmin</code>, <code>ModelAdminConfig</code>, <code>ChangelistPage</code>, <code>InlineConfig</code>, <code>TenantFilter</code></td></tr>
+<tr><td><code>site</code></td><td><code>AdminSite</code>, <code>SiteBranding</code>, <code>TenantScope</code>, <code>with_tenant_scoping</code>, route assembly (<code>urls</code>)</td></tr>
+<tr><td><code>changelist</code></td><td>List page: querying, pagination, CSV export, <code>?o=/</code>q=/<code>f=</code>/date-hierarchy handling</td></tr>
+<tr><td><code>edit_view</code></td><td>Add/change form GET+POST handlers</td></tr>
+<tr><td><code>delete_view</code></td><td>Delete and bulk-delete GET+POST handlers</td></tr>
+<tr><td><code>index_view</code></td><td>The admin index (app/model links)</td></tr>
+<tr><td><code>history_view</code></td><td>Per-object change history</td></tr>
+<tr><td><code>action_view</code></td><td>Bulk-action handlers</td></tr>
+<tr><td><code>forms</code></td><td>Form/field rendering and parsing for the add/change forms</td></tr>
+<tr><td><code>log</code></td><td><code>LogEntry</code> auditing (<code>AdminAction</code>, field diffs)</td></tr>
+<tr><td><code>perms</code></td><td><code>require_staff</code>, <code>require_perm</code>, and request-scoped tenant resolution</td></tr>
+<tr><td><code>favicon</code></td><td><code>favicon_routes</code> static branding routes</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>site.rs</code> depends on the view modules; the view modules depend on the <code>ModelAdmin</code> trait
+defined in <code>model_admin.rs</code>. <code>lib.rs</code> re-exports the public surface
+(<code>AdminSite</code>, <code>SiteBranding</code>, <code>TenantScope</code>, <code>ModelAdmin</code>, <code>DefaultModelAdmin</code>,
+<code>ModelAdminConfig</code>, <code>InlineConfig</code>, <code>TenantFilter</code>, <code>ChangelistPage</code>, <code>AdminAction</code>,
+<code>LogEntry</code>, <code>favicon_routes</code>, …), so the module an item lives in is an implementation
+detail rather than part of the public API.</p>
+<hr>
+<h2 id="implementing-modeladmin-by-hand"><a class="header" href="#implementing-modeladmin-by-hand">Implementing <code>ModelAdmin</code> by hand</a></h2>
+<p>The section above introduced the trait. Whatever you implement, the framework hands you a
+<code>TenantFilter</code> — <code>Option&lt;(&amp;'static str, i64)&gt;</code>, the tenant FK field name on the model plus the
+tenant id every row must match — as the <strong>final argument</strong> to every method that touches data:
+<code>changelist</code>, <code>export_csv_rows</code>, <code>get_by_pk</code>, <code>update_from_form</code>, <code>update_fields_from_form</code>,
+<code>create_from_form</code>, and <code>delete_by_pk</code>. Their real signatures:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_admin::{ChangelistPage, ModelAdmin, TenantFilter};
+
+async fn changelist(
+    &amp;self,
+    db: &amp;djangors_db::Database,
+    order: Option&lt;&amp;str&gt;,
+    page: i64,
+    per_page: i64,
+    search: Option&lt;&amp;str&gt;,
+    filters: &amp;[(&amp;'static str, bool)],
+    date_range: Option&lt;(chrono::DateTime&lt;chrono::Utc&gt;, chrono::DateTime&lt;chrono::Utc&gt;)&gt;,
+    tenant: TenantFilter,
+) -&gt; Result&lt;ChangelistPage, djangors_core::DjangorsError&gt;;
+
+async fn export_csv_rows(
+    &amp;self,
+    db: &amp;djangors_db::Database,
+    order: Option&lt;&amp;str&gt;,
+    search: Option&lt;&amp;str&gt;,
+    filters: &amp;[(&amp;'static str, bool)],
+    date_range: Option&lt;(chrono::DateTime&lt;chrono::Utc&gt;, chrono::DateTime&lt;chrono::Utc&gt;)&gt;,
+    tenant: TenantFilter,
+) -&gt; Result&lt;(Vec&lt;&amp;'static str&gt;, Vec&lt;Vec&lt;String&gt;&gt;), djangors_core::DjangorsError&gt;;
+
+async fn get_by_pk(
+    &amp;self,
+    db: &amp;djangors_db::Database,
+    pk: i64,
+    tenant: TenantFilter,
+) -&gt; Result&lt;Option&lt;Vec&lt;(&amp;'static str, djangors_orm::expr::Value)&gt;&gt;, djangors_core::DjangorsError&gt;;
+
+async fn update_from_form(
+    &amp;self,
+    db: &amp;djangors_db::Database,
+    pk: i64,
+    form: &amp;std::collections::HashMap&lt;String, String&gt;,
+    tenant: TenantFilter,
+) -&gt; Result&lt;Result&lt;(), std::collections::HashMap&lt;String, String&gt;&gt;, djangors_core::DjangorsError&gt;;
+
+async fn update_fields_from_form(
+    &amp;self,
+    db: &amp;djangors_db::Database,
+    pk: i64,
+    form: &amp;std::collections::HashMap&lt;String, String&gt;,
+    tenant: TenantFilter,
+) -&gt; Result&lt;Result&lt;(), std::collections::HashMap&lt;String, String&gt;&gt;, djangors_core::DjangorsError&gt;;
+
+async fn create_from_form(
+    &amp;self,
+    db: &amp;djangors_db::Database,
+    form: &amp;std::collections::HashMap&lt;String, String&gt;,
+    tenant: TenantFilter,
+) -&gt; Result&lt;Result&lt;i64, std::collections::HashMap&lt;String, String&gt;&gt;, djangors_core::DjangorsError&gt;;
+
+async fn delete_by_pk(
+    &amp;self,
+    db: &amp;djangors_db::Database,
+    pk: i64,
+    tenant: TenantFilter,
+) -&gt; Result&lt;bool, djangors_core::DjangorsError&gt;;
+<span class="boring">}</span></code></pre>
+<p>The one thing a custom implementation must get right is this contract:</p>
+<blockquote>
+<p><strong>Apply the <code>tenant</code> argument to every query you run, and never cache it on <code>self</code>.</strong></p>
+</blockquote>
+<p>The reason is structural. The admin object is built once at registration and shared across
+every concurrent request behind an <code>Arc</code>; there is no per-request copy. If you stored the
+resolved tenant on the admin, a second request could overwrite it while the first awaited the
+database, and one tenant’s request would then read another tenant’s rows. So the tenant always
+arrives per-call, and it is up to your method to thread it into the query. <code>None</code> means
+unrestricted — a superuser, or a site with no tenant scoping configured at all.</p>
+<p>The PK-based methods carry the same obligation with specific semantics, and the safe default
+is to scope by both PK and tenant like <code>DefaultModelAdmin</code> does:</p>
+<ul>
+<li><strong><code>get_by_pk</code></strong> must read a row belonging to another tenant as “not found” (<code>None</code>), not
+return it — a cross-tenant primary key and a missing one are indistinguishable.</li>
+<li><strong><code>delete_by_pk</code></strong> must refuse (return <code>false</code>, delete nothing) when the row belongs to
+another tenant.</li>
+<li><strong><code>update_from_form</code> / <code>update_fields_from_form</code></strong> must not touch another tenant’s row.</li>
+<li><strong><code>create_from_form</code></strong> must force the new row’s tenant field to the resolved tenant rather
+than trusting the submitted form, so a scoped add-form can never plant a row elsewhere.</li>
+</ul>
+<p>The default build does all of this via <code>tenant_compare</code> plus PK-scoped querysets, and the
+<a href="multi-tenancy.html">Multi-tenancy guide</a> walks through the reasoning, the “not stored on the
+admin” design, and the fail-closed resolution rules in full — read it before writing a custom
+<code>ModelAdmin</code> for a scoped site.</p>
 
                     </main>
 

@@ -198,6 +198,75 @@ async fn exclusive_setup() {
 Release is explicit because Rust can't run async code in `Drop`; an un-released lock stays held
 until its dedicated connection closes (i.e. when the test process exits).
 
+### Model Factories (`#[derive(Factory)]`)
+
+Writing out every field of a model for each test gets tedious. Derive `Factory` next to
+`Model` and you get `Model::factory()`, a builder in the style of Python's `factory_boy`
+or Laravel's model factories. It fills every field with a sensible default, and you set
+only the fields the test cares about:
+
+```rust,compile
+# use djangors_orm::Model as _;
+use djangors_db::Database;
+use djangors_macros::{Factory, Model};
+
+#[derive(Debug, Clone, Model, Factory)]
+#[djangors(app = "blog")]
+pub struct Article {
+    #[djangors(primary_key, auto)]
+    pub id: i64,
+    #[djangors(max_length = 120)]
+    pub title: String,
+    pub author_email: String,
+    #[djangors(default = 10)]
+    pub views: i64,
+    pub subtitle: Option<String>,
+}
+
+async fn example(db: &Database) -> Result<(), djangors_orm::OrmError> {
+    // In memory only, nothing saved: title "title_<n>", author_email "user<n>@example.com", ...
+    let draft = Article::factory().build();
+    assert_eq!(draft.views, 10); // `default = ...` attributes are respected
+    assert_eq!(draft.subtitle, None); // Option fields default to None
+
+    // Override just what matters, then save it.
+    let popular = Article::factory().with_views(5_000).create(db).await?;
+    assert!(popular.id > 0);
+
+    // Save several at once; each one gets a fresh sequence number.
+    let batch = Article::factory().with_title("Same title").create_many(db, 3).await?;
+    assert_eq!(batch.len(), 3);
+    Ok(())
+}
+```
+
+| Field type | Default |
+| --- | --- |
+| `String` | `"<field>_<n>"`, cut to `max_length`; names containing `email` get `"user<n>@example.com"`, and names containing `url` or `website` get `"https://example.com/<field>/<n>"` |
+| Integers and floats | The sequence number `n` |
+| `bool` | `true` |
+| `DateTime` | The current time |
+| `Uuid` / `Decimal` | Built from `n` |
+| `Option<T>` | `None` |
+| Field with `choices` or `default = ...` | The first choice, or the default |
+| Anything else | `Default::default()` |
+| Auto primary key | `0` (the database assigns the real ID on `create`) |
+| `ForeignKey<T>` / `OneToOne<T>` | ID `1` |
+
+The sequence number `n` is shared by all factories of a model and increases with every
+`build`, so unique columns don't collide.
+
+Relation fields default to ID `1` because the factory doesn't create related rows.
+Unless that row exists, `create` fails with a foreign-key error, so create the parent
+first and pass its ID with `.with_<field>_id(id)`:
+
+```rust,illustrative
+let author = Author::factory().create(&db).await?;
+let book = Book::factory().with_author_id(author.id).create(&db).await?;
+```
+
+`Factory` is also re-exported as `djangors_test::Factory`.
+
 ---
 
 ## 2. Real-Socket Integration Testing

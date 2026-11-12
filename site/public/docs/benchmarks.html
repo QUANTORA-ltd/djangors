@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-208ebb8b.js";
+            window.path_to_searchindex_js = "searchindex-ff027cc3.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-15287f60.js"></script>
+        <script src="toc-fcdb45cd.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -238,6 +238,42 @@ run: Djangors achieved 76.7% of axum’s full-stack throughput (23.3% lower), wh
 28.9% higher. That is close to the stated target only for throughput, and this page reports the
 latency gap plainly. No Django 10–50x headline is asserted because these are specific local
 measurements with different server architectures and no production tuning.</p>
+<hr>
+<h2 id="json-serialization-benchmark-compile-time-write_json-vs-axum-gin-fastify-fastapi"><a class="header" href="#json-serialization-benchmark-compile-time-write_json-vs-axum-gin-fastify-fastapi">JSON Serialization Benchmark (Compile-Time <code>write_json</code> vs Axum, Gin, Fastify, FastAPI)</a></h2>
+<p>To measure the impact of Djangors’s compile-time direct JSON writer (<code>#[derive(Model)]</code> generating <a href="guides/orm.html#compile-time-direct-json-serialization-write_json"><code>Model::write_json</code></a>, exposed via <a href="guides/rest.html#low-level-serialize-serialize_to_vec-and-serialize_many_to_vec"><code>serialize_to_vec</code> / <code>serialize_many_to_vec</code></a> and <a href="guides/http-and-middleware.html"><code>Response::json_bytes</code></a>), we ran a dedicated HTTP JSON serialization benchmark across five frameworks on the same machine (8-vCPU Intel Core i5-8350U @ 1.70 GHz, Linux 7.0, 32 concurrent HTTP/1.1 keep-alive connections, 1s warmup + 5s measurement per endpoint).</p>
+<p>Each framework served two endpoints with an identical 7-field <code>BenchItem</code> model (<code>id: i64</code>, <code>name: String</code> with quotes/ampersands requiring JSON escaping, <code>category: String</code>, <code>price: f64</code>, <code>in_stock: bool</code>, <code>tags_Summary: String</code>, <code>created_at: DateTime&lt;Utc&gt;</code>):</p>
+<ol>
+<li><strong><code>/json/single</code></strong> (~190 B JSON object): Serializes 1 model instance per request.</li>
+<li><strong><code>/json/list</code></strong> (~9.5 KB JSON array): Serializes a 50-item <code>Vec&lt;BenchItem&gt;</code> per request.</li>
+</ol>
+<h3 id="json-benchmark-results"><a class="header" href="#json-benchmark-results">JSON Benchmark Results</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Endpoint</th><th>Framework &amp; Serialization Path</th><th style="text-align: right">Requests/sec</th><th style="text-align: right">Throughput (MiB/s)</th><th style="text-align: right">p50</th><th style="text-align: right">p95</th><th style="text-align: right">p99</th></tr>
+</thead>
+<tbody>
+<tr><td><code>/json/single</code> (1 item)</td><td><strong>Djangors (<code>write_json</code> + <code>json_bytes</code>)</strong></td><td style="text-align: right"><strong>18,960.70</strong></td><td style="text-align: right"><strong>3.42</strong></td><td style="text-align: right"><strong>1.500 ms</strong></td><td style="text-align: right"><strong>3.427 ms</strong></td><td style="text-align: right"><strong>5.051 ms</strong></td></tr>
+<tr><td><code>/json/single</code> (1 item)</td><td><strong>Axum 0.8.9</strong> (<code>axum::Json</code> / <code>serde::Serialize</code>)</td><td style="text-align: right">18,905.44</td><td style="text-align: right">3.32</td><td style="text-align: right">1.492 ms</td><td style="text-align: right">3.449 ms</td><td style="text-align: right">5.128 ms</td></tr>
+<tr><td><code>/json/single</code> (1 item)</td><td><strong>Djangors (legacy <code>serde_json::Value</code>)</strong></td><td style="text-align: right">18,014.41</td><td style="text-align: right">3.25</td><td style="text-align: right">1.581 ms</td><td style="text-align: right">3.604 ms</td><td style="text-align: right">5.488 ms</td></tr>
+<tr><td><code>/json/single</code> (1 item)</td><td><strong>Gin (Go 1.27)</strong> (<code>c.JSON</code> / <code>encoding/json</code>)</td><td style="text-align: right">14,779.90</td><td style="text-align: right">2.66</td><td style="text-align: right">1.813 ms</td><td style="text-align: right">5.258 ms</td><td style="text-align: right">8.321 ms</td></tr>
+<tr><td><code>/json/single</code> (1 item)</td><td><strong>Fastify (Node v26)</strong> (<code>fast-json-stringify</code> schema)</td><td style="text-align: right">5,325.07</td><td style="text-align: right">0.93</td><td style="text-align: right">5.819 ms</td><td style="text-align: right">8.338 ms</td><td style="text-align: right">12.527 ms</td></tr>
+<tr><td><code>/json/single</code> (1 item)</td><td><strong>FastAPI (Python 3.12)</strong> (Uvicorn 4w + Pydantic v2)</td><td style="text-align: right">3,922.93</td><td style="text-align: right">0.69</td><td style="text-align: right">7.626 ms</td><td style="text-align: right">15.805 ms</td><td style="text-align: right">20.217 ms</td></tr>
+<tr><td><code>/json/list</code> (50 items)</td><td><strong>Djangors (<code>write_json</code> + <code>json_bytes</code>)</strong></td><td style="text-align: right"><strong>12,610.54</strong></td><td style="text-align: right"><strong>116.94</strong></td><td style="text-align: right"><strong>2.344 ms</strong></td><td style="text-align: right"><strong>4.884 ms</strong></td><td style="text-align: right"><strong>7.020 ms</strong></td></tr>
+<tr><td><code>/json/list</code> (50 items)</td><td><strong>Axum 0.8.9</strong> (<code>axum::Json</code> / <code>serde::Serialize</code>)</td><td style="text-align: right">9,957.08</td><td style="text-align: right">89.96</td><td style="text-align: right">3.011 ms</td><td style="text-align: right">6.000 ms</td><td style="text-align: right">8.555 ms</td></tr>
+<tr><td><code>/json/list</code> (50 items)</td><td><strong>Djangors (legacy <code>serde_json::Value</code>)</strong></td><td style="text-align: right">7,390.09</td><td style="text-align: right">68.53</td><td style="text-align: right">4.080 ms</td><td style="text-align: right">7.923 ms</td><td style="text-align: right">10.480 ms</td></tr>
+<tr><td><code>/json/list</code> (50 items)</td><td><strong>Gin (Go 1.27)</strong> (<code>c.JSON</code> / <code>encoding/json</code>)</td><td style="text-align: right">6,177.44</td><td style="text-align: right">57.13</td><td style="text-align: right">4.159 ms</td><td style="text-align: right">12.900 ms</td><td style="text-align: right">18.329 ms</td></tr>
+<tr><td><code>/json/list</code> (50 items)</td><td><strong>FastAPI (Python 3.12)</strong> (Uvicorn 4w + Pydantic v2)</td><td style="text-align: right">3,047.61</td><td style="text-align: right">27.54</td><td style="text-align: right">7.159 ms</td><td style="text-align: right">19.881 ms</td><td style="text-align: right">35.276 ms</td></tr>
+<tr><td><code>/json/list</code> (50 items)</td><td><strong>Fastify (Node v26)</strong> (<code>fast-json-stringify</code> schema)</td><td style="text-align: right">2,533.58</td><td style="text-align: right">22.83</td><td style="text-align: right">12.433 ms</td><td style="text-align: right">15.648 ms</td><td style="text-align: right">26.367 ms</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="key-takeaways"><a class="header" href="#key-takeaways">Key Takeaways</a></h3>
+<ul>
+<li><strong>+70.6% faster 50-item list serialization inside Djangors</strong>: Switching from <code>djangors_rest::serialize</code> (<code>serde_json::Value</code> tree allocation) to compile-time <code>Model::write_json</code> (<code>serialize_many_to_vec</code> + <code>Response::json_bytes</code>) jumped 50-item list throughput from <strong>7,390 req/s</strong> to <strong>12,611 req/s</strong> (and cut p50 latency from <strong>4.08 ms</strong> to <strong>2.34 ms</strong>).</li>
+<li><strong>Parity with (and ahead of) Axum on list payloads</strong>: On single objects, Djangors (<code>18,961 req/s</code>) and Axum (<code>18,905 req/s</code>) are neck-and-neck because HTTP/1.1 framing dominates. On 50-item lists where JSON serialization is a larger share of CPU time, Djangors’s pre-sized <code>Vec::with_capacity(items.len() * 128)</code> + compile-time static key writers (<code>itoa</code>/<code>ryu</code> + fast string escaping) achieved <strong>12,611 req/s (116.94 MiB/s)</strong> vs Axum’s <strong>9,957 req/s (89.96 MiB/s)</strong> (+26.6%).</li>
+<li><strong>2.0x Gin (Go), 4.1x FastAPI (Pydantic v2), and 5.0x Fastify (<code>fast-json-stringify</code>) on 50-item lists</strong>: Note that Fastify runs on a single Node.js event-loop thread by default whereas Rust (Tokio), Go (goroutines), and FastAPI (4 Uvicorn workers) utilize multiple cores.</li>
+</ul>
 
                     </main>
 

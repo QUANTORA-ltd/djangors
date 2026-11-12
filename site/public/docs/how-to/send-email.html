@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-208ebb8b.js";
+            window.path_to_searchindex_js = "../searchindex-ff027cc3.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-15287f60.js"></script>
+        <script src="../toc-fcdb45cd.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -179,7 +179,7 @@
 <h2 id="problem"><a class="header" href="#problem">Problem</a></h2>
 <p>You want to send plain-text or HTML emails in your Djangors application using SMTP, or write outgoing messages to local disk during development.</p>
 <h2 id="solution"><a class="header" href="#solution">Solution</a></h2>
-<p>Use <code>djangors_mail::Message</code> and configure a backend implementing the <code>MailBackend</code> trait, such as <code>SmtpBackend</code>, <code>FileBackend</code>, or <code>ConsoleBackend</code>.</p>
+<p>Use <code>djangors_mail::Message</code> and configure a backend implementing the <code>MailBackend</code> trait, such as <code>SmtpBackend</code> (powered by <code>lettre</code> with <code>rustls</code> TLS — zero OpenSSL or <code>native-tls</code> C dependencies), <code>FileBackend</code>, <code>ConsoleBackend</code>, or <code>InMemoryBackend</code>. Note that <code>Message</code> is <code>#[non_exhaustive]</code>; construct it via <code>Message::new(to, from, subject, text_body)</code> and attach optional HTML bodies with <code>.html_body(...)</code>.</p>
 <h2 id="code-example"><a class="header" href="#code-example">Code Example</a></h2>
 <h3 id="1-sending-via-smtp-production"><a class="header" href="#1-sending-via-smtp-production">1. Sending via SMTP (Production)</a></h3>
 <pre class="playground"><code class="language-rust compile"><span class="boring">#![allow(unused)]
@@ -188,13 +188,13 @@
 
 pub async fn send_welcome_email(user_email: &amp;str) -&gt; Result&lt;(), djangors_mail::MailError&gt; {
     // Construct email message
-    let message = Message {
-        to: vec![user_email.to_string()],
-        from: "noreply@example.com".to_string(),
-        subject: "Welcome to our platform!".to_string(),
-        body: "Hello, welcome to our service!".to_string(),
-        html_body: Some("&lt;h1&gt;Hello!&lt;/h1&gt;&lt;p&gt;Welcome to our service!&lt;/p&gt;".to_string()),
-    };
+    let message = Message::new(
+        [user_email],
+        "noreply@example.com",
+        "Welcome to our platform!",
+        "Hello, welcome to our service!",
+    )
+    .html_body("&lt;h1&gt;Hello!&lt;/h1&gt;&lt;p&gt;Welcome to our service!&lt;/p&gt;");
 
     // Configure SMTP backend
     let config = SmtpConfig::new("smtp.example.com")
@@ -228,7 +228,7 @@ when your test asserts that “an email was sent with this subject”:</p>
 <pre class="playground"><code class="language-rust compile"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span><span class="boring">use djangors_mail::{Message, InMemoryBackend, MailBackend};
-</span><span class="boring">fn build_message() -&gt; Message { Message { to: vec!["a@b.c".into()], from: "noreply@example.com".into(), subject: "reset".into(), body: "hi".into(), html_body: None } }
+</span><span class="boring">fn build_message() -&gt; Message { Message::new(["a@b.c"], "noreply@example.com", "reset", "hi") }
 </span><span class="boring">async fn run() -&gt; Result&lt;(), djangors_mail::MailError&gt; {
 </span>let backend = InMemoryBackend::default();
 let sent: Result&lt;(), _&gt; = backend.send(&amp;build_message()).await;

@@ -183,7 +183,7 @@ Django uses `python manage.py <command>`. Djangors provides the `dj` command-lin
 | `python manage.py startapp` | `dj new-app` | Scaffolds a new app/module inside a project |
 | `python manage.py runserver` | `dj run` | Starts dev server with live-reloading file watch loop |
 | `python manage.py migrate` | `dj migrate` | Applies pending database migrations |
-| `python manage.py makemigrations` | `dj makemigrations` | Introspects the project binary; v1 detects new models and new fields |
+| `python manage.py makemigrations` | `dj makemigrations` | Introspects the project binary and generates numbered schema migrations |
 | `python manage.py sqlmigrate` | `dj sqlmigrate <app> <migration>` | Renders a migration's SQL without applying it |
 | `python manage.py showmigrations` | `dj showmigrations` | Lists migrations and their applied state |
 | `python manage.py createsuperuser` | `dj createsuperuser` | Prompts for superuser credentials and creates User |
@@ -194,9 +194,14 @@ Django uses `python manage.py <command>`. Djangors provides the `dj` command-lin
 | `python manage.py dbshell` | `dj dbshell` | Connects directly to configured database CLI |
 | `python manage.py check` | `dj check [--deploy]` | Runs static checks (with `--deploy`, production-safety checks) |
 | `python manage.py createpermissions` | `dj createpermissions` | Generates the standard `view`/`add`/`change`/`delete` permissions per model |
+| `python manage.py inspectdb` | `dj inspectdb` | Writes `#[derive(Model)]` structs for an existing database's tables |
+| `python manage.py spectacular` (drf-spectacular) | `dj openapi [--typescript]` | Writes the OpenAPI spec, or a typed TypeScript client |
+| *(no built-in equivalent)* | `dj generate resource Post title:string` | Writes a model, serializer, REST views, admin, tests, and migration in one step |
+
+These three are covered in [Code Generation](guides/code-generation.md).
 
 ### `dj makemigrations` scope
-`dj` runs the project's own binary in a hidden model-introspection mode, so registrations from application crates are visible. It stores the last model state in `migrations/.schema_snapshot.json` and generates numbered SQL migrations. v1 covers new models and new fields; field-type changes, removals, renames, indexes, and relation alterations are deferred.
+`dj` runs the project's own binary in a hidden model-introspection mode, so registrations from application crates are visible. It stores the last model state in `migrations/.schema_snapshot.json` and generates numbered SQL migrations. `detect_changes` automatically detects new tables (`CreateTable`), added columns (`AddColumn`), dropped columns (`DropColumn`), changed column types (`AlterColumnType`), `CreateIndex`/`DropIndex`, `ManyToMany` join tables, `OneToOne` unique constraints, and `choices` `CHECK` constraints. (Column renames are emitted as a `DropColumn` + `AddColumn` pair unless authored manually.)
 
 Database migrations in Djangors are authored as raw SQL files or generated via programmatic schema utilities.
 
@@ -436,15 +441,17 @@ class ArticleViewSet(viewsets.ModelViewSet):
 # pub struct Article { #[djangors(primary_key, auto)] pub id: i64 }
 # fn main() {
 # let article_instance = Article { id: 1 };
-use djangors_rest::{serialize, viewset_routes};
-use djangors_core::Router;
+use djangors_rest::{serialize, serialize_to_vec, viewset_routes};
+use djangors_core::{Response, Router, StatusCode};
 
-// Low-level model serialization
+// Low-level model serialization to serde_json::Value or directly to UTF-8 JSON bytes
 let json_val = serialize::<Article>(&article_instance);
+let response = Response::json_bytes(StatusCode::OK, serialize_to_vec(&article_instance));
 
 // High-level ViewSet registration. `ViewSet<M>` has no instance to construct;
 // its CRUD handlers are mounted directly as a free function, IsAuthenticated by default.
 let router = viewset_routes::<Article>(Router::new(), "/articles");
+# let _ = (json_val, response, router);
 # }
 ```
 
@@ -846,7 +853,20 @@ Use `dj migrate --rollback` deliberately and never use `--fake` unless the
 database already has exactly the schema represented by the migration. Do not
 hide schema changes in a task or an application startup side effect.
 
-## 20. What does not translate one-for-one
+## 20. Third-party Django packages that are built in
+
+Several packages most Django projects install are part of Djangors:
+
+| Django package | Djangors |
+| :--- | :--- |
+| Django Channels | `Router::ws` WebSockets, in the same server, with same-origin checks on by default ([guide](guides/websockets.md)) |
+| django-debug-toolbar | The `debug-panel` feature: per-request SQL list, timings, and N+1 warnings ([how-to](how-to/debug-queries.md)) |
+| factory_boy | `#[derive(Factory)]` on your models ([testing guide](guides/testing.md#model-factories-derivefactory)) |
+| drf-spectacular + openapi-typescript | `dj openapi` and `dj openapi --typescript` |
+| drf-standardized-errors | `ProblemDetailsRenderer` for RFC 9457 error bodies ([guide](guides/http-and-middleware.md#standard-problem-details-rfc-9457)) |
+| django-browser-reload | Built into `dj run` |
+
+## 21. What does not translate one-for-one
 
 Some Django assumptions need a deliberate design choice:
 
@@ -859,10 +879,11 @@ Some Django assumptions need a deliberate design choice:
 - Djangors tasks are database-backed and durable; a raw Tokio task is not.
 - HTML rendering and API serialization are separate choices; do not return
   database rows directly just because they implement `Serialize`.
-- Djangors provides SSE, not a drop-in WebSocket abstraction; confirm the
-  capability before designing a WebSocket-dependent feature.
-- SQLite is a useful test backend but does not prove PostgreSQL locking,
-  extensions, or dialect-specific behavior.
+- Djangors provides both SSE (`Router::sse` / `Response::sse`) and RFC 6455
+  WebSockets (`Router::ws` / `djangors_core::ws::WebSocket`, plus pub/sub
+  broadcast channels via `djangors_core::Groups`).
+- SQLite is a useful test backend (and production backend for single-node apps)
+  but does not prove PostgreSQL locking, extensions, or dialect-specific behavior.
 
 The migration is complete when every endpoint has an explicit route, contract,
 permission rule, tenant rule where applicable, service workflow, repository

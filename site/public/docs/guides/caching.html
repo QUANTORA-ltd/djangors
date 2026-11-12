@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-208ebb8b.js";
+            window.path_to_searchindex_js = "../searchindex-ff027cc3.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-15287f60.js"></script>
+        <script src="../toc-fcdb45cd.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -296,22 +296,30 @@ let cache = RedisCache::new("redis://127.0.0.1:6379/0")?;
 <li>By enforcing that responses must explicitly carry the <code>CacheableResponse</code> extension and lack <code>Set-Cookie</code> headers, Djangors prevents caching sensitive sessions, CSRF tokens, or user-specific state.</li>
 </ul>
 <h3 id="using-the-cache-middleware"><a class="header" href="#using-the-cache-middleware">Using the Cache Middleware</a></h3>
-<p>To wire up response caching in your application:</p>
-<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+<p>To wire up response caching in your application, wrap your <code>RouterService</code> in <code>CacheLayer</code> and mark cacheable responses with <code>.cacheable()</code> (or <code>.with_extension(CacheableResponse)</code>):</p>
+<pre class="playground"><code class="language-rust compile"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>use djangors::cache::{CacheLayer, CacheableResponse};
+</span>use djangors::cache::{CacheLayer, InMemoryCache};
+use djangors::core::{DjangorsError, PathParams, Request, Response, Router, StatusCode};
+use djangors::core::router::RouterService;
 use std::sync::Arc;
 use std::time::Duration;
+use tower::ServiceBuilder;
 
-// 1. Set up the CacheLayer with your preferred cache backend
-let cache_backend = Arc::new(InMemoryCache::new(1000));
-let cache_layer = CacheLayer::new(cache_backend, Some(Duration::from_secs(300)));
+// 1. Mark specific responses as cacheable in your view handler
+async fn my_public_view(_req: Request, _params: PathParams) -&gt; Result&lt;Response, DjangorsError&gt; {
+    Ok(Response::text(StatusCode::OK, "Hello, Cached World!").cacheable())
+}
 
-// 2. Mark specific responses as cacheable in your view handler
-async fn my_public_view() -&gt; Response {
-    let mut response = Response::new("Hello, Cached World!".into());
-    response.extensions_mut().insert(CacheableResponse);
-    response
+fn wire_cache() {
+    // 2. Set up the CacheLayer with your preferred cache backend
+    let cache_backend = Arc::new(InMemoryCache::new(1000));
+    let cache_layer = CacheLayer::new(cache_backend, Some(Duration::from_secs(300)));
+
+    let router = Router::new().get("/public", my_public_view);
+    let _service: djangors::cache::CacheService&lt;RouterService&gt; = ServiceBuilder::new()
+        .layer(cache_layer)
+        .service(RouterService::new(router, false));
 }
 <span class="boring">}</span></code></pre>
 
@@ -319,7 +327,7 @@ async fn my_public_view() -&gt; Response {
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../guides/tasks.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../guides/websockets.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
@@ -333,7 +341,7 @@ async fn my_public_view() -&gt; Response {
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../guides/tasks.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../guides/websockets.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 

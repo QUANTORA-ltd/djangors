@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-208ebb8b.js";
+            window.path_to_searchindex_js = "../searchindex-ff027cc3.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-15287f60.js"></script>
+        <script src="../toc-fcdb45cd.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -176,7 +176,7 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="object-relational-mapping-orm"><a class="header" href="#object-relational-mapping-orm">Object-Relational Mapping (ORM)</a></h1>
-<p><code>djangors-orm</code> provides Django-style querysets, model metadata, expression macros, and database integration for PostgreSQL (via <code>sqlx</code>).</p>
+<p><code>djangors-orm</code> provides Django-style querysets, model metadata, expression macros, compile-time JSON writers, and database integration for PostgreSQL and SQLite (via <code>sqlx</code>).</p>
 <h2 id="defining-models"><a class="header" href="#defining-models">Defining Models</a></h2>
 <p>Models are Rust structs decorated with <code>#[derive(Model)]</code> from <code>djangors-macros</code>.</p>
 <pre class="playground"><code class="language-rust compile"><span class="boring">#![allow(unused)]
@@ -220,6 +220,8 @@ pub struct Choice {
 <li><strong><code>table_name = "custom_table"</code></strong> <em>(optional)</em>: Database table name. Defaults to <code>{app_label}_{snake_case_struct_name}</code>.</li>
 <li><strong><code>ordering = ["field", "-field"]</code></strong> <em>(optional)</em>: Default ordering for querysets when <code>.order_by()</code> is not called. Prefix <code>-</code> denotes descending.</li>
 <li><strong><code>unique_together = [["field1", "field2"]]</code></strong> <em>(optional)</em>: Defines composite unique constraints.</li>
+<li><strong><code>indexes = ["index_name", ("index_name", ["field1", "field2"])]</code></strong> <em>(optional)</em>: Defines custom or composite database indexes. Can be a simple index name or a tuple of <code>(name, [fields])</code>.</li>
+<li><strong><code>manager = "ManagerStruct"</code></strong> <em>(optional)</em>: Overrides the default model manager with a custom manager struct.</li>
 </ul>
 <h4 id="field-level-attributes"><a class="header" href="#field-level-attributes">Field-Level Attributes</a></h4>
 <ul>
@@ -231,22 +233,55 @@ pub struct Choice {
 <li><strong><code>db_index</code></strong>: Creates a database index on the column.</li>
 <li><strong><code>verbose_name = "..."</code></strong>, <strong><code>help_text = "..."</code></strong>: Descriptive labels for admin/forms metadata.</li>
 <li><strong><code>column = "col_name"</code></strong>: Overrides the database column name if different from the struct field name.</li>
+<li><strong><code>auto_now_add</code></strong>: Populates a <code>DateTime&lt;Utc&gt;</code> field with <code>Utc::now()</code> automatically when a new row is inserted via <code>save(db)</code>.</li>
+<li><strong><code>auto_now</code></strong>: Refreshes a <code>DateTime&lt;Utc&gt;</code> field with <code>Utc::now()</code> automatically on both <code>save(db)</code> and <code>update(db)</code>.</li>
+<li><strong><code>choices = [("VALUE", "Human Label"), ...]</code></strong>: Restricts a <code>String</code> field to an allowed set of values (validated in forms/serializers and emitted as a SQL <code>CHECK</code> constraint by migrations).</li>
 <li><strong><code>foreign_key(on_delete = "...", related_name = "...")</code></strong>: Configures foreign key behavior. <code>on_delete</code> options: <code>"cascade"</code> (default), <code>"protect"</code>, <code>"set_null"</code>, <code>"restrict"</code>, <code>"do_nothing"</code>.</li>
 </ul>
 <h3 id="supported-field-types"><a class="header" href="#supported-field-types">Supported Field Types</a></h3>
 <ul>
 <li>Integer: <code>i32</code> (<code>FieldKind::Integer</code>), <code>i64</code> (<code>FieldKind::BigInt</code>)</li>
 <li>Float: <code>f32</code>, <code>f64</code> (<code>FieldKind::Float</code>)</li>
-<li>String: <code>String</code> (<code>FieldKind::Char</code> or <code>FieldKind::Text</code>)</li>
+<li>Decimal: <code>rust_decimal::Decimal</code> (<code>FieldKind::Decimal { max_digits, decimal_places }</code>)</li>
+<li>String: <code>String</code> (<code>FieldKind::Char</code> with <code>max_length</code>, or <code>FieldKind::Text</code> without)</li>
 <li>Boolean: <code>bool</code> (<code>FieldKind::Boolean</code>)</li>
-<li>Datetime: <code>chrono::DateTime&lt;chrono::Utc&gt;</code> (<code>FieldKind::DateTime</code>)</li>
+<li>Datetime &amp; Date/Time: <code>chrono::DateTime&lt;chrono::Utc&gt;</code> (<code>FieldKind::DateTime</code>), <code>chrono::NaiveDate</code> (<code>FieldKind::Date</code>), <code>chrono::NaiveTime</code> (<code>FieldKind::Time</code>), <code>chrono::Duration</code> (<code>FieldKind::Duration</code>)</li>
+<li>UUID: <code>uuid::Uuid</code> (<code>FieldKind::Uuid</code>)</li>
 <li>Foreign Key: <code>ForeignKey&lt;TargetModel&gt;</code></li>
-<li>Nullable: <code>Option&lt;T&gt;</code> for any of the above types</li>
+<li>One-to-One Key: <code>OneToOne&lt;TargetModel&gt;</code></li>
+<li>Many-to-Many Marker: <code>ManyToMany&lt;TargetModel&gt;</code></li>
+<li>Nullable: <code>Option&lt;T&gt;</code> for any of the above types (except <code>ManyToMany</code>)</li>
 </ul>
-<blockquote class="blockquote-tag blockquote-tag-note">
-<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
-<p>Types like <code>NaiveDate</code>, <code>NaiveTime</code>, <code>Duration</code>, <code>Uuid</code>, and <code>Decimal</code> are defined in <code>FieldKind</code> for schema metadata, but currently trigger a compile error on <code>Model</code> derive for save/update operations.</p>
-</blockquote>
+<h3 id="custom-managers"><a class="header" href="#custom-managers">Custom Managers</a></h3>
+<p>You can define custom database query manager behavior by implementing the <code>Manager</code> trait and specifying the manager class via the struct-level <code>manager</code> attribute:</p>
+<pre class="playground"><code class="language-rust compile"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span><span class="boring">use djangors_orm::{Model, q};
+</span><span class="boring">use djangors_macros::Model;
+</span>pub struct ActiveManager;
+
+impl djangors_orm::meta::Manager&lt;ManagedModel&gt; for ActiveManager {
+    fn objects() -&gt; djangors_orm::queryset::QuerySet&lt;ManagedModel&gt; {
+        djangors_orm::queryset::QuerySet::&lt;ManagedModel&gt;::new()
+            .filter(q!(is_active = true))
+            .expect("valid filter")
+    }
+}
+
+#[derive(Model, Debug)]
+#[djangors(
+    app = "polls",
+    table_name = "polls_managed",
+    manager = "ActiveManager"
+)]
+pub struct ManagedModel {
+    #[djangors(primary_key, auto)]
+    pub id: i64,
+    pub name: String,
+    pub is_active: bool,
+}
+<span class="boring">}</span></code></pre>
+<p>By overriding the manager, calling <code>ManagedModel::objects()</code> will automatically retrieve a queryset pre-filtered or configured according to your manager definition.</p>
 <hr>
 <h2 id="queryset-methods"><a class="header" href="#queryset-methods">QuerySet Methods</a></h2>
 <p>Access querysets using <code>Model::objects()</code> (or <code>QuerySet::&lt;T&gt;::new()</code>).</p>
@@ -299,6 +334,7 @@ as <code>OrmError::FieldNotFound</code> rather than silently becoming an equalit
 <li><strong><code>.count(db).await</code></strong>: Returns <code>Result&lt;i64, OrmError&gt;</code> count (<code>SELECT COUNT(*) ...</code>).</li>
 <li><strong><code>.aggregate(db, vec![AggExpr::...]).await</code></strong>: Evaluates aggregate functions: <code>AggExpr::Count</code>, <code>AggExpr::Sum</code>, <code>AggExpr::Avg</code>, <code>AggExpr::Min</code>, <code>AggExpr::Max</code>.</li>
 <li><strong><code>.update(db, set!(...)).await</code></strong>: Performs bulk updates. Returns <code>Result&lt;u64, OrmError&gt;</code> (rows affected count).</li>
+<li><strong><code>.delete(db).await</code></strong>: Deletes all rows matching the queryset’s filters. Returns <code>Result&lt;u64, OrmError&gt;</code> (rows affected count). <strong>Warning</strong>: calling <code>.delete()</code> on an unfiltered queryset (e.g. <code>Model::objects().delete(db)</code>) will delete every row in the table.</li>
 <li><strong><code>QuerySet::&lt;T&gt;::delete_by_pk(db, pk).await</code></strong>: Static helper deleting a row by its primary key.</li>
 </ul>
 <h3 id="eager-loading-relations-select_related-and-prefetch_related"><a class="header" href="#eager-loading-relations-select_related-and-prefetch_related">Eager-loading relations: <code>select_related</code> and <code>prefetch_related</code></a></h3>
@@ -569,11 +605,137 @@ can skip <code>save</code> and use <code>QuerySet::&lt;T&gt;::insert_raw(db, val
 <code>QuerySet::&lt;T&gt;::bulk_create(db, &amp;items)</code> instead; <code>bulk_create</code> inserts many
 rows in one statement.</p>
 <h2 id="relationships--many-to-many"><a class="header" href="#relationships--many-to-many">Relationships &amp; Many-to-Many</a></h2>
-<p>Foreign keys are stored in <code>ForeignKey&lt;T&gt;</code> wrapper fields (e.g. <code>#[djangors(foreign_key(on_delete = "cascade", related_name = "choices"))] pub question: ForeignKey&lt;Question&gt;</code>). Foreign keys access <code>.id</code> directly.</p>
-<blockquote class="blockquote-tag blockquote-tag-note">
-<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
-<p>Direct many-to-many relationship querying via implicit junction table abstraction is not implemented in <code>djangors-orm</code>. Explicit join models (such as <code>UserGroup</code>, <code>GroupPermission</code>, and <code>UserPermission</code> in <code>djangors-auth</code>) are defined and queried directly as models with foreign keys.</p>
+<p><code>djangors-orm</code> supports Foreign Key, One-to-One, and Many-to-Many relationships.</p>
+<h3 id="foreign-keys-foreignkeyt"><a class="header" href="#foreign-keys-foreignkeyt">Foreign Keys (<code>ForeignKey&lt;T&gt;</code>)</a></h3>
+<p>Foreign keys reference the primary key of another model:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>#[djangors(foreign_key(on_delete = "cascade", related_name = "choices"))]
+pub question: ForeignKey&lt;Question&gt;,
+<span class="boring">}</span></code></pre>
+<p>To access the related ID directly, read <code>choice.question.id</code>. To load the related model instance lazily, call <code>.fetch(&amp;db)</code>:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>if let Some(question) = choice.question.fetch(db).await? {
+    println!("{}", question.question_text);
+}
+<span class="boring">}</span></code></pre>
+<h3 id="one-to-one-onetoonet"><a class="header" href="#one-to-one-onetoonet">One-to-One (<code>OneToOne&lt;T&gt;</code>)</a></h3>
+<p>A <code>OneToOne&lt;T&gt;</code> relationship is declared using the <code>OneToOne</code> wrapper. While it behaves similarly to a <code>ForeignKey</code>, migrations will automatically emit a <code>UNIQUE</code> constraint on the underlying column to ensure uniqueness:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>#[derive(Model, Debug, Clone)]
+#[djangors(app = "polls", table_name = "polls_user_profile")]
+pub struct UserProfile {
+    #[djangors(primary_key, auto)]
+    pub id: i64,
+    #[djangors(foreign_key(on_delete = "cascade", related_name = "profile"))]
+    pub user: OneToOne&lt;User&gt;,
+}
+<span class="boring">}</span></code></pre>
+<p>Like foreign keys, you can resolve the relationship lazily via <code>.fetch(db)</code>:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>let profile = UserProfile::objects().get(db).await?;
+if let Some(user) = profile.user.fetch(db).await? {
+    println!("User name: {}", user.name);
+}
+<span class="boring">}</span></code></pre>
+<h3 id="many-to-many-manytomanyt"><a class="header" href="#many-to-many-manytomanyt">Many-to-Many (<code>ManyToMany&lt;T&gt;</code>)</a></h3>
+<p>A <code>ManyToMany&lt;T&gt;</code> relation uses the <code>ManyToMany</code> wrapper as a zero-sized marker field. This field does not correspond to any column in the model’s table. Instead, a dedicated through (junction) table named <code>{source_table_name}_{field_name}</code> is created automatically by migrations.</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>#[derive(Model, Debug, Clone)]
+#[djangors(app = "polls", table_name = "polls_school")]
+pub struct School {
+    #[djangors(primary_key, auto)]
+    pub id: i64,
+    pub name: String,
+    #[djangors(many_to_many(related_name = "schools"))]
+    pub students: ManyToMany&lt;Student&gt;,
+}
+<span class="boring">}</span></code></pre>
+<p>You can interact with Many-to-Many relationships using the free helper functions <code>m2m_related</code>, <code>m2m_add</code>, and <code>m2m_remove</code>:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_orm::{m2m_add, m2m_related, m2m_remove};
+
+// Add relationship entries
+m2m_add::&lt;School, Student, _&gt;(db, school.id, "students", student.id).await?;
+
+// Query related instances
+let students = m2m_related::&lt;School, Student, _&gt;(db, school.id, "students").await?;
+
+// Remove relationship entries
+m2m_remove::&lt;School, Student, _&gt;(db, school.id, "students", student.id).await?;
+<span class="boring">}</span></code></pre>
+<h2 id="query-result-caching"><a class="header" href="#query-result-caching">Query Result Caching</a></h2>
+<p><code>djangors-orm</code> provides an opt-in, in-process, process-local query cache to avoid hitting the database for duplicate queries.</p>
+<h3 id="enabling-and-querying-the-cache"><a class="header" href="#enabling-and-querying-the-cache">Enabling and Querying the Cache</a></h3>
+<p>You can enable result caching on a <code>QuerySet</code> via <code>.cache(duration)</code> and fetch cached results via <code>.cached_all(db)</code>:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use std::time::Duration;
+
+// First call queries the database and caches the results
+let questions = Question::objects()
+    .filter(q!(pub_date__year = 2026))?
+    .cache(Duration::from_secs(60))
+    .cached_all(db)
+    .await?;
+
+// Subsequent calls with the exact same SQL and parameters
+// will hit the process-local cache instead of the database.
+let cached_questions = Question::objects()
+    .filter(q!(pub_date__year = 2026))?
+    .cache(Duration::from_secs(60))
+    .cached_all(db)
+    .await?;
+<span class="boring">}</span></code></pre>
+<h3 id="invalidation"><a class="header" href="#invalidation">Invalidation</a></h3>
+<p>Write operations (<code>save()</code>, <code>update()</code>, and <code>delete()</code>) automatically invalidate all cached entries associated with the affected model’s table.</p>
+<blockquote class="blockquote-tag blockquote-tag-important">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v9.5A1.75 1.75 0 0 1 14.25 13H8.06l-2.573 2.573A1.458 1.458 0 0 1 3 14.543V13H1.75A1.75 1.75 0 0 1 0 11.25Zm1.75-.25a.25.25 0 0 0-.25.25v9.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h6.5a.25.25 0 0 0 .25-.25v-9.5a.25.25 0 0 0-.25-.25Zm7 2.25v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 9a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"></path></svg>Important</p>
+<p>The query cache is <strong>process-local</strong> and resides entirely in-memory. In multi-process deployments, writes to one process will not invalidate the caches of other processes, which can lead to stale data being served. Use with caution in distributed environments.</p>
 </blockquote>
+<h2 id="database-routing"><a class="header" href="#database-routing">Database Routing</a></h2>
+<p>For multi-database setups, <code>djangors-orm</code> provides metadata-level routing via <code>ModelDatabaseMap</code>. This allows you to map specific model struct names to distinct database instances:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_orm::ModelDatabaseMap;
+
+// Construct routing map
+let routing_map = ModelDatabaseMap::new(
+    default_db,
+    vec![
+        ("User", auth_db),
+        ("Session", session_db),
+    ],
+);
+
+// Retrieve the database configured for a specific model
+let db = routing_map.db_for::&lt;User&gt;();
+<span class="boring">}</span></code></pre>
+<h2 id="compile-time-direct-json-serialization-write_json"><a class="header" href="#compile-time-direct-json-serialization-write_json">Compile-Time Direct JSON Serialization (<code>write_json</code>)</a></h2>
+<p>Every <code>#[derive(Model)]</code> struct automatically generates a specialized, Fastify-style (<code>fast-json-stringify</code>) JSON writer on the <code>Model</code> trait:</p>
+<ul>
+<li><strong><code>model.write_json(&amp;mut buf)</code></strong>: Writes all non-<code>ManyToMany</code> model fields directly into a <code>Vec&lt;u8&gt;</code> buffer with pre-escaped static <code>"\"field_name\":"</code> byte literals in lexicographical key order (using <code>itoa</code> for integers and <code>ryu</code> for floats), avoiding intermediate <code>Vec&lt;(&amp;'static str, BindValue)&gt;</code> and <code>serde_json::Map</code> allocations.</li>
+<li><strong><code>model.write_json_filtered(&amp;mut buf, |field_name| ...)</code></strong>: Same direct writer, filtered by a field-name predicate (used by <code>djangors-rest</code> when a <code>FieldSet</code> restricts readable fields).</li>
+</ul>
+<pre class="playground"><code class="language-rust compile"><span class="boring">use polls::models::Question;
+</span><span class="boring">use djangors_orm::Model;
+</span><span class="boring">use chrono::Utc;
+</span><span class="boring">fn main() {
+</span>let q = Question {
+    id: 1,
+    question_text: "Fast JSON?".to_string(),
+    pub_date: Utc::now(),
+};
+
+let mut buf = Vec::with_capacity(128);
+q.write_json(&amp;mut buf);
+assert!(std::str::from_utf8(&amp;buf).unwrap().contains("\"question_text\":\"Fast JSON?\""));
+<span class="boring">}</span></code></pre>
 
                     </main>
 

@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-208ebb8b.js";
+            window.path_to_searchindex_js = "../searchindex-ff027cc3.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-15287f60.js"></script>
+        <script src="../toc-fcdb45cd.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -252,12 +252,60 @@ impl Scoped for SchoolClass {
 <p>Every <code>ScopedViewSet::&lt;SchoolClass&gt;</code> request now only ever sees rows belonging to the current,
 membership-verified tenant. A user for tenant A genuinely cannot see tenant B’s classes, list
 them, or fetch one by id.</p>
+<h2 id="scoping-the-admin-to-the-current-tenant"><a class="header" href="#scoping-the-admin-to-the-current-tenant">Scoping the admin to the current tenant</a></h2>
+<p>The generated admin UI enforces the same tenant boundary as <code>ScopedViewSet</code>. An <code>AdminSite</code> is
+configured with a <code>TenantScope</code>, which names the tenant FK field present on <strong>every</strong> registered
+model plus a function that extracts the current tenant id from a request. The extractor typically
+reads <code>djangors_contrib_tenancy::CurrentTenant</code> from request extensions — which
+<code>TenantResolutionLayer</code> populates — so the admin and the REST layer resolve the tenant the same
+way:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_contrib_tenancy::CurrentTenant;
+use djangors_core::Request;
+
+let site = djangors_admin::AdminSite::new()
+    .with_tenant_scoping("tenant", |req: &amp;Request| req.ext::&lt;CurrentTenant&gt;().map(|t| t.0));
+<span class="boring">}</span></code></pre>
+<h3 id="the-tenant-is-resolved-per-request-not-stored"><a class="header" href="#the-tenant-is-resolved-per-request-not-stored">The tenant is resolved per request, not stored</a></h3>
+<p>This is the important part. A <code>ModelAdmin</code> is built <strong>once</strong> at registration and shared across
+every concurrent request behind an <code>Arc</code>. The tenant restriction is therefore passed as a
+<code>TenantFilter</code> argument (<code>Option&lt;(&amp;'static str, i64)&gt;</code>) into each admin data method — <code>changelist</code>,
+<code>export_csv_rows</code>, <code>get_by_pk</code>, <code>update_from_form</code>, <code>update_fields_from_form</code>, <code>create_from_form</code>,
+and <code>delete_by_pk</code> — and is <strong>never</strong> held on the admin itself.</p>
+<p>It must not be stored on the admin: state kept on the shared object could be overwritten by a
+second request while the first was awaiting the database, so one tenant’s request could read
+another tenant’s rows. A custom <code>ModelAdmin</code> must honour the <code>tenant</code> argument it receives rather
+than caching a tenant on <code>self</code>.</p>
+<h3 id="superusers-are-unrestricted"><a class="header" href="#superusers-are-unrestricted">Superusers are unrestricted</a></h3>
+<p><code>TenantFilter</code> is <code>None</code> for a superuser, so they see every tenant’s rows in the admin.</p>
+<h3 id="it-fails-closed"><a class="header" href="#it-fails-closed">It fails closed</a></h3>
+<p>For a non-superuser on a tenant-scoped site, if no tenant id can be resolved from the request,
+the handler returns <code>Forbidden</code>. It does not fall back to running the query unscoped. Failing open
+here would silently expose every tenant’s rows to any admin user whose request happened to lack a
+resolved tenant — the exact leak the scoping exists to prevent.</p>
+<h3 id="what-scoping-actually-guarantees"><a class="header" href="#what-scoping-actually-guarantees">What scoping actually guarantees</a></h3>
+<p>The trait-level docs make the guarantees precise:</p>
+<ul>
+<li><strong>Reads and writes by primary key are filtered by tenant too.</strong> A cross-tenant primary key reads
+as “not found” rather than leaking a row (<code>get_by_pk</code>), and updates refuse to touch another
+tenant’s row.</li>
+<li><strong>Deletes refuse</strong> to remove a row that belongs to another tenant.</li>
+<li><strong>Objects created through a scoped add-form have their tenant field forced to the current
+tenant</strong>, so a submitted form cannot plant a row in someone else’s tenant.</li>
+<li><strong>Object history is gated on the object’s visibility</strong>, because the log table has no tenant
+column of its own.</li>
+</ul>
+<h3 id="tenantresolutionfailed"><a class="header" href="#tenantresolutionfailed"><code>TenantResolutionFailed</code></a></h3>
+<p>Previously a database failure during the membership lookup was indistinguishable from “this user
+is not a member”, so an outage surfaced to clients as <code>Unauthorized</code>. The middleware now records a
+<code>TenantResolutionFailed</code> marker on the request when the lookup itself fails, and <code>tenant_scope</code>
+maps that to <code>Internal</code> (500) instead of <code>Unauthorized</code>. For callers who need to name the type,
+<code>TenantResolutionService</code> is now re-exported from the crate root.</p>
 <h2 id="what-this-doesnt-cover-yet"><a class="header" href="#what-this-doesnt-cover-yet">What this doesn’t cover yet</a></h2>
-<p><code>djangors-admin</code> has no tenant-scoping integration yet: an admin user for one tenant can browse
-another tenant’s rows in the generated admin UI. This is the design doc’s own flagged
-highest-value follow-up, not yet built. Schema-per-tenant/database-per-tenant support,
-subdomain-based tenant resolution (v1 is <code>X-Tenant-Id</code>-header only), and automatic Postgres
-Row-Level Security policy generation are also deliberately out of scope for this first slice.</p>
+<p>Schema-per-tenant/database-per-tenant support, subdomain-based tenant resolution (v1 is
+<code>X-Tenant-Id</code>-header only), and automatic Postgres Row-Level Security policy generation are
+deliberately out of scope for this first slice.</p>
 
                     </main>
 

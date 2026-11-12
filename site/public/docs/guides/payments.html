@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-208ebb8b.js";
+            window.path_to_searchindex_js = "../searchindex-ff027cc3.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-15287f60.js"></script>
+        <script src="../toc-fcdb45cd.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -229,6 +229,63 @@ let sandbox = PaystackProvider::with_base_url("sk_test_...", "http://localhost:8
 let proxied = PaystackProvider::with_base_url("sk_live_...", "https://paystack-proxy.internal");
 <span class="boring">let _ = (live, sandbox, proxied);
 </span><span class="boring">}</span></code></pre>
+<h2 id="bachsprovider"><a class="header" href="#bachsprovider"><code>BachsProvider</code></a></h2>
+<p><a href="https://bachs.io">Bachs</a> is a payments/billing platform aimed at internet businesses with
+African settlement. <code>BachsProvider</code> implements the same <code>PaymentProvider</code> trait as Paystack, so
+it is a drop-in alternative for one-time charges.</p>
+<pre class="playground"><code class="language-rust compile"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_contrib_payments::BachsProvider;
+
+fn make_provider(secret_key: &amp;str) -&gt; BachsProvider {
+    BachsProvider::new(secret_key.to_string())
+}
+<span class="boring">}</span></code></pre>
+<p>There are three constructors. <code>new(secret_key)</code> talks to the production API
+(<code>https://api.bachs.io</code>), <code>sandbox(secret_key)</code> points at <code>https://sandbox-api.bachs.io</code>, and
+<code>with_base_url(secret_key, base_url)</code> routes everything at an arbitrary base URL (useful for a
+mock server or a proxy). Build against sandbox first — going live is a key swap (<code>sk_sandbox_</code>
+→ <code>sk_live_</code>), not a code change:</p>
+<pre class="playground"><code class="language-rust compile"><span class="boring">fn main() {
+</span>use djangors_contrib_payments::BachsProvider;
+
+let live = BachsProvider::new("sk_live_..."); // real https://api.bachs.io
+let sandbox = BachsProvider::sandbox("sk_sandbox_..."); // https://sandbox-api.bachs.io
+<span class="boring">let _ = (live, sandbox);
+</span><span class="boring">}</span></code></pre>
+<h3 id="amounts-decimal-strings-on-the-wire"><a class="header" href="#amounts-decimal-strings-on-the-wire">Amounts: decimal strings on the wire</a></h3>
+<p>This is the part most likely to trip someone up. The <code>PaymentProvider</code> trait speaks in
+<code>amount_minor: i64</code> (kobo, cents), and you keep using minor units throughout — but Bachs’s own
+API uses decimal strings at the currency’s precision and explicitly never minor units. The
+provider converts in both directions using exact integer arithmetic, driven by a
+currency-exponent table: 0 decimals for currencies like JPY and XOF, 3 for currencies like KWD
+and BHD, and 2 for everything else (including NGN, USD, GHS, KES, ZAR). You never see a decimal
+string; the conversion happens at the boundary. So <code>amount_minor: 123456</code> with <code>"NGN"</code> becomes
+<code>"1234.56"</code> on the wire, and a <code>"1234.56"</code> response round-trips back to <code>123456</code>.</p>
+<h3 id="initiate--verify--refund"><a class="header" href="#initiate--verify--refund"><code>initiate</code> / <code>verify</code> / <code>refund</code></a></h3>
+<p>The one deviation from Paystack you must not miss: <strong>Bachs has no lookup-by-merchant-reference
+endpoint</strong>, so <code>verify(reference)</code> and <code>refund(reference, ..)</code> interpret their argument as the
+Bachs <strong>checkout id</strong>, not your own merchant reference. <code>initiate</code> returns that checkout id in
+the <code>access_code</code> field of <code>InitiateChargeResponse</code> (Bachs has no “access code” concept of its
+own) and the redirect URL in <code>authorization_url</code>. <strong>The caller must persist <code>access_code</code> after
+<code>initiate</code></strong>, or it cannot verify or refund the charge later. A reader who misses this ends up
+with a broken integration.</p>
+<h3 id="webhooks"><a class="header" href="#webhooks">Webhooks</a></h3>
+<p>Bachs signs deliveries with two headers, <code>X-Bachs-Timestamp</code> and <code>X-Bachs-Signature</code>, where the
+signature is an HMAC-SHA256 hex digest of <code>"{timestamp}.{raw_body}"</code>. Because the single-argument
+<code>verify_webhook_signature</code> has nowhere to put the timestamp, the trait gained
+<code>verify_webhook_signature_with_timestamp(raw_body, timestamp, signature)</code>, whose default
+implementation ignores the timestamp so Paystack is unaffected. Note that <code>BachsProvider</code>’s plain
+<code>verify_webhook_signature</code> deliberately returns <code>false</code> unconditionally — it fails closed rather
+than pretending to verify — so Bachs callers <strong>must</strong> use the timestamped method.</p>
+<p><code>handle_bachs_webhook</code> verifies, parses, and records the delivery in one call. Pass the raw body
+bytes exactly as received, never a re-serialized copy, or the signature will not match. The
+<code>collection.succeeded</code> event is the one treated as payment confirmation.</p>
+<h3 id="paystack-or-bachs"><a class="header" href="#paystack-or-bachs">Paystack or Bachs?</a></h3>
+<p>At a factual level: Paystack verifies and refunds by your merchant reference and signs webhooks
+with a single HMAC-SHA512 header; Bachs verifies and refunds by checkout id, uses multi-currency
+decimal amounts, and signs webhooks with a timestamped HMAC-SHA256 pair. Pick the provider whose
+API and settlement model match your market.</p>
 <h2 id="idempotent-transaction-recording"><a class="header" href="#idempotent-transaction-recording">Idempotent transaction recording</a></h2>
 <p><code>Transaction</code>’s <code>reference</code> column has a real <strong>database-level UNIQUE constraint</strong>, not an
 application-level check-then-insert, which would race under a concurrent webhook redelivery or a

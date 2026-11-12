@@ -83,6 +83,14 @@ pub enum Operation {
     DropTable {
         table_name: String,
     },
+    CreateIndex {
+        index_name: String,
+        table_name: String,
+        columns: Vec<String>,
+    },
+    DropIndex {
+        index_name: String,
+    },
 }
 ```
 
@@ -100,6 +108,8 @@ Reversible operations can automatically generate the correct SQL for the `-- dow
 | `DropColumn` | **No** | None (data is lost, cannot be automatically reconstructed) |
 | `DropTable` | **No** | None (table columns and data are lost) |
 | `AlterColumnType` | **No** | None (reverting requires knowledge of the original type) |
+| `CreateIndex` | **Yes** | `DropIndex` |
+| `DropIndex` | **No** | None (recreating the index requires knowing its table and columns) |
 
 If a migration contains a non-reversible operation, Djangors inserts the `-- no-down` marker in the generated SQL file.
 
@@ -211,6 +221,94 @@ assert!(matches!(create.reverse(), Some(Operation::DropTable { .. })));
 `build_create_all_plan(dialect)` (also `build_create_plan_from_snapshots`) produces the
 `Vec<Operation>` plan for all registered models, topologically sorted by foreign-key dependency —
 this is what `migrate` feeds into `to_sql` and executes transactionally.
+
+---
+
+## Detecting Model Changes with `detect_changes`
+
+`detect_changes(previous, current, dialect)` diffs two sets of `ModelSnapshot` and returns the
+incremental operations needed to bring the database from `previous` to `current`. For each model
+present in `current` it emits:
+
+* **New tables** — a model that exists in `current` but not in `previous` produces a `CreateTable`.
+* **Added columns** — a field in `current` with no matching name in `previous` produces an
+  `AddColumn`.
+* **Dropped columns** — a field in `previous` with no matching name in `current` produces a
+  `DropColumn`.
+* **Changed column types** — a field present in both sets whose `kind` or `max_length` differs
+  produces an `AlterColumnType`. Because `AlterColumnType` is unsupported on SQLite, diffing on a
+  SQLite dialect surfaces an `UnsupportedOnDialect` error only when such a change is encountered.
+
+The comparison keys off **field names**, not column identity. `detect_changes` does **not** detect
+renames: renaming a column is seen as a *drop* of the old name plus an *add* of the new one, which
+are emitted as separate `DropColumn` and `AddColumn` operations.
+
+---
+
+## Index Operations
+
+Indexes declared through a model's struct-level `indexes` attribute are emitted into the generated
+plan as `CreateIndex` operations, placed after the model's `CreateTable`. Each non-empty index
+produces:
+
+```rust,illustrative
+Operation::CreateIndex {
+    index_name: "idx_item_slug".to_string(), // from the index's name
+    table_name: "app_item".to_string(),      // the model's table
+    columns: vec!["slug".to_string()],       // the index's field names
+}
+```
+
+rendered as `CREATE INDEX IF NOT EXISTS "idx_item_slug" ON "app_item" ("slug");`.
+
+`DropIndex` carries only the index name and renders as
+`DROP INDEX IF EXISTS "idx_item_slug";`. A `CreateIndex` reverses to `DropIndex`; a `DropIndex` has
+no mechanical inverse.
+
+---
+
+## Many-to-Many Join Tables
+
+A `ManyToMany` relation is not represented as a column on either model. Instead the plan emits a
+dedicated join (through) table for it, named after the Django convention:
+
+```
+{source_table}_{field_name}
+```
+
+so a `students` `ManyToMany` field on a model whose table is `app_school` produces a through table
+named `app_school_students`.
+
+The through table carries exactly two non-nullable foreign-key columns, each `NOT NULL` and
+referencing the target's primary key with `ON DELETE CASCADE`:
+
+* **Source column**: `{source_struct_name_lowercase}_id` → references `{source_table}.{source_pk}`
+* **Target column**: `{target_struct_name_lowercase}_id` → references `{target_table}.{target_pk}`
+
+For the example above the plan emits:
+
+```sql
+CREATE TABLE IF NOT EXISTS "app_school_students" (
+    "school_id" BIGINT NOT NULL REFERENCES "app_school"("id") ON DELETE CASCADE,
+    "student_id" BIGINT NOT NULL REFERENCES "app_student"("id") ON DELETE CASCADE
+);
+```
+
+The join table's own `id` column is not auto-added; the two FK columns are the only columns it
+declares.
+
+---
+
+## OneToOne and the UNIQUE Constraint
+
+A `OneToOne` relation is emitted as a plain foreign-key column like `ForeignKey`,
+**plus** a UNIQUE constraint. The plan sets `unique: true` on the FK column specifically when the
+relation kind is `OneToOne`, which is what distinguishes a one-to-one column from an ordinary
+foreign key in the generated schema:
+
+```sql
+"profile_id" BIGINT UNIQUE REFERENCES "app_user"("id") ON DELETE CASCADE
+```
 
 ---
 

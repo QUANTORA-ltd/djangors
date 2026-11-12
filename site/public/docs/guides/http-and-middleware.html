@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-208ebb8b.js";
+            window.path_to_searchindex_js = "../searchindex-ff027cc3.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-15287f60.js"></script>
+        <script src="../toc-fcdb45cd.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -522,14 +522,13 @@ assert!(err.details().is_some());
 <h3 id="custom-rendering"><a class="header" href="#custom-rendering">Custom rendering</a></h3>
 <p>By default the router renders errors as the JSON envelope <code>{"error": {status, code, message, details?}}</code>
 when the caller accepts JSON or the error is an <code>Api</code>, otherwise as a debug page (when <code>debug</code>) or a
-minimal production page. To take full control, implement the <code>ErrorRenderer</code> trait and register an
-<code>Arc&lt;dyn ErrorRenderer&gt;</code> as router state; there is a ready-made <code>JsonErrorRenderer</code>:</p>
+minimal production page. To take full control, implement the <code>ErrorRenderer</code> trait and register it with
+<code>Router::set_error_renderer(renderer)</code>; there is a ready-made <code>JsonErrorRenderer</code>:</p>
 <pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>use djangors_core::{DjangorsError, Request};
 use djangors_core::error::{ErrorRenderer, JsonErrorRenderer};
 use djangors_core::Response;
-use std::sync::Arc;
 
 #[derive(Clone)]
 struct MyErrorRenderer; // render every error as JSON, e.g. for a pure API
@@ -541,14 +540,74 @@ impl ErrorRenderer for MyErrorRenderer {
 }
 
 fn configure(router: djangors_core::Router) -&gt; djangors_core::Router {
-    router.with_state(Arc::new(MyErrorRenderer) as Arc&lt;dyn ErrorRenderer&gt;)
+    router.set_error_renderer(MyErrorRenderer)
 }
 <span class="boring">}</span></code></pre>
-<blockquote class="blockquote-tag blockquote-tag-note">
-<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
-<p>The renderer is looked up from <strong>state</strong>, so it is configured exactly like the database pool:
-<code>.with_state(Arc::new(...) as Arc&lt;dyn ErrorRenderer&gt;)</code>.</p>
-</blockquote>
+<p><code>set_error_renderer</code> is the ergonomic equivalent of the manual cast form:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>Router::new().with_state(Arc::new(MyRenderer) as Arc&lt;dyn ErrorRenderer&gt;)
+<span class="boring">}</span></code></pre>
+<p>The helper exists because the <code>as Arc&lt;dyn ErrorRenderer&gt;</code> cast is easy to omit, and
+<code>with_state(Arc::new(MyRenderer))</code> compiles perfectly well while storing the value under its
+concrete type — where the renderer lookup never finds it. The custom renderer is then silently
+ignored, with no error at compile time or run time. That silent-failure mode is exactly what
+<code>set_error_renderer</code> removes: it always performs the trait-object cast for you.</p>
+<h3 id="standard-problem-details-rfc-9457"><a class="header" href="#standard-problem-details-rfc-9457">Standard problem details (RFC 9457)</a></h3>
+<p>Djangors can also send errors in the standard format from
+<a href="https://www.rfc-editor.org/rfc/rfc9457">RFC 9457</a>, with the <code>application/problem+json</code>
+content type. Many API clients and gateways already understand this format, and the
+<a href="code-generation.html#dj-openapi-and-the-typescript-client">generated TypeScript client</a>
+turns it into a typed <code>ProblemDetailsError</code>.</p>
+<p>You don’t have to configure anything for clients that ask for it: when a request’s
+<code>Accept</code> header includes <code>application/problem+json</code>, the default renderer answers in that
+format. To use it for every error response, register <code>ProblemDetailsRenderer</code>:</p>
+<pre class="playground"><code class="language-rust compile"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_core::{ProblemDetailsRenderer, Router};
+
+fn configure(router: Router) -&gt; Router {
+    router.set_error_renderer(ProblemDetailsRenderer::new())
+    // Or with your own documentation URLs for `type`:
+    // router.set_error_renderer(ProblemDetailsRenderer::with_type_prefix("https://api.example.com/problems/"))
+}
+<span class="boring">}</span></code></pre>
+<p>The <code>seat_taken</code> error from the example above, raised while handling <code>/flights/DL404/seats</code>,
+renders as:</p>
+<pre><code class="language-json">{
+  "type": "urn:djangors:error:seat_taken",
+  "title": "Conflict",
+  "status": 409,
+  "code": "seat_taken",
+  "detail": "That seat is already booked",
+  "instance": "/flights/DL404/seats",
+  "errors": { "seat": "12A", "flight": "DL404" },
+  "details": { "seat": "12A", "flight": "DL404" }
+}
+</code></pre>
+<p><code>errors</code> and <code>details</code> carry the same data: <code>errors</code> is what problem-details clients look
+for, and <code>details</code> matches the default Djangors JSON envelope.</p>
+<p>Validation and login failures convert into the same shape with <code>?</code>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Error</th><th>Status</th><th><code>code</code></th></tr>
+</thead>
+<tbody>
+<tr><td><code>djangors_forms::FormErrors</code></td><td>422</td><td><code>validation_error</code>, with the field errors in <code>errors</code></td></tr>
+<tr><td><code>AuthError::RateLimited</code></td><td>429</td><td><code>rate_limited</code></td></tr>
+<tr><td><code>AuthError::AccountLocked</code></td><td>429</td><td><code>account_locked</code>, with <code>retry_after_secs</code> in <code>errors</code></td></tr>
+<tr><td><code>AuthError::InvalidToken</code></td><td>401</td><td><code>invalid_token</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>To build one by hand, call <code>err.into_problem_response()</code>, or <code>err.write_problem_json(...)</code>
+to write the body into your own buffer.</p>
+<p><strong>Internal errors stay private.</strong> <code>DjangorsError::Internal</code> and panics are always rendered
+as <code>"Internal Server Error"</code> by <code>ProblemDetailsRenderer</code>, and by the JSON and problem+json
+output of the default renderer whenever <code>debug</code> is off, so the real message, which might
+contain SQL or file paths, never reaches the client. The router doesn’t log that message
+for you; record it with <code>tracing::error!</code> where you create the error if you need it later.</p>
 <h2 id="paginator-and-cursor-primitives"><a class="header" href="#paginator-and-cursor-primitives">Paginator and cursor primitives</a></h2>
 <p><a href="https://docs.rs/djangors_core/latest/djangors_core/pagination/index.html"><code>Paginator</code></a> does the offset
 math. <code>total_items</code> is clamped to ≥ 0 and <code>page_size</code> must be &gt; 0; per the admin convention, 0 items
