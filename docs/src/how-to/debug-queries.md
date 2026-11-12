@@ -32,34 +32,29 @@ The panel is behind the `debug-panel` Cargo feature, which is off by default:
 djangors = { version = "0.9", features = ["debug-panel"] }
 ```
 
-### 2. Wrap your router, in development only
+### 2. Wrap your router with settings
 
-`debug_panel_layer()` is a Tower layer. Wrap your `RouterService` with it and serve
-the result with `serve_service`:
+`DebugPanelLayer::for_settings(&settings)` enables the panel only when `settings.debug`
+is true. Wrap your `RouterService` with it and serve the result with `serve_service`:
 
 ```rust,illustrative
-use djangors_core::{debug_panel_layer, Djangors, DjangorsSettings, Router};
+use djangors_core::{DebugPanelLayer, Djangors, DjangorsSettings, Router};
 use djangors_core::router::RouterService;
 use tower::Layer;
 
 async fn serve(settings: DjangorsSettings, router: Router) -> Result<(), djangors_core::DjangorsError> {
-    let debug = settings.debug;
-    let service = RouterService::new(router.clone(), debug);
+    let panel = DebugPanelLayer::for_settings(&settings);
+    let service = RouterService::new(router.clone(), settings.debug);
     let app = Djangors::new(settings, router);
     let listener = app.bind().await?;
-
-    if debug {
-        app.serve_service(listener, debug_panel_layer().layer(service)).await
-    } else {
-        app.serve_service(listener, service).await
-    }
+    app.serve_service(listener, panel.layer(service)).await
 }
 ```
 
 > **Never enable the panel in production.** It shows the SQL text of every query to
-> whoever loads the page. The layer doesn't check the `debug` setting itself, so gate
-> it on `settings.debug` as above, or only enable the `debug-panel` feature in
-> development builds.
+> whoever loads the page. `for_settings` disables all panel headers and HTML injection
+> when `debug` is false. If an enabled panel is layered while `DJANGORS_DEBUG` is not
+> `true` or `1`, Djangors logs a warning.
 
 For JSON APIs you can keep the headers and skip the HTML toolbar with
 `DebugPanelLayer::new().with_html_injection(false)`.
