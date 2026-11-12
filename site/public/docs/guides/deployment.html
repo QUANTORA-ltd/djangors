@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-f93ad6b2.js";
+            window.path_to_searchindex_js = "../searchindex-146c955f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-ae7952e6.js"></script>
+        <script src="../toc-86e03ec5.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -194,15 +194,15 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD curl -f http://localhost:8000/healthz || exit 1
 CMD ["/app/server"]
 </code></pre>
-<h3 id="healthz-route"><a class="header" href="#healthz-route"><code>/healthz</code> Route</a></h3>
-<p>Projects include a dedicated <code>/healthz</code> endpoint returning HTTP <code>200 OK</code> for container orchestrators (Docker, Kubernetes) and load balancers:</p>
+<h3 id="healthz-and-readyz-routes"><a class="header" href="#healthz-and-readyz-routes"><code>/healthz</code> and <code>/readyz</code> Routes</a></h3>
+<p>Projects include <code>/healthz</code> (liveness) and <code>/readyz</code> (readiness) endpoints via <code>Router::health(HealthChecks::new())</code> for container orchestrators (Docker, Kubernetes) and load balancers. See <a href="../how-to/health-checks.html">How to Add Health and Readiness Checks</a> for configuring <code>DatabaseCheck</code>, <code>CacheCheck</code>, and custom checks.</p>
 <pre class="playground"><code class="language-rust compile"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span><span class="boring">use djangors_core::{Request, PathParams, Response, DjangorsError, StatusCode};
-</span>pub async fn healthz(_req: Request, _params: PathParams) -&gt; Result&lt;Response, DjangorsError&gt; {
-    Ok(Response::text(StatusCode::OK, "ok"))
-}
-<span class="boring">}</span></code></pre>
+</span><span class="boring">use djangors_core::{HealthChecks, Router};
+</span><span class="boring">fn example() -&gt; Router {
+</span>Router::new().health(HealthChecks::new())
+<span class="boring">}
+</span><span class="boring">}</span></code></pre>
 <hr>
 <h2 id="request-body-limits"><a class="header" href="#request-body-limits">Request Body Limits</a></h2>
 <p>The router refuses request bodies larger than 10 MiB with <code>413 Payload Too Large</code>. Change the
@@ -222,7 +222,7 @@ codegen-units = 1
 </code></pre>
 <p>When depending on the <code>djangors</code> facade crate, all subsystems and both database backends (<code>postgres</code> and <code>sqlite</code>) are enabled by default. To minimize compile times and binary size in production, disable default features and opt into only the database backend and subsystems your application uses:</p>
 <pre><code class="language-toml">[dependencies]
-djangors = { version = "0.11", default-features = false, features = [
+djangors = { version = "0.12", default-features = false, features = [
     "postgres",   # or "sqlite" — drops libsqlite3-sys when only "postgres" is enabled
     "migrations",
     "rest",

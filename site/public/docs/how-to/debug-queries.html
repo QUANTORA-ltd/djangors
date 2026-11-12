@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-f93ad6b2.js";
+            window.path_to_searchindex_js = "../searchindex-146c955f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-ae7952e6.js"></script>
+        <script src="../toc-86e03ec5.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -208,7 +208,7 @@ its timing and a warning for each repeated one.</p>
 <h3 id="1-enable-the-feature"><a class="header" href="#1-enable-the-feature">1. Enable the feature</a></h3>
 <p>The panel is behind the <code>debug-panel</code> Cargo feature, which is off by default:</p>
 <pre><code class="language-toml">[dependencies]
-djangors = { version = "0.11", features = ["debug-panel"] }
+djangors = { version = "0.12", features = ["debug-panel"] }
 </code></pre>
 <h3 id="2-wrap-your-router-with-settings"><a class="header" href="#2-wrap-your-router-with-settings">2. Wrap your router with settings</a></h3>
 <p><code>DebugPanelLayer::for_settings(&amp;settings)</code> enables the panel only when <code>settings.debug</code>

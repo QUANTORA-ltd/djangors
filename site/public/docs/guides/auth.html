@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-f93ad6b2.js";
+            window.path_to_searchindex_js = "../searchindex-146c955f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-ae7952e6.js"></script>
+        <script src="../toc-86e03ec5.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -428,9 +428,33 @@ the cause rather than string-matching:</p>
 <tr><td><code>AuthError::AccountLocked { retry_after_secs }</code></td><td><code>PersistentLockoutBackend</code> rejected with a locked account</td></tr>
 <tr><td><code>AuthError::InvalidToken</code></td><td>Reset token missing, malformed, or expired</td></tr>
 <tr><td><code>AuthError::Mail</code></td><td><code>request_password_reset</code> failed to send</td></tr>
+<tr><td><code>AuthError::WeakPassword(Vec&lt;String&gt;)</code></td><td>New password failed one or more password validators</td></tr>
 </tbody>
 </table>
 </div>
+<h2 id="password-validation"><a class="header" href="#password-validation">Password validation</a></h2>
+<p><code>djangors-auth</code> ships four built-in <code>PasswordValidator</code> implementations:</p>
+<ul>
+<li><code>MinimumLength(8)</code> — requires at least 8 characters.</li>
+<li><code>NumericPassword</code> — rejects passwords made only of digits.</li>
+<li><code>UserAttributeSimilarity</code> — rejects passwords containing the username or email local-part (or their reverse) for parts of 3+ characters.</li>
+<li><code>StrengthValidator</code> (enabled by the default <code>password-strength</code> feature, powered by <code>zxcvbn</code>) — requires a strength score of at least 3 out of 4 and catches common passwords.</li>
+</ul>
+<p>Validate a password with <code>default_validators()</code> and <code>validate_password</code>, which collects <strong>every</strong> failing rule rather than stopping at the first:</p>
+<pre class="playground"><code class="language-rust compile"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span><span class="boring">use djangors_auth::{default_validators, validate_password, UserAttributes};
+</span><span class="boring">fn example() {
+</span>let attrs = UserAttributes::new("alice", "alice@example.com");
+let validators = default_validators();
+if let Err(messages) = validate_password("1234", Some(&amp;attrs), &amp;validators) {
+    for msg in messages {
+        eprintln!("{msg}");
+    }
+}
+<span class="boring">}
+</span><span class="boring">}</span></code></pre>
+<p><code>confirm_password_reset</code> runs <code>default_validators()</code> automatically before hashing and returns <code>AuthError::WeakPassword</code> if any rule fails. <code>dj createsuperuser</code> also validates the password unless <code>--skip-validation</code> is passed.</p>
 
                     </main>
 

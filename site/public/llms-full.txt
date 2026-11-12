@@ -37,7 +37,7 @@ good enough.
 contrib batteries, a REST framework, WebSockets/SSE, background tasks, payments, multi-tenancy) is
 built and tested; see [`PLAN.md`](PLAN.md) for the full phase-by-phase roadmap and what's done vs.
 remaining. All 32 crates are published on
-[crates.io](https://crates.io/search?q=djangors) at `0.11.0`, including the full contrib battery:
+[crates.io](https://crates.io/search?q=djangors) at `0.12.0`, including the full contrib battery:
 PDF generation, deployment, payments, multi-tenancy, sitemaps, RSS/Atom syndication, flat pages,
 redirects, flash messages, object-level permissions, TOTP/2FA, and content types / generic FKs.
 
@@ -282,6 +282,12 @@ Dual-licensed under `MIT OR Apache-2.0`. See [`LICENSE-MIT`](LICENSE-MIT) and
 - [How to Use htmx](how-to/htmx.md)
 - [How to Make Payments and Other POSTs Safe to Retry](how-to/idempotency.md)
 - [How to Export Traces with OpenTelemetry](how-to/opentelemetry.md)
+- [How to Authenticate Machines with API Keys](how-to/api-keys.md)
+- [How to Version an API](how-to/api-versioning.md)
+- [How to Add Health and Readiness Checks](how-to/health-checks.md)
+- [How to Make External Calls Resilient](how-to/resilience.md)
+- [How to Use Distributed Locks](how-to/distributed-locks.md)
+- [How to Send Events Reliably](how-to/outbox.md)
 - [How to Internationalize Templates](how-to/i18n-templates.md)
 
 
@@ -2593,6 +2599,33 @@ the cause rather than string-matching:
 | `AuthError::AccountLocked { retry_after_secs }` | `PersistentLockoutBackend` rejected with a locked account |
 | `AuthError::InvalidToken` | Reset token missing, malformed, or expired |
 | `AuthError::Mail` | `request_password_reset` failed to send |
+| `AuthError::WeakPassword(Vec<String>)` | New password failed one or more password validators |
+
+## Password validation
+
+`djangors-auth` ships four built-in `PasswordValidator` implementations:
+
+- `MinimumLength(8)` — requires at least 8 characters.
+- `NumericPassword` — rejects passwords made only of digits.
+- `UserAttributeSimilarity` — rejects passwords containing the username or email local-part (or their reverse) for parts of 3+ characters.
+- `StrengthValidator` (enabled by the default `password-strength` feature, powered by `zxcvbn`) — requires a strength score of at least 3 out of 4 and catches common passwords.
+
+Validate a password with `default_validators()` and `validate_password`, which collects **every** failing rule rather than stopping at the first:
+
+```rust,compile
+# use djangors_auth::{default_validators, validate_password, UserAttributes};
+# fn example() {
+let attrs = UserAttributes::new("alice", "alice@example.com");
+let validators = default_validators();
+if let Err(messages) = validate_password("1234", Some(&attrs), &validators) {
+    for msg in messages {
+        eprintln!("{msg}");
+    }
+}
+# }
+```
+
+`confirm_password_reset` runs `default_validators()` automatically before hashing and returns `AuthError::WeakPassword` if any rule fails. `dj createsuperuser` also validates the password unless `--skip-validation` is passed.
 
 
 <!-- docs/src/guides/caching.md -->
@@ -3198,11 +3231,11 @@ At compile time, `djangors-db` (and the `djangors` facade crate) gate each SQL d
 
 ```toml
 # PostgreSQL-only build (drops sqlx-sqlite and libsqlite3-sys)
-djangors = { version = "0.11", default-features = false, features = ["postgres", "rest"] }
+djangors = { version = "0.12", default-features = false, features = ["postgres", "rest"] }
 
 # Or when depending on djangors-db / djangors-orm directly:
-djangors-db = { version = "0.11", default-features = false, features = ["postgres"] }
-djangors-orm = { version = "0.11", default-features = false, features = ["postgres"] }
+djangors-db = { version = "0.12", default-features = false, features = ["postgres"] }
+djangors-orm = { version = "0.12", default-features = false, features = ["postgres"] }
 ```
 
 > [!NOTE]
@@ -3521,14 +3554,14 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 CMD ["/app/server"]
 ```
 
-### `/healthz` Route
-Projects include a dedicated `/healthz` endpoint returning HTTP `200 OK` for container orchestrators (Docker, Kubernetes) and load balancers:
+### `/healthz` and `/readyz` Routes
+Projects include `/healthz` (liveness) and `/readyz` (readiness) endpoints via `Router::health(HealthChecks::new())` for container orchestrators (Docker, Kubernetes) and load balancers. See [How to Add Health and Readiness Checks](../how-to/health-checks.md) for configuring `DatabaseCheck`, `CacheCheck`, and custom checks.
 
 ```rust,compile
-# use djangors_core::{Request, PathParams, Response, DjangorsError, StatusCode};
-pub async fn healthz(_req: Request, _params: PathParams) -> Result<Response, DjangorsError> {
-    Ok(Response::text(StatusCode::OK, "ok"))
-}
+# use djangors_core::{HealthChecks, Router};
+# fn example() -> Router {
+Router::new().health(HealthChecks::new())
+# }
 ```
 
 ---
@@ -3561,7 +3594,7 @@ When depending on the `djangors` facade crate, all subsystems and both database 
 
 ```toml
 [dependencies]
-djangors = { version = "0.11", default-features = false, features = [
+djangors = { version = "0.12", default-features = false, features = [
     "postgres",   # or "sqlite" — drops libsqlite3-sys when only "postgres" is enabled
     "migrations",
     "rest",
@@ -6723,7 +6756,7 @@ Djangors implements the server side of WebAuthn (the *relying party*) in pure Ru
 without OpenSSL. Enable it with the `passkeys` feature:
 
 ```toml
-djangors = { version = "0.11", features = ["passkeys"] }
+djangors = { version = "0.12", features = ["passkeys"] }
 ```
 
 ## What is supported
@@ -8451,6 +8484,41 @@ generally can't read arbitrary application-owned paths. Scanning in-memory bytes
 the check can happen before anything touches disk at all. This requires a real `clamd` daemon
 already running and reachable; nothing in this module starts one for you.
 
+---
+
+## CORS
+
+To let browser front ends on another origin call your API, configure `CorsConfig` and build a
+Tower layer with `cors_layer(&config)`.
+
+```rust,compile
+# use djangors_core::middleware::{cors_layer, csrf_layer, CorsConfig};
+# use djangors_core::{DjangorsError, Router};
+# use tower::ServiceBuilder;
+# fn example(settings: &djangors_core::DjangorsSettings, router: Router) -> Result<(), DjangorsError> {
+// Origins come from `cors_allowed_origins` in djangors.toml or
+// DJANGORS_CORS_ALLOWED_ORIGINS=https://app.example.com,https://admin.example.com
+let cors = cors_layer(&CorsConfig::from_settings(settings).allow_credentials(true))?;
+
+let service = ServiceBuilder::new()
+    .layer(cors)
+    .layer(csrf_layer())
+    .service(router);
+# let _ = service;
+# Ok(())
+# }
+```
+
+Each origin is `scheme://host[:port]` exactly as browsers send it, with no path or trailing
+slash; `cors_layer` returns an error for anything else. With `allow_credentials(true)`, cookies
+are sent cross-origin, so state-changing requests still go through CSRF: the front end must send
+the `X-CSRFToken` header.
+
+Always place `cors_layer` **outside** `csrf_layer()` so preflight `OPTIONS` requests are answered
+before CSRF checks run. `cors_layer` rejects `"*"` combined with `allow_credentials(true)` because
+browsers forbid wildcard origins with credentials, and `dj check --deploy` warns if
+`cors_allowed_origins` contains `"*"` when `debug` is `false`.
+
 
 <!-- docs/src/guides/sessions.md -->
 
@@ -8746,6 +8814,7 @@ environment variable when the settings are loaded with `DjangorsSettings::from_e
 | `host` | `DJANGORS_HOST` | `127.0.0.1` |
 | `port` | `DJANGORS_PORT` | `8000` |
 | `max_body_bytes` | `DJANGORS_MAX_BODY_BYTES` | `10485760` (10 MiB) |
+| `cors_allowed_origins` | `DJANGORS_CORS_ALLOWED_ORIGINS` | empty |
 
 `max_body_bytes` is the largest request body the router will read. See
 [Request size limit](http-and-middleware.md#request-size-limit).
@@ -10407,6 +10476,197 @@ There's nothing to configure. In production nothing sets `DJANGORS_LIVERELOAD_PO
 so no script is added.
 
 
+<!-- docs/src/how-to/api-keys.md -->
+
+# How to Authenticate Machines with API Keys
+
+API keys let background workers, CLIs, and partner services authenticate without a user account or session cookie. Each key has the form `<prefix>.<secret>`: the 8-character `prefix` is stored in plaintext for lookup, while only the SHA-256 hash of `secret` is stored in the database.
+
+## Creating the table and issuing a key
+
+Create the `djangors_rest_apikey` table at startup (or via migrations), then call `create_api_key`. The full key string is returned once and cannot be recovered later.
+
+```rust,compile
+# use djangors_rest::{create_api_key, create_api_key_table};
+# async fn example(db: &djangors_db::Database) -> Result<(), Box<dyn std::error::Error>> {
+create_api_key_table(db).await?;
+
+let (record, full_key) = create_api_key(
+    db,
+    "billing-worker",
+    &["invoices:read", "invoices:write"],
+    None,
+)
+.await?;
+
+println!("Key prefix: {}", record.prefix);
+println!("Give this secret to the client once: {full_key}");
+# Ok(())
+# }
+```
+
+## Sending and verifying a key
+
+Clients can pass the key in either header:
+
+- `X-Api-Key: <prefix>.<secret>`
+- `Authorization: Api-Key <prefix>.<secret>`
+
+Use the `ApiKeyAuth` extractor in handlers to require a valid, non-revoked, non-expired key:
+
+```rust,compile
+# use djangors_rest::ApiKeyAuth;
+# use djangors_core::extract::FromRequest;
+# use djangors_core::{DjangorsError, Request, Response, StatusCode};
+async fn ingest_event(req: Request) -> Result<Response, DjangorsError> {
+    let ApiKeyAuth(key) = ApiKeyAuth::from_request(&req).await?;
+    Ok(Response::text(StatusCode::OK, &format!("authenticated as {}", key.name)))
+}
+```
+
+Every failed check (missing header, unknown prefix, wrong secret, revoked key, or expired key) returns `401 Unauthorized` with `"invalid API key"` so callers cannot probe which check failed. On success, `last_used_at` is updated.
+
+## Checking scopes
+
+Scopes are space-separated strings stored on `ApiKey::scopes`. Check them directly with `key.has_scope("invoices:write")` or enforce them on routes using `HasApiKey` and `HasApiKeyScope`:
+
+```rust,compile
+# use djangors_rest::{HasApiKey, HasApiKeyScope, IsAuthenticated, PermissionExt};
+# fn example() {
+let any_key = HasApiKey;
+let write_scope = HasApiKeyScope("invoices:write");
+let user_or_key = IsAuthenticated.or(HasApiKey);
+# let _ = (any_key, write_scope, user_or_key);
+# }
+```
+
+## Revoking a key
+
+Revoke a key by its prefix with `revoke_api_key`:
+
+```rust,compile
+# use djangors_rest::revoke_api_key;
+# async fn example(db: &djangors_db::Database) -> Result<(), djangors_orm::OrmError> {
+let revoked = revoke_api_key(db, "aB3dE7gH").await?;
+# let _ = revoked;
+# Ok(())
+# }
+```
+
+## Admin and OpenAPI
+
+Enable the `admin` feature on `djangors-rest` and call `djangors_rest::register_admin(&site)` to manage and revoke keys in the admin UI.
+
+To document the `X-Api-Key` header in your OpenAPI 3.1 schema, call `.api_key_security()` on `OpenApiBuilder`:
+
+```rust,compile
+# use djangors_rest::OpenApiBuilder;
+# fn example() {
+let mut builder = OpenApiBuilder::new("My API", "1.0.0");
+builder.api_key_security();
+let spec = builder.build();
+# let _ = spec;
+# }
+```
+
+
+<!-- docs/src/how-to/api-versioning.md -->
+
+# How to Version an API
+
+Djangors supports URL-prefix, header, and media-type API versioning, along with deprecation headers and per-version OpenAPI schemas.
+
+## Configuring `Versioning` and `ApiVersion`
+
+Register a `Versioning` configuration in router state with `Router::with_state`, then extract `ApiVersion` in handlers:
+
+```rust,compile
+# use djangors_core::extract::FromRequest;
+# use djangors_core::{ApiVersion, DjangorsError, PathParams, Request, Response, Router, StatusCode, VersionSource, Versioning};
+async fn list_books(req: Request, _params: PathParams) -> Result<Response, DjangorsError> {
+    let ApiVersion(version) = ApiVersion::from_request(&req).await?;
+    Ok(Response::text(StatusCode::OK, &format!("books API v{version}")))
+}
+
+# fn example() -> Router {
+let versioning = Versioning::new(VersionSource::Header("X-Api-Version"))
+    .default_version("1")
+    .supported(["1", "2"]);
+
+Router::new()
+    .with_state(versioning)
+    .get("/books", list_books)
+# }
+```
+
+The three `VersionSource` strategies are:
+
+- `VersionSource::UrlPrefix` — reads the first path segment (e.g. `/v2/books` -> `"2"`).
+- `VersionSource::Header("X-Api-Version")` — reads the named request header.
+- `VersionSource::MediaType("version")` — reads the named parameter from the `Accept` header (e.g. `Accept: application/json; version=2`).
+
+If the version is missing and `default_version` is `None`, or if the version is not in `supported`, `ApiVersion` returns `400 Bad Request` with error code `unsupported_version` (rendered as RFC 9457 `application/problem+json` when `ProblemDetailsRenderer` is configured).
+
+## URL-prefix routing with `Router::mount`
+
+For URL-prefix versioning, mount one sub-router per version:
+
+```rust,compile
+# use djangors_core::{DjangorsError, PathParams, Request, Response, Router, StatusCode};
+# async fn v1_books(_req: Request, _params: PathParams) -> Result<Response, DjangorsError> {
+#     Ok(Response::text(StatusCode::OK, "v1"))
+# }
+# async fn v2_books(_req: Request, _params: PathParams) -> Result<Response, DjangorsError> {
+#     Ok(Response::text(StatusCode::OK, "v2"))
+# }
+# fn example() -> Router {
+let v1 = Router::new().get("/books", v1_books);
+let v2 = Router::new().get("/books", v2_books);
+
+Router::new()
+    .mount("/v1", v1)
+    .mount("/v2", v2)
+# }
+```
+
+## Deprecation and Sunset headers
+
+Mark older versions with `.deprecate(version, sunset)` and wrap your service with `DeprecationLayer`:
+
+```rust,compile
+# use djangors_core::{DeprecationLayer, Router, VersionSource, Versioning};
+# use tower::ServiceBuilder;
+# fn example(router: Router) {
+let versioning = Versioning::new(VersionSource::Header("X-Api-Version"))
+    .supported(["1", "2"])
+    .deprecate("1", Some("Wed, 11 Nov 2026 11:11:11 GMT"));
+
+let service = ServiceBuilder::new()
+    .layer(DeprecationLayer::new(versioning))
+    .service(router);
+# let _ = service;
+# }
+```
+
+Responses for deprecated versions automatically receive `Deprecation: true` and, when a sunset date is set, `Sunset: <http-date>`.
+
+## Building one OpenAPI spec per version
+
+Use `OpenApiBuilder::version` to generate a separate OpenAPI 3.1 specification for each API version:
+
+```rust,compile
+# use djangors_rest::OpenApiBuilder;
+# fn example() {
+let mut v1_spec = OpenApiBuilder::new("Books API", "1.0.0");
+v1_spec.version("1.0.0");
+
+let mut v2_spec = OpenApiBuilder::new("Books API", "2.0.0");
+v2_spec.version("2.0.0");
+# let _ = (v1_spec.build(), v2_spec.build());
+# }
+```
+
+
 <!-- docs/src/how-to/background-tasks.md -->
 
 # How to Execute Background Tasks
@@ -10626,7 +10886,7 @@ The panel is behind the `debug-panel` Cargo feature, which is off by default:
 
 ```toml
 [dependencies]
-djangors = { version = "0.11", features = ["debug-panel"] }
+djangors = { version = "0.12", features = ["debug-panel"] }
 ```
 
 ### 2. Wrap your router with settings
@@ -10694,6 +10954,125 @@ async fn check_query_budget(db: &Database) {
 `duration_micros`), `total_duration_micros`, and `duplicates` (each with its `sql`,
 `count`, and `total_duration_micros`). Outside `with_query_log`, recording costs
 almost nothing: one task-local lookup per query.
+
+
+<!-- docs/src/how-to/distributed-locks.md -->
+
+# How to Use Distributed Locks
+
+Distributed locks ensure that only one worker or request handler mutates a resource or runs a critical job at a time.
+
+## Database advisory locks (`djangors-db`)
+
+`with_lock` (non-blocking) and `with_lock_wait` (blocking) run a closure inside a database transaction while holding a lock for a string key:
+
+```rust,compile
+# use djangors_db::{with_lock, Database, DbError};
+# async fn example(db: &Database) -> Result<(), DbError> {
+let result = with_lock(db, "billing:invoice:42", |_conn| {
+    Box::pin(async move {
+        // Perform exclusive work inside the transaction.
+        Ok::<_, DbError>("charged")
+    })
+})
+.await?;
+
+match result {
+    Some(value) => println!("acquired lock: {value}"),
+    None => println!("another instance already holds the lock"),
+}
+# Ok(())
+# }
+```
+
+- **PostgreSQL**: hashes the key (first 8 bytes of SHA-256 as a big-endian `i64`) and calls `pg_try_advisory_xact_lock` (or `pg_advisory_xact_lock` for `with_lock_wait`) inside `transaction_conn`. The lock is released automatically when the transaction commits or rolls back, so it never leaks onto a pooled connection.
+- **SQLite**: uses a process-wide per-key `tokio::sync::Mutex` around `transaction_conn`. This covers all concurrent tasks in the single-process SQLite deployment.
+
+## Redis locks (`djangors-cache`, `redis` feature)
+
+When your lock does not span a database transaction—or when you use SQLite across multiple processes or want an explicit TTL—use `RedisLock`:
+
+```rust,illustrative
+use std::time::Duration;
+use djangors_cache::RedisLock;
+
+async fn run_exclusive(client: &redis::Client) -> Result<(), djangors_cache::CacheError> {
+    let Some(guard) = RedisLock::acquire(client, "lock:nightly-export", Duration::from_secs(60)).await? else {
+        return Ok(());
+    };
+
+    // Do the work...
+    let _released = guard.release().await?;
+    Ok(())
+}
+```
+
+`RedisLock::acquire` runs `SET key token NX PX ttl` with a random token, and `guard.release()` runs a Lua script that deletes the key only if its value still matches that token. Always choose a `ttl` that **exceeds** the maximum expected work time; otherwise the lock can expire before the work finishes and another instance can acquire it.
+
+
+<!-- docs/src/how-to/health-checks.md -->
+
+# How to Add Health and Readiness Checks
+
+Load balancers and orchestrators like Kubernetes distinguish between **liveness** (`/healthz` — is the process alive?) and **readiness** (`/readyz` — can it reach its dependencies?).
+
+## Registering `/healthz` and `/readyz`
+
+Call `.health(checks)` on `Router`:
+
+```rust,compile
+# use std::sync::Arc;
+# use std::time::Duration;
+# use djangors_core::{DatabaseCheck, HealthChecks, Router};
+# fn example(db: djangors_db::Database) -> Router {
+let checks = HealthChecks::new()
+    .timeout(Duration::from_secs(3))
+    .with(DatabaseCheck::new(db));
+
+Router::new().health(checks)
+# }
+```
+
+- `GET /healthz` returns `200 OK` with `{"status":"ok"}` without running any checks.
+- `GET /readyz` runs all registered checks concurrently, each with the configured timeout (3 seconds by default).
+  - If all pass: `200 OK` with `{"status":"ok","checks":{"database":"ok"}}`.
+  - If any fail or time out: `503 Service Unavailable` with `"status":"error"` and the failing check's message (or `"timed out"`).
+- Both endpoints set `Cache-Control: no-store`.
+
+## Checking a cache backend
+
+With the `cache` feature enabled (on by default), `CacheCheck` verifies a `djangors_cache::Cache` by writing, reading, and deleting a random key with a 5-second TTL:
+
+```rust,compile
+# use std::sync::Arc;
+# use djangors_core::{CacheCheck, HealthChecks, Router};
+# fn example(cache: Arc<djangors_cache::InMemoryCache>) -> Router {
+let checks = HealthChecks::new().with(CacheCheck::new(cache));
+Router::new().health(checks)
+# }
+```
+
+## Writing a custom check
+
+Implement `HealthCheck` for any dependency (external API, message broker, disk space):
+
+```rust,compile
+# use djangors_core::HealthCheck;
+struct PaymentGatewayCheck;
+
+#[async_trait::async_trait]
+impl HealthCheck for PaymentGatewayCheck {
+    fn name(&self) -> &str {
+        "payment_gateway"
+    }
+
+    async fn check(&self) -> Result<(), String> {
+        Ok(())
+    }
+}
+```
+
+Keep error strings short and avoid including connection strings or credentials.
 
 
 <!-- docs/src/how-to/htmx.md -->
@@ -10943,7 +11322,7 @@ Turn on `otel` on the facade crate:
 
 ```toml
 [dependencies]
-djangors = { version = "0.11", features = ["otel"] }
+djangors = { version = "0.12", features = ["otel"] }
 ```
 
 If you depend on `djangors-core` directly, enable `otel` there instead.
@@ -11029,6 +11408,119 @@ them automatically.
   Call `init_otel_logging` once and keep the guard until shutdown.
 - Calling `init_otel_logging` a second time returns a guard without installing a
   second subscriber. The first call's configuration stays in effect.
+
+
+<!-- docs/src/how-to/outbox.md -->
+
+# How to Send Events Reliably
+
+When your application writes a domain record (such as an order) and enqueues a background task (such as sending a confirmation email), doing those in two separate operations can leave them out of sync if the process crashes or the database rolls back.
+
+The **transactional outbox** pattern solves this by inserting the `QueuedTask` row inside the **same** database transaction as the domain write. If the transaction rolls back, neither the domain change nor the task is persisted; if it commits, the worker is guaranteed to see the task.
+
+## Enqueuing inside `transaction_conn`
+
+Use `enqueue_in` (or `enqueue_scheduled_in`) with the `&mut Conn<'_>` provided by `Database::transaction_conn`:
+
+```rust,compile
+# use djangors_db::{BindValue, Database, DbError, DbExecutor};
+# use djangors_tasks::enqueue_in;
+# async fn place_order(db: &Database, order_id: i64, email: &str) -> Result<i64, DbError> {
+let email = email.to_string();
+let task_id = db
+    .transaction_conn(|conn| {
+        Box::pin(async move {
+            let p1 = conn.dialect().placeholder(1);
+            let sql = format!("INSERT INTO orders (id) VALUES ({p1})");
+            conn.execute(&sql, &[BindValue::I64(order_id)])
+                .await
+                .map_err(DbError::QueryFailed)?;
+
+            let id = enqueue_in(
+                conn,
+                "send_order_confirmation",
+                &serde_json::json!({ "order_id": order_id, "email": email }),
+            )
+            .await
+            .map_err(|e| DbError::TransactionFailed(e.to_string()))?;
+
+            Ok::<_, DbError>(id)
+        })
+    })
+    .await?;
+
+Ok(task_id)
+# }
+```
+
+## Idempotency and at-least-once delivery
+
+Because a worker can crash after executing a task's side effect (such as sending an email or calling a webhook) but before marking the row `"completed"`, background task delivery is **at-least-once**. Design your task handlers to be **idempotent**—for example, by checking an idempotency key or recording a "sent" flag before repeating external side effects.
+
+
+<!-- docs/src/how-to/resilience.md -->
+
+# How to Make External Calls Resilient
+
+Calls to payment gateways, mailers, and third-party APIs can hang or fail transiently. `djangors_core::resilience` provides exponential-backoff retries, timeouts, and a circuit breaker.
+
+## Example: calling a payment provider
+
+Combine `CircuitBreaker`, `retry`, and `with_timeout` so a flaky gateway is retried briefly, slow calls time out, and a downed gateway trips open instead of piling up blocked tasks:
+
+```rust,compile
+# use std::time::Duration;
+# use djangors_core::{retry, with_timeout, BreakerError, CircuitBreaker, RetryPolicy};
+#[derive(Debug)]
+enum PaymentError {
+    Transient(&'static str),
+    Declined,
+}
+
+impl std::fmt::Display for PaymentError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Transient(msg) => write!(f, "transient gateway error: {msg}"),
+            Self::Declined => write!(f, "card declined"),
+        }
+    }
+}
+
+async fn charge_card(
+    breaker: &CircuitBreaker,
+    amount_cents: u64,
+) -> Result<String, BreakerError<PaymentError>> {
+    let policy = RetryPolicy::new()
+        .max_attempts(3)
+        .initial_delay(Duration::from_millis(100))
+        .max_delay(Duration::from_secs(2));
+
+    breaker
+        .call(retry(
+            &policy,
+            || async {
+                match with_timeout(Duration::from_secs(5), async {
+                    // Replace with your HTTP client call.
+                    let _ = amount_cents;
+                    Ok::<_, PaymentError>("ch_123".to_string())
+                })
+                .await
+                {
+                    Ok(res) => res,
+                    Err(_) => Err(PaymentError::Transient("request timed out")),
+                }
+            },
+            |err| matches!(err, PaymentError::Transient(_)),
+        ))
+        .await
+}
+```
+
+## Primitives
+
+- **`RetryPolicy` & `retry`** (behind the default-on `resilience` feature): retries with exponential backoff and optional jitter while `should_retry(&err)` returns `true`, logging each retry attempt and delay with `tracing::warn!`.
+- **`with_timeout`**: wraps `tokio::time::timeout` and returns `TimedOut` if the future does not complete in time.
+- **`CircuitBreaker`**: cheaply cloneable (`Arc`-backed). Opens after `failure_threshold` consecutive failures (default 5), rejects immediately with `BreakerError::Open` for `open_duration` (default 30 s), then allows `half_open_max_calls` (default 1) probe calls. Call `.state()` to inspect `CircuitState` for metrics.
 
 
 <!-- docs/src/how-to/send-email.md -->
