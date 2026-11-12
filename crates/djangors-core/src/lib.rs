@@ -4,18 +4,19 @@
 //! Provides the core [`Request`], [`Response`], [`Router`], and [`Handler`]
 //! types that form the foundation of Djangors's HTTP layer.
 //!
-//! # CSRF Protection (v1 Scope)
+//! # CSRF Protection
 //!
-//! **CRITICAL SECURITY NOTE:**
-//! CSRF middleware in v1 only validates unsafe requests (e.g. POST, PUT, PATCH, DELETE)
-//! via the `X-CSRFToken` header. It does **not** validate CSRF tokens passed inside a
-//! form body field (like Django's `csrfmiddlewaretoken`). Consequently:
-//! - **Protected:** JSON/AJAX-style requests that set the `X-CSRFToken` header.
-//! - **NOT Protected:** Classic `<form method="post">` HTML form submissions without JavaScript.
+//! [`middleware::csrf_layer`] validates unsafe requests (`POST`, `PUT`, `PATCH`, `DELETE`)
+//! using a header-first, form-body-fallback scheme:
+//! 1. **Cookie**: A `csrftoken` cookie holds the client's token.
+//! 2. **Header Check (`X-CSRFToken`)**: Checked first on all unsafe requests (ideal for JSON/AJAX/HTMX requests).
+//! 3. **Form Body Fallback (`csrfmiddlewaretoken`)**: If the `X-CSRFToken` header is absent on an
+//!    `application/x-www-form-urlencoded` `POST` request, the `Form<T>` extractor and form handlers
+//!    verify the `csrfmiddlewaretoken` hidden form field against the `csrftoken` cookie.
 //!
 //! **BREACH Defense (Future Work):**
-//! This version uses a double-submit cookie scheme. Django's BREACH-hardened masked-secret
-//! scheme is not yet implemented and is planned as future work.
+//! This version uses a constant-time double-submit cookie comparison. Django's BREACH-hardened
+//! per-request masked-secret scheme is planned as future work.
 
 extern crate self as djangors_core;
 
@@ -23,6 +24,9 @@ extern crate self as djangors_core;
 pub mod app;
 /// Django-style HTML debug and error page rendering.
 pub mod debug_page;
+/// Dev-only request and SQL query inspection panel (`debug-panel` feature).
+#[cfg(feature = "debug-panel")]
+pub mod debug_panel;
 /// Framework core error types.
 pub mod error;
 /// Request parameter extractor utilities.
@@ -40,6 +44,7 @@ pub mod pagination;
 /// Path parameter map container.
 pub mod path_params;
 /// Named, opt-in endpoint rate limiting.
+#[cfg(feature = "cache")]
 pub mod ratelimit;
 /// Request structure wrapper.
 pub mod request;
@@ -57,13 +62,21 @@ pub mod signals;
 pub mod sse;
 /// Type-map state storage container.
 pub mod state;
+/// RFC 6455 WebSocket upgrade and frame protocol (`ws` feature).
+#[cfg(feature = "ws")]
+pub mod ws;
 
 pub use app::Djangors;
-pub use error::{ApiError, ApiResultExt, DjangorsError, ErrorRenderer, JsonErrorRenderer};
+#[cfg(feature = "debug-panel")]
+pub use debug_panel::{debug_panel_layer, DebugPanelLayer, DebugPanelService};
+pub use error::{
+    ApiError, ApiResultExt, DjangorsError, ErrorRenderer, JsonErrorRenderer, ProblemDetailsRenderer,
+};
 pub use groups::{GroupHandle, Groups};
 pub use handler::{Handler, StreamingHandler};
 pub use pagination::{decode_cursor, encode_cursor, CursorError, CursorPage, Paginator};
 pub use path_params::PathParams;
+#[cfg(feature = "cache")]
 pub use ratelimit::{rate_limited, ByIp, RateLimitKey, RateLimiter};
 pub use request::Request;
 pub use response::Response;
@@ -71,6 +84,10 @@ pub use router::Router;
 pub use settings::DjangorsSettings;
 pub use sse::StreamingResponse;
 pub use state::AppState;
+#[cfg(feature = "ws")]
+pub use ws::{
+    upgrade_websocket, upgrade_websocket_with_policy, OriginPolicy, WebSocket, WsHandler, WsMessage,
+};
 
 /// Re-export of [`hyper::StatusCode`] for convenience.
 pub use hyper::StatusCode;

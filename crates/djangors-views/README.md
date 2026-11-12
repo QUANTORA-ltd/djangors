@@ -6,7 +6,7 @@ Part of [Djangors](https://github.com/Chidi09/djangors), a batteries-included we
 
 ```toml
 [dependencies]
-djangors-views = "0.6"
+djangors-views = "0.9"
 ```
 
 Provides server-rendered generic class-based views for Djangors applications. It mimics Django's class-based views with generic implementations for `ListView`, `DetailView`, `CreateView`, `UpdateView`, and `DeleteView`.

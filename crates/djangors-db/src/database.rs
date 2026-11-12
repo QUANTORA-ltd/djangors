@@ -1,10 +1,16 @@
+#[cfg(feature = "postgres")]
 use sqlx::postgres::PgPoolOptions;
+#[cfg(feature = "sqlite")]
 use sqlx::sqlite::SqlitePoolOptions;
-use sqlx::{Executor, PgConnection, PgPool, SqlitePool};
+#[cfg(feature = "sqlite")]
+use sqlx::SqlitePool;
+#[cfg(feature = "postgres")]
+use sqlx::{Executor, PgConnection, PgPool};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+#[cfg(any(feature = "postgres", feature = "sqlite"))]
 use std::time::Duration;
 
 use crate::config::DatabaseConfig;
@@ -21,6 +27,7 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 #[derive(Debug, Clone)]
 pub enum Database {
     /// PostgreSQL connection pool wrapper.
+    #[cfg(feature = "postgres")]
     Pg {
         /// Underlying SQLx PostgreSQL pool.
         pool: PgPool,
@@ -28,6 +35,7 @@ pub enum Database {
         query_count: Arc<AtomicUsize>,
     },
     /// SQLite connection pool wrapper.
+    #[cfg(feature = "sqlite")]
     Sqlite {
         /// Underlying SQLx SQLite pool.
         pool: SqlitePool,
@@ -64,49 +72,69 @@ impl Database {
         let is_sqlite = matches!(Dialect::from_url(url), Dialect::Sqlite);
 
         if is_sqlite {
-            let mut options = SqlitePoolOptions::new()
-                .max_connections(config.max_connections)
-                .min_connections(config.min_connections)
-                .acquire_timeout(Duration::from_secs(config.connect_timeout_secs));
+            #[cfg(feature = "sqlite")]
+            {
+                let mut options = SqlitePoolOptions::new()
+                    .max_connections(config.max_connections)
+                    .min_connections(config.min_connections)
+                    .acquire_timeout(Duration::from_secs(config.connect_timeout_secs));
 
-            if let Some(idle) = config.idle_timeout_secs {
-                options = options.idle_timeout(Duration::from_secs(idle));
-            }
-
-            let pool = options.connect(url).await.map_err(|e| {
-                if matches!(e, sqlx::Error::PoolTimedOut) {
-                    DbError::PoolExhausted
-                } else {
-                    DbError::ConnectionFailed(e.to_string())
+                if let Some(idle) = config.idle_timeout_secs {
+                    options = options.idle_timeout(Duration::from_secs(idle));
                 }
-            })?;
 
-            Ok(Self::Sqlite {
-                pool,
-                query_count: Arc::new(AtomicUsize::new(0)),
-            })
+                let pool = options.connect(url).await.map_err(|e| {
+                    if matches!(e, sqlx::Error::PoolTimedOut) {
+                        DbError::PoolExhausted
+                    } else {
+                        DbError::ConnectionFailed(e.to_string())
+                    }
+                })?;
+
+                Ok(Self::Sqlite {
+                    pool,
+                    query_count: Arc::new(AtomicUsize::new(0)),
+                })
+            }
+            #[cfg(not(feature = "sqlite"))]
+            {
+                Err(DbError::ConnectionFailed(
+                    "SQLite backend is not enabled (enable the `sqlite` feature on `djangors-db`)"
+                        .to_string(),
+                ))
+            }
         } else {
-            let mut options = PgPoolOptions::new()
-                .max_connections(config.max_connections)
-                .min_connections(config.min_connections)
-                .acquire_timeout(Duration::from_secs(config.connect_timeout_secs));
+            #[cfg(feature = "postgres")]
+            {
+                let mut options = PgPoolOptions::new()
+                    .max_connections(config.max_connections)
+                    .min_connections(config.min_connections)
+                    .acquire_timeout(Duration::from_secs(config.connect_timeout_secs));
 
-            if let Some(idle) = config.idle_timeout_secs {
-                options = options.idle_timeout(Duration::from_secs(idle));
-            }
-
-            let pool = options.connect(url).await.map_err(|e| {
-                if matches!(e, sqlx::Error::PoolTimedOut) {
-                    DbError::PoolExhausted
-                } else {
-                    DbError::ConnectionFailed(e.to_string())
+                if let Some(idle) = config.idle_timeout_secs {
+                    options = options.idle_timeout(Duration::from_secs(idle));
                 }
-            })?;
 
-            Ok(Self::Pg {
-                pool,
-                query_count: Arc::new(AtomicUsize::new(0)),
-            })
+                let pool = options.connect(url).await.map_err(|e| {
+                    if matches!(e, sqlx::Error::PoolTimedOut) {
+                        DbError::PoolExhausted
+                    } else {
+                        DbError::ConnectionFailed(e.to_string())
+                    }
+                })?;
+
+                Ok(Self::Pg {
+                    pool,
+                    query_count: Arc::new(AtomicUsize::new(0)),
+                })
+            }
+            #[cfg(not(feature = "postgres"))]
+            {
+                Err(DbError::ConnectionFailed(
+                    "PostgreSQL backend is not enabled (enable the `postgres` feature on `djangors-db`)"
+                        .to_string(),
+                ))
+            }
         }
     }
 
@@ -114,9 +142,11 @@ impl Database {
     ///
     /// # Panics
     /// Panics if this `Database` handle is connected to a SQLite database.
+    #[cfg(feature = "postgres")]
     pub fn pool(&self) -> &PgPool {
         match self {
             Self::Pg { pool, .. } => pool,
+            #[cfg(feature = "sqlite")]
             Self::Sqlite { .. } => {
                 panic!("Attempted to access Postgres PgPool on a SQLite Database handle")
             }
@@ -124,9 +154,11 @@ impl Database {
     }
 
     /// Access the underlying SQLite connection pool directly if connected to SQLite.
+    #[cfg(feature = "sqlite")]
     pub fn sqlite_pool(&self) -> Option<&SqlitePool> {
         match self {
             Self::Sqlite { pool, .. } => Some(pool),
+            #[cfg(feature = "postgres")]
             Self::Pg { .. } => None,
         }
     }
@@ -134,7 +166,9 @@ impl Database {
     /// Returns a [`Conn`] execution handle for this database pool.
     pub fn conn(&self) -> Conn<'_> {
         match self {
+            #[cfg(feature = "postgres")]
             Self::Pg { pool, .. } => Conn::PgPool(pool),
+            #[cfg(feature = "sqlite")]
             Self::Sqlite { pool, .. } => Conn::SqlitePool(pool),
         }
     }
@@ -142,7 +176,9 @@ impl Database {
     /// Returns the database dialect.
     pub fn dialect(&self) -> Dialect {
         match self {
+            #[cfg(feature = "postgres")]
             Self::Pg { .. } => Dialect::Postgres,
+            #[cfg(feature = "sqlite")]
             Self::Sqlite { .. } => Dialect::Sqlite,
         }
     }
@@ -151,7 +187,9 @@ impl Database {
     #[doc(hidden)]
     pub fn record_query(&self) {
         let counter = match self {
+            #[cfg(feature = "postgres")]
             Self::Pg { query_count, .. } => query_count,
+            #[cfg(feature = "sqlite")]
             Self::Sqlite { query_count, .. } => query_count,
         };
         counter.fetch_add(1, Ordering::Relaxed);
@@ -161,7 +199,9 @@ impl Database {
     #[doc(hidden)]
     pub fn query_count(&self) -> usize {
         let counter = match self {
+            #[cfg(feature = "postgres")]
             Self::Pg { query_count, .. } => query_count,
+            #[cfg(feature = "sqlite")]
             Self::Sqlite { query_count, .. } => query_count,
         };
         counter.load(Ordering::Relaxed)
@@ -171,13 +211,16 @@ impl Database {
     #[doc(hidden)]
     pub fn reset_query_count(&self) {
         let counter = match self {
+            #[cfg(feature = "postgres")]
             Self::Pg { query_count, .. } => query_count,
+            #[cfg(feature = "sqlite")]
             Self::Sqlite { query_count, .. } => query_count,
         };
         counter.store(0, Ordering::Relaxed);
     }
 
     /// Run `f` inside a PostgreSQL database transaction.
+    #[cfg(feature = "postgres")]
     pub async fn transaction<F, T, E>(&self, f: F) -> Result<T, DbError>
     where
         F: for<'c> FnOnce(&'c mut PgConnection) -> BoxFuture<'c, Result<T, E>> + Send,
@@ -204,6 +247,7 @@ impl Database {
                     }
                 }
             }
+            #[cfg(feature = "sqlite")]
             Self::Sqlite { .. } => Err(DbError::TransactionFailed(
                 "PostgreSQL PgConnection transaction called on a SQLite Database".to_string(),
             )),
@@ -211,6 +255,7 @@ impl Database {
     }
 
     /// Run `f` inside a PostgreSQL database transaction with an explicit transaction isolation level.
+    #[cfg(feature = "postgres")]
     pub async fn transaction_with_isolation<F, T, E>(
         &self,
         level: IsolationLevel,
@@ -246,6 +291,7 @@ impl Database {
                     }
                 }
             }
+            #[cfg(feature = "sqlite")]
             Self::Sqlite { .. } => Err(DbError::TransactionFailed(
                 "PostgreSQL transaction_with_isolation called on a SQLite Database".to_string(),
             )),
@@ -260,6 +306,7 @@ impl Database {
         E: Into<DbError> + Send,
     {
         match self {
+            #[cfg(feature = "postgres")]
             Self::Pg { pool, .. } => {
                 let mut tx = pool
                     .begin()
@@ -280,6 +327,7 @@ impl Database {
                     }
                 }
             }
+            #[cfg(feature = "sqlite")]
             Self::Sqlite { pool, .. } => {
                 let mut tx = pool
                     .begin()

@@ -5,6 +5,169 @@ All notable changes to Djangors are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.9.0]
+
+New convenience features: resource generators, a TypeScript client, model factories,
+`dj inspectdb`, a dev-only query panel, WebSockets with live reload, and RFC 9457 error bodies.
+The `ws` feature is on by default; builds using `default-features = false` are unaffected.
+
+### Added
+
+- **Standard RFC 9457 (`application/problem+json`) error bodies**:
+  - `djangors_core::ProblemDetailsRenderer` and `DjangorsError::into_problem_response()` /
+    `DjangorsError::write_problem_json()` emit standard [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457)
+    `application/problem+json` error payloads (`type`, `title`, `status`, `code`, `detail`,
+    `instance`, `errors`, `details`) using the direct JSON byte writer (`write_json_str` /
+    `write_json_i64`).
+  - `DjangorsError` now implements `From<FormErrors>` (422 `validation_error` with field map) and
+    `From<AuthError>` (`rate_limited` -> 429, `account_locked` -> 429 with `retry_after_secs`,
+    `invalid_token` -> 401), unifying REST (`ValidationErrors`), form, and authentication failures
+    under a single error shape.
+  - Content negotiation automatically returns `application/problem+json` when requested via
+    `Accept: application/problem+json`.
+- **Typed TypeScript client generation (`dj openapi --typescript`)**:
+  - `djangors_rest::openapi::generate_typescript_client` and `OpenApiBuilder::to_typescript()`
+    generate TypeScript interfaces (`<Model>`, `<Model>CreateInput`, `<Model>UpdateInput`,
+    `PaginatedList<T>`), RFC 9457 `ProblemDetails` / `ProblemDetailsError`, and a zero-dependency
+    `DjangorsApiClient` class with typed `list`, `retrieve`, `create`, `update`, `partialUpdate`,
+    and `destroy` methods.
+  - `dj openapi [--typescript] [--output <path>] [--title <title>] [--api-version <ver>]` emits
+    either the OpenAPI 3.0.3 JSON spec or the full TypeScript SDK from compiled model metadata.
+- **Resource generators (`dj generate resource`)**:
+  - `dj generate resource <Name> <field:type>... [--app <app>]` scaffolds a full-stack resource module
+    (`models.rs`, `serializers.rs`, `views.rs`, `admin.rs`, `tests.rs`, `mod.rs`) and a numbered
+    reversible SQL migration (`migrations/<NNNN>_create_<table>.sql`).
+- **Database schema introspection (`dj inspectdb`)**:
+  - `dj inspectdb [--database-url <url>] [--output <path>] [--app <app>]` introspects an existing
+    PostgreSQL or SQLite database and emits ready-to-compile `#[derive(Model)]` structs with primary
+    keys, nullability (`Option<T>`), and `max_length` attributes.
+- **Model factories (`#[derive(Factory)]`)**:
+  - `djangors_macros::Factory` (re-exported by `djangors_test::Factory`) generates a `<Model>Factory`
+    builder and `Model::factory()` with monotonic sequence-backed defaults per field type, fluent
+    `.with_<field>(val)` overrides, `.build()`, `.create(&db)`, and `.create_many(&db, count)`.
+- **Dev-only request & SQL query panel (`debug-panel` feature)**:
+  - `djangors_db::with_query_log` records per-request SQL statements, parameter counts, and microsecond
+    timings via a zero-overhead task-local collector, automatically detecting duplicate N+1 queries
+    executed in a loop (`QueryStats::duplicates`).
+  - `djangors_core::debug_panel_layer()` (`DebugPanelLayer`, behind the opt-in `debug-panel` feature)
+    attaches `X-Djangors-Query-Count`, `X-Djangors-Query-Time-Us`, `X-Djangors-Request-Time-Us`, and
+    `X-Djangors-Duplicate-Queries` headers and injects a collapsible HTML query toolbar with N+1 loop
+    warnings before `</body>`.
+- **RFC 6455 WebSockets (`ws` feature) and live reload in `dj run`**:
+  - `djangors_core::ws` (`WebSocket`, `WsMessage`, `WsHandler`, `upgrade_websocket`, and
+    `Router::ws(path, handler)`) provides full-duplex RFC 6455 WebSocket upgrades and framing over
+    Hyper's HTTP upgrade mechanism.
+  - `dj run` now hosts a companion WebSocket live-reload server and injects a lightweight client
+    script into `Response::html` responses in dev mode so connected browsers automatically refresh
+    whenever Rust sources or templates rebuild.
+- **Cacheable view responses**: `Response::with_extension`, `Response::cacheable()`,
+  `Response::extensions` / `extensions_mut`, and `CacheService` is now generic over the request
+  body, so `CacheLayer` wraps `RouterService` directly.
+- **`OriginPolicy`** and `Router::ws_with_origin_policy` to allow cross-origin WebSocket
+  handshakes explicitly.
+
+### Changed
+
+- **WebSocket handshakes from another browser origin are rejected (403)** by `Router::ws` and
+  `upgrade_websocket`, preventing cross-site WebSocket hijacking with the user's cookies.
+  Handshakes must send `Sec-WebSocket-Version: 13`.
+- **Internal error text is no longer sent to JSON / problem+json clients outside debug mode.**
+  `DjangorsError::Internal` and `Panicked` render as "Internal Server Error" when `debug` is off,
+  matching the HTML production page. `ProblemDetailsRenderer` always redacts them.
+- **`DateTime<Utc>` model fields read Postgres `TIMESTAMP WITHOUT TIME ZONE` columns** (as UTC)
+  as well as `TIMESTAMPTZ`.
+- `dj generate resource` writes SQLite column types when `DATABASE_URL` is a SQLite URL and prints
+  the wiring steps (module, dependencies, routes, admin) after generating.
+- `dj inspectdb` warns on stderr for column types Djangors cannot map (json, bytea, inet, arrays,
+  intervals), no longer maps `INTERVAL` / `POINT` to `i32`, and emits `column = "..."` for column
+  names that are not valid Rust identifiers.
+
+### Fixed
+
+- WebSocket frames: fragmented messages are reassembled, unmasked client frames, invalid control
+  frames, stray continuations and unknown opcodes close the connection with status 1002, and a
+  handshake on a connection that cannot upgrade returns 400 instead of a 101 that never completes.
+- The live-reload script and debug panel are injected only into full pages (`</body>`), not HTML
+  fragments such as htmx partials.
+- Clippy on the CI toolchain (1.96) no longer fails on a lint name that only newer clippy knows.
+
+## [0.8.0]
+
+This release contains **breaking changes** (`#[non_exhaustive]` on three public structs), so per
+the pre-1.0 policy in [API Stability](docs/src/api-stability.md) it bumps the minor version.
+
+### Migrating from 0.7.0
+
+`DjangorsSettings`, `djangors_mail::Message`, and `djangors_rest::ViewSetConfig` are now
+`#[non_exhaustive]` so future fields can be added without requiring downstream struct-literal
+edits. Construct them with the provided constructors and builders:
+
+```rust
+let settings = DjangorsSettings::new()
+    .with_host("127.0.0.1")
+    .with_port(8000)
+    .with_debug(false)
+    .with_allowed_hosts(["example.com"])
+    .with_secret_key(secret_key);
+
+let message = djangors_mail::Message::new(
+    ["person@example.com"],
+    "sender@example.com",
+    "Welcome",
+    "Hello",
+)
+.cc("copy@example.com")
+.reply_to("support@example.com");
+
+static VIEW_CONFIG: djangors_rest::ViewSetConfig = djangors_rest::ViewSetConfig::new()
+    .with_filterable_fields(&["status"])
+    .with_page_size(Some(50));
+```
+
+Generated model `save`, `update`, and `delete` methods take a shared `&Database`; pass the
+database reference directly (`model.save(db).await?`). They are concrete database-backed methods,
+not generic over a transaction executor, so code that previously passed `&&Database` or a
+transaction wrapper should use the equivalent API available on that wrapper.
+
+### Added
+
+- **Facade Cargo feature flags (`djangors`)**: `crates/djangors` now exposes granular Cargo
+  feature flags (`postgres`, `sqlite`, `migrations`, `rest`, `admin`, `auth`, `forms`, `sessions`,
+  `template`, `staticfiles`, `s3`, `cache`, `mail`, `i18n`, `tasks`, `pdf`, `payments`, and
+  `tenancy`). All features remain enabled by default so existing applications compile unchanged,
+  while minimal builds (`default-features = false, features = ["postgres"]` or `["sqlite"]`)
+  drop optional subsystems cleanly.
+- **Database backend feature flags (`postgres` and `sqlite`)**: `djangors-db` and downstream
+  framework crates now gate PostgreSQL (`sqlx/postgres`) and SQLite (`sqlx/sqlite`) behind
+  `postgres` and `sqlite` Cargo features (both on by default). Building with only `postgres`
+  excludes `sqlx-sqlite` and `libsqlite3-sys` from the dependency graph; building with only
+  `sqlite` excludes `sqlx-postgres`. Compiling `djangors-db` with `--no-default-features` and
+  neither backend enabled emits a clear `compile_error!`.
+- **Optional `s3` feature on `djangors-staticfiles`** (on by default) and **optional `cache`
+  feature on `djangors-core`** (on by default, gating `djangors_core::ratelimit`).
+- **Compile-time direct JSON serialization (`fast-json-stringify` style)**:
+  - `#[derive(Model)]` generates `Model::write_json` and `Model::write_json_filtered` with
+    pre-baked static JSON key slices (`concat!`) sorted lexicographically to match `serde_json::Map`
+    key order, streaming field values directly into a `Vec<u8>` buffer via `djangors_orm::json`
+    without intermediate `Vec<(&'static str, Value)>` or `serde_json::Value` allocations.
+  - `djangors_core::Response::json_bytes(status, Vec<u8>)` constructs an `application/json`
+    response directly from pre-serialized bytes without copying.
+  - `djangors_rest` adds `serialize_to_vec`, `serialize_many_to_vec`, `Serializer::write_json`,
+    `Serializer::write_json_many`, `Serializer::to_json_bytes`, `Pagination::write_envelope`, and
+    `CursorPagination::write_envelope_with_cursor`, and wires `ViewSet` / `ScopedViewSet`
+    (`list`, `retrieve`, `create`, `update`) to stream JSON responses directly into byte buffers.
+- **Release profile in workspace and `dj new`**: Both the workspace root `Cargo.toml` and projects
+  scaffolded by `dj new` now include `[profile.release]` with `lto = "thin"`, `strip = "symbols"`,
+  and `codegen-units = 1`. Added `examples/minimal-facade` (4.00 MiB stripped release binary with
+  `default-features = false, features = ["postgres"]` vs 11.51 MiB for `examples/polls`) with a
+  6 MiB CI binary size gate on `minimal-facade` and a 14 MiB gate on `polls`.
+
+### Changed
+
+- **`djangors-mail` now uses `rustls` (`lettre/tokio1-rustls-tls`)** instead of `native-tls`,
+  unifying the entire workspace on a single TLS stack (`rustls`) with no OpenSSL/`native-tls`
+  dependency.
+
 ## [0.7.0]
 
 This release contains a **breaking change to the `ModelAdmin` trait**, made to fix a

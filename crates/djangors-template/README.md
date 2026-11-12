@@ -6,7 +6,7 @@ Part of [Djangors](https://github.com/Chidi09/djangors), a batteries-included we
 
 ```toml
 [dependencies]
-djangors-template = "0.6"
+djangors-template = "0.9"
 ```
 
 Provides MiniJinja-based template engine integration and the `render` helper for rendering HTML templates in Djangors applications, complete with automatic HTML entity escaping for XSS protection.

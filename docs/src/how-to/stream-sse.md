@@ -56,7 +56,7 @@ async fn main() -> Result<(), DjangorsError> {
 
 For fanning the same message out to many connected SSE clients (live dashboards, chat rooms,
 notification streams), `djangors-core` ships an in-process pub/sub registry,
-[`Groups`](file:///root/dev/Rango/crates/djangors-core/src/groups.rs). Unlike a per-connection
+`djangors_core::Groups` (`crates/djangors-core/src/groups.rs`). Unlike a per-connection
 stream, a `Groups` channel is a *broadcast* channel: one `send` reaches every subscriber.
 
 | Method | Signature | Notes |

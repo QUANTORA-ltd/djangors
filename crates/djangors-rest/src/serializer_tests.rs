@@ -119,3 +119,75 @@ fn field_set_predicates_cover_exclude_read_only_and_write_only() {
     assert!(!fs.is_readable("password") && fs.is_writable("password"));
     assert!(fs.is_readable("email") && fs.is_writable("email"));
 }
+
+#[test]
+fn direct_json_bytes_match_serde_representation_and_escape_special_chars() {
+    let acc = Account {
+        id: 42,
+        email: "quote\"backslash\\newline\ntab\tctrl\x07@example.com".to_string(),
+        password: "secret\"pw".to_string(),
+        is_admin: true,
+    };
+
+    let bytes = serialize_to_vec(&acc);
+    assert_eq!(bytes, serde_json::to_vec(&serialize(&acc)).unwrap());
+    let parsed: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(parsed, serialize(&acc));
+
+    let default_ser = ModelSerializer::<Account>::default();
+    let ser_bytes = default_ser.to_json_bytes(&acc);
+    assert_eq!(bytes, ser_bytes);
+
+    let filtered_ser = ModelSerializer::<Account>::new(FieldSet::all().write_only(&["password"]));
+    let filtered_bytes = filtered_ser.to_json_bytes(&acc);
+    assert_eq!(
+        filtered_bytes,
+        serde_json::to_vec(&filtered_ser.to_representation(&acc)).unwrap()
+    );
+    let filtered_parsed: serde_json::Value = serde_json::from_slice(&filtered_bytes).unwrap();
+    assert_eq!(filtered_parsed, filtered_ser.to_representation(&acc));
+    assert!(filtered_parsed.get("password").is_none());
+
+    let many_bytes = serialize_many_to_vec(&[account(), acc]);
+    let many_parsed: Vec<serde_json::Value> = serde_json::from_slice(&many_bytes).unwrap();
+    assert_eq!(many_parsed.len(), 2);
+}
+
+#[test]
+fn custom_serializer_overriding_to_representation_many_is_honored_by_write_json_many() {
+    struct ReversingSerializer;
+
+    impl Serializer<Account> for ReversingSerializer {
+        fn to_representation(&self, instance: &Account) -> serde_json::Value {
+            serde_json::json!({ "id": instance.id })
+        }
+
+        fn to_representation_many(&self, instances: &[Account]) -> Vec<serde_json::Value> {
+            instances
+                .iter()
+                .rev()
+                .map(|item| self.to_representation(item))
+                .collect()
+        }
+
+        fn to_internal_value(
+            &self,
+            _data: &serde_json::Value,
+            _partial: bool,
+        ) -> Result<Vec<(&'static str, Value)>, ValidationErrors> {
+            Ok(Vec::new())
+        }
+    }
+
+    let items = [
+        Account { id: 1, ..account() },
+        Account { id: 2, ..account() },
+    ];
+    let mut buf = Vec::new();
+    ReversingSerializer.write_json_many(&items, &mut buf);
+    let parsed: Vec<serde_json::Value> = serde_json::from_slice(&buf).unwrap();
+    assert_eq!(
+        parsed,
+        vec![serde_json::json!({"id": 2}), serde_json::json!({"id": 1})]
+    );
+}

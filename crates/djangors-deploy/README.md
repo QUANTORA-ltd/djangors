@@ -6,7 +6,7 @@ Part of [Djangors](https://github.com/Chidi09/djangors), a batteries-included we
 
 ```toml
 [dependencies]
-djangors-deploy = "0.6"
+djangors-deploy = "0.9"
 ```
 
 Provides `dj deploy` multi-provider deployment support for Djangors. It defines a `DeployProvider` trait covering provision, deploy, status, logs, and destroy operations with built-in support for Render and extensible provider implementations.

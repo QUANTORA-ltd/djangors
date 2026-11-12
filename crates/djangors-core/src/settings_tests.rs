@@ -41,6 +41,21 @@ fn test_defaults() {
 }
 
 #[test]
+fn settings_builder_sets_public_configuration() {
+    let settings = DjangorsSettings::new()
+        .with_debug(false)
+        .with_allowed_hosts(["example.com", "api.example.com"])
+        .with_secret_key("a-long-production-secret-key-value")
+        .with_host("0.0.0.0")
+        .with_port(9000);
+    assert!(!settings.debug);
+    assert_eq!(settings.allowed_hosts, ["example.com", "api.example.com"]);
+    assert_eq!(settings.secret_key, "a-long-production-secret-key-value");
+    assert_eq!(settings.host, "0.0.0.0");
+    assert_eq!(settings.port, 9000);
+}
+
+#[test]
 fn test_from_toml_str_partial() {
     let toml_content = r#"
             debug = false

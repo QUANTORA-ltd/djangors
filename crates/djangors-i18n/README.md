@@ -6,7 +6,7 @@ Part of [Djangors](https://github.com/Chidi09/djangors), a batteries-included we
 
 ```toml
 [dependencies]
-djangors-i18n = "0.6"
+djangors-i18n = "0.9"
 ```
 
 Provides runtime internationalization and locale catalog lookup for Djangors using Fluent (`.ftl`) sources. The `LocaleLayer` middleware resolves `Accept-Language` headers or session locale overrides and provides resolved locales to request extensions and template contexts.

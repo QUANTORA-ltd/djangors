@@ -6,7 +6,7 @@ Part of [Djangors](https://github.com/Chidi09/djangors), a batteries-included we
 
 ```toml
 [dependencies]
-djangors-contrib-otp = "0.6"
+djangors-contrib-otp = "0.9"
 ```
 
 Provides TOTP-based two-factor authentication primitives for Djangors applications. It handles device enrollment, secret generation, QR code provisioning URIs, and code verification before establishing authenticated sessions.

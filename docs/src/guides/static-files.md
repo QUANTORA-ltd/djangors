@@ -88,6 +88,9 @@ storage.create_bucket().await?; // BucketAlreadyOwnedByYou / BucketAlreadyExists
 Both `S3Storage` and `LocalDiskStorage` implement the same [`Storage`](#the-storage-trait) trait, so
 `collect_to` and `save_upload` work identically against local disk or an object store.
 
+> [!TIP]
+> `S3Storage` is gated behind the default-on `s3` Cargo feature on `djangors-staticfiles` (and `staticfiles-s3` on the `djangors` facade). If you only serve or collect static files to local disk, disable `s3` (`default-features = false`) to omit `rust-s3` and its HTTP/XML dependencies from your build.
+
 ---
 
 ## Production Collection (`collectstatic`)
@@ -154,7 +157,7 @@ let back: Manifest = serde_json::from_str(&json).unwrap();
 
 ## Uploading User Files (`save_upload`)
 
-[`save_upload`](file:///root/dev/Rango/crates/djangors-staticfiles/src/upload.rs) writes an uploaded
+`djangors_staticfiles::upload::save_upload` writes an uploaded
 file through any `Storage` backend under a collision-avoiding name and returns the stored path:
 
 ```rust,illustrative
@@ -198,7 +201,7 @@ async fn upload_handler(req: Request) -> Result<Response, DjangorsError> {
 
 ## Serving Static Files (`StaticFiles::serve`)
 
-[`StaticFiles::serve`](file:///root/dev/Rango/crates/djangors-staticfiles/src/serve.rs) is the async
+`StaticFiles::serve` (`crates/djangors-staticfiles/src/serve.rs`) is the async
 handler behind the dev-time serving story:
 
 ```rust,illustrative

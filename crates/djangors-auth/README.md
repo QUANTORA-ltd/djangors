@@ -6,7 +6,7 @@ Part of [Djangors](https://github.com/Chidi09/djangors), a batteries-included we
 
 ```toml
 [dependencies]
-djangors-auth = "0.6"
+djangors-auth = "0.9"
 ```
 
 Provides authentication, user management, and permissions for Djangors. It uses compile-time genericity over the `AuthUser` trait as the Rust-idiomatic equivalent of Django's `AUTH_USER_MODEL` setting, enabling customizable user identity types across applications.

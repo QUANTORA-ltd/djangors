@@ -14,4 +14,4 @@ authors.workspace = true
 
 [dependencies]
 chrono = "0.4"
-djangors-core = { path = "../djangors-core", version = "0.7.0" }
+djangors-core = { path = "../djangors-core", version = "0.9.0" }

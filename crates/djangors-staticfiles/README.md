@@ -6,7 +6,7 @@ Part of [Djangors](https://github.com/Chidi09/djangors), a batteries-included we
 
 ```toml
 [dependencies]
-djangors-staticfiles = "0.6"
+djangors-staticfiles = "0.9"
 ```
 
 Provides static file collection, content-hash cache busting, and HTTP static file serving for Djangors applications.

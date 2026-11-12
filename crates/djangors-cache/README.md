@@ -6,7 +6,7 @@ Part of [Djangors](https://github.com/Chidi09/djangors), a batteries-included we
 
 ```toml
 [dependencies]
-djangors-cache = "0.6"
+djangors-cache = "0.9"
 ```
 
 Provides raw-byte key-value caches, common storage backends, and explicitly opted-in response caching middleware. Features include the core `Cache` trait, `InMemoryCache` using Moka, `DatabaseCache` using SQL tables, `RedisCache` for distributed storage, and Tower middleware `CacheLayer` to serve and cache HTTP GET responses.

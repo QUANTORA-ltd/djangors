@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use hyper::http::header::{CONTENT_TYPE, LOCATION};
-use hyper::http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
+use hyper::http::{Extensions, HeaderMap, HeaderName, HeaderValue, StatusCode};
 use serde::Serialize;
 
 use crate::error::DjangorsError;
@@ -13,14 +13,17 @@ use crate::error::DjangorsError;
 pub struct Response {
     status: StatusCode,
     headers: HeaderMap,
+    extensions: Extensions,
     body: Bytes,
 }
 
 impl Response {
-    fn new(status: StatusCode) -> Self {
+    /// Creates an empty [`Response`] with the given HTTP status code.
+    pub fn new(status: StatusCode) -> Self {
         Response {
             status,
             headers: HeaderMap::new(),
+            extensions: Extensions::new(),
             body: Bytes::new(),
         }
     }
@@ -50,9 +53,19 @@ impl Response {
 
     /// Create an HTML response.
     ///
-    /// Sets `Content-Type: text/html; charset=utf-8`.
+    /// Sets `Content-Type: text/html; charset=utf-8`. When `DJANGORS_LIVERELOAD_PORT`
+    /// is set in the environment (by `dj run`), a small live-reload script is inserted
+    /// before `</body>`. Fragments without `</body>` (htmx partials, snippets) are left
+    /// untouched, so swapping them in never opens extra sockets.
     pub fn html(status: StatusCode, body: impl Into<String>) -> Self {
-        let s = body.into();
+        let mut s = body.into();
+        if let Some(snippet) = live_reload_snippet() {
+            if !s.contains("__djangors_livereload") {
+                if let Some(idx) = s.rfind("</body>") {
+                    s.insert_str(idx, snippet);
+                }
+            }
+        }
         let mut res = Response::new(status);
         res.headers.insert(
             CONTENT_TYPE,
@@ -62,19 +75,40 @@ impl Response {
         res
     }
 
-    /// Create a JSON response from a serializable value.
+    /// Create a JSON response from pre-serialized UTF-8 JSON bytes without copying.
     ///
-    /// Sets `Content-Type: application/json; charset=utf-8`. Returns
-    /// `DjangorsError::Internal` if serialization fails.
-    pub fn json<T: Serialize>(status: StatusCode, value: &T) -> Result<Self, DjangorsError> {
-        let s = serde_json::to_string(value).map_err(|e| DjangorsError::Internal(e.to_string()))?;
+    /// Sets `Content-Type: application/json; charset=utf-8`.
+    pub fn json_bytes(status: StatusCode, body: Vec<u8>) -> Self {
         let mut res = Response::new(status);
         res.headers.insert(
             CONTENT_TYPE,
             HeaderValue::from_static("application/json; charset=utf-8"),
         );
-        res.body = Bytes::copy_from_slice(s.as_bytes());
-        Ok(res)
+        res.body = Bytes::from(body);
+        res
+    }
+
+    /// Create an RFC 9457 Problem Details response from pre-serialized UTF-8 JSON bytes.
+    ///
+    /// Sets `Content-Type: application/problem+json; charset=utf-8`.
+    pub fn problem_json_bytes(status: StatusCode, body: Vec<u8>) -> Self {
+        let mut res = Response::new(status);
+        res.headers.insert(
+            CONTENT_TYPE,
+            HeaderValue::from_static("application/problem+json; charset=utf-8"),
+        );
+        res.body = Bytes::from(body);
+        res
+    }
+
+    /// Create a JSON response from a serializable value.
+    ///
+    /// Sets `Content-Type: application/json; charset=utf-8`. Returns
+    /// `DjangorsError::Internal` if serialization fails.
+    pub fn json<T: Serialize>(status: StatusCode, value: &T) -> Result<Self, DjangorsError> {
+        let bytes =
+            serde_json::to_vec(value).map_err(|e| DjangorsError::Internal(e.to_string()))?;
+        Ok(Self::json_bytes(status, bytes))
     }
 
     /// Create a 302 Found redirect response.
@@ -104,12 +138,35 @@ impl Response {
         self
     }
 
+    /// Attach a typed extension to this response (builder pattern).
+    ///
+    /// Extensions are preserved when converting into a `hyper::Response` via
+    /// [`Response::into_hyper`] or [`Response::into_hyper_boxed`], allowing
+    /// outer Tower middleware (such as `djangors_cache::CacheLayer` checking
+    /// for `CacheableResponse`) to inspect markers set by a view handler.
+    pub fn with_extension<T: Clone + Send + Sync + 'static>(mut self, val: T) -> Self {
+        self.extensions.insert(val);
+        self
+    }
+
+    /// Mark this response as safe to cache by `djangors_cache::CacheLayer`
+    /// (builder pattern).
+    ///
+    /// Equivalent to `.with_extension(djangors_cache::CacheableResponse)`.
+    /// Responses carrying a `Set-Cookie` header are still never cached by
+    /// `CacheLayer`.
+    #[cfg(feature = "cache")]
+    pub fn cacheable(self) -> Self {
+        self.with_extension(djangors_cache::CacheableResponse)
+    }
+
     /// Convert this response into a hyper [`Response`](hyper::Response) backed by
     /// a [`Full`](http_body_util::Full) body.
     pub fn into_hyper(self) -> hyper::Response<http_body_util::Full<Bytes>> {
         let mut res = hyper::Response::new(http_body_util::Full::new(self.body));
         *res.status_mut() = self.status;
         *res.headers_mut() = self.headers;
+        *res.extensions_mut() = self.extensions;
         res
     }
 
@@ -125,6 +182,7 @@ impl Response {
         let mut res = hyper::Response::new(full.boxed());
         *res.status_mut() = self.status;
         *res.headers_mut() = self.headers;
+        *res.extensions_mut() = self.extensions;
         res
     }
 
@@ -146,6 +204,16 @@ impl Response {
         &self.headers
     }
 
+    /// The response extensions.
+    pub fn extensions(&self) -> &Extensions {
+        &self.extensions
+    }
+
+    /// Mutable access to the response extensions.
+    pub fn extensions_mut(&mut self) -> &mut Extensions {
+        &mut self.extensions
+    }
+
     /// The response body as bytes.
     pub fn body(&self) -> &[u8] {
         &self.body
@@ -156,6 +224,27 @@ impl From<Response> for hyper::Response<http_body_util::Full<Bytes>> {
     fn from(resp: Response) -> Self {
         resp.into_hyper()
     }
+}
+
+/// The live-reload `<script>` for `dj run`, built once from `DJANGORS_LIVERELOAD_PORT`.
+fn live_reload_snippet() -> Option<&'static str> {
+    static SNIPPET: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    SNIPPET
+        .get_or_init(|| {
+            let port: u16 = std::env::var("DJANGORS_LIVERELOAD_PORT")
+                .ok()?
+                .trim()
+                .parse()
+                .ok()?;
+            Some(format!(
+                "<script id=\"__djangors_livereload\">(function(){{\
+                 var ws=new WebSocket('ws://'+location.hostname+':{port}/__djangors/live-reload');\
+                 ws.onmessage=function(e){{if(e.data==='reload')window.location.reload();}};\
+                 ws.onclose=function(){{setTimeout(function(){{window.location.reload();}},600);}};\
+                 }})();</script>"
+            ))
+        })
+        .as_deref()
 }
 
 #[cfg(test)]

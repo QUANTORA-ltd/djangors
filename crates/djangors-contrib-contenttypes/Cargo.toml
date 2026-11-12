@@ -12,10 +12,15 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[features]
+default = ["postgres", "sqlite"]
+postgres = ["djangors-db/postgres", "djangors-orm/postgres"]
+sqlite = ["djangors-db/sqlite", "djangors-orm/sqlite"]
+
 [dependencies]
-djangors-db = { path = "../djangors-db", version = "0.7.0" }
-djangors-macros = { path = "../djangors-macros", version = "0.7.0" }
-djangors-orm = { path = "../djangors-orm", version = "0.7.0" }
+djangors-db = { path = "../djangors-db", version = "0.9.0", default-features = false }
+djangors-macros = { path = "../djangors-macros", version = "0.9.0" }
+djangors-orm = { path = "../djangors-orm", version = "0.9.0", default-features = false }
 thiserror = "2.0.18"
 
 [dev-dependencies]

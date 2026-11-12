@@ -37,7 +37,7 @@ good enough.
 contrib batteries, a REST framework, real-time/SSE, background tasks, payments, multi-tenancy) is
 built and tested; see [`PLAN.md`](PLAN.md) for the full phase-by-phase roadmap and what's done vs.
 remaining. All 32 crates are published on
-[crates.io](https://crates.io/search?q=djangors) at `0.6.2`, including the full contrib battery:
+[crates.io](https://crates.io/search?q=djangors) at `0.7.0`, including the full contrib battery:
 PDF generation, deployment, payments, multi-tenancy, sitemaps, RSS/Atom syndication, flat pages,
 redirects, flash messages, object-level permissions, TOTP/2FA, and content types / generic FKs.
 
@@ -61,34 +61,36 @@ of composable pieces:
 
 | Crate | What it does |
 |---|---|
-| `djangors-core` | The HTTP kernel: `Request`/`Response`, the `Router`, middleware (CSRF, security headers, HSTS, CSP builder, host validation), sessions-adjacent state, SSE streaming, signals (framework + model lifecycle), real `multipart/form-data` file upload parsing, graceful shutdown, optional Sentry error tracking |
-| `djangors-orm` | The ORM: `QuerySet`, filter/order/aggregate expressions, model metadata, `bulk_create`, idempotent `get_or_create`/`update_or_create`, Postgres full-text search, `EXPLAIN`, and scalar DB function expressions (`COALESCE`/`LOWER`/`UPPER`/`CONCAT`/`LENGTH`) |
-| `djangors-macros` | `#[derive(Model)]` (also generates a `ModelForm` equivalent), `#[derive(Settings)]` (typed, validated app config), `#[task]`, and `#[management_command]` attribute macros; `auto_now`/`auto_now_add` timestamps, field `choices` (with DB CHECK constraints), and UUID/Date/Decimal support |
-| `djangors-db` | Connection pooling and config-driven database setup (Postgres) |
-| `djangors-migrations` | Schema migrations with real per-file history and rollback (`dj migrate --rollback`) |
-| `djangors-auth` | Users, groups, permissions, session-backed auth, password hashing, rate-limited login, persistent account lockout |
+| `djangors` | The batteries-included facade crate: re-exports every subsystem (`djangors::core`, `djangors::orm`, `djangors::rest`, etc.) and `djangors::prelude::*` behind granular Cargo feature flags (`full` by default; `default-features = false` with `postgres` or `sqlite` builds a 4.00 MiB minimal release binary) |
+| `djangors-core` | The HTTP kernel: `Request`/`Response` (including `Response::json_bytes` and `Response::cacheable`), the `Router`, middleware (CSRF with header + form-body fallback, security headers, HSTS, CSP builder, host validation), SSE streaming, broadcast `Groups`, signals (framework + model lifecycle), `multipart/form-data` file upload parsing, graceful shutdown, optional Sentry error tracking |
+| `djangors-orm` | The ORM: `QuerySet`, filter/order/aggregate expressions, model metadata, `bulk_create`, idempotent `get_or_create`/`update_or_create`, Postgres full-text search, `EXPLAIN`, scalar DB function expressions (`COALESCE`/`LOWER`/`UPPER`/`CONCAT`/`LENGTH`), and compile-time `Model::write_json` direct JSON writers |
+| `djangors-macros` | `#[derive(Model)]` (also generates a `ModelForm` equivalent and compile-time `write_json` / `write_json_filtered`), `#[derive(Settings)]` (typed, validated app config), `#[task]`, and `#[management_command]` attribute macros; `auto_now`/`auto_now_add` timestamps, field `choices` (with DB CHECK constraints), and UUID/Date/Decimal support |
+| `djangors-db` | Connection pooling, dialect-aware SQL execution (`Conn`), savepoints, and config-driven database setup for PostgreSQL and SQLite (each gated behind its own `postgres`/`sqlite` Cargo feature flag) |
+| `djangors-migrations` | Schema migrations with automatic model diffing (`detect_changes`), real per-file history, and rollback (`dj migrate --rollback`) |
+| `djangors-auth` | Users, groups, permissions, session-backed auth, Argon2 password hashing, rate-limited login, persistent DB-backed account lockout (`PersistentLockoutBackend`) |
 | `djangors-sessions` | Signed-cookie session engine |
 | `djangors-admin` | The auto-generated admin site: changelist, filters, search, bulk actions, inline editing, CSV export, audit log, object history, FK inlines, and optional tenant scoping |
 | `djangors-forms` | Form field types and validation, plus the `ModelForm` equivalent auto-derived from `#[derive(Model)]` |
 | `djangors-views` | Server-rendered generic class-based views: `ListView`/`DetailView`/`CreateView`/`UpdateView`/`DeleteView` |
 | `djangors-template` | A Django-template-flavored engine (minijinja-backed) with Django-style filters |
-| `djangors-rest` | A DRF-equivalent: generic serialization, `ViewSet`s (scoped with config via `scoped_viewset_routes_with_config`), token/JWT auth, permission classes, cursor pagination, rate limiting, OpenAPI 3.1 generation, and a `request.user()` convenience accessor |
-| `djangors-cache` | Cache trait + in-memory/database/Redis backends |
-| `djangors-mail` | Email messages with SMTP/file/in-memory backends |
+| `djangors-rest` | A DRF-equivalent: generic serialization, compile-time direct JSON streaming (`serialize_to_vec`, `serialize_many_to_vec`), `ViewSet`s (scoped with config via `scoped_viewset_routes_with_config`), token/JWT auth, permission classes, cursor pagination, rate limiting, OpenAPI 3.1 generation, and a `current_user(&req)` convenience accessor |
+| `djangors-cache` | Cache trait + in-memory/database/Redis backends and opt-in `CacheLayer` HTTP response caching |
+| `djangors-mail` | Email messages (`#[non_exhaustive]` builder) with `rustls`-backed SMTP, file, console, and in-memory backends |
 | `djangors-tasks` | A background task queue (`#[task]`, Postgres `SELECT ... FOR UPDATE SKIP LOCKED`, cron-style recurring jobs, a worker loop) |
 | `djangors-pdf` | Typed PDF generation for report cards, invoices, and receipts: headings, text, and tables with automatic page breaks |
 | `djangors-i18n` | Runtime internationalization (Fluent-backed catalogs, locale fallback chain) |
-| `djangors-staticfiles` | Static file collection and serving, a pluggable `Storage` trait (local disk, S3), optional malware/AV scanning of uploaded bytes via `clamd` |
-| `djangors-test` | In-process test client, real per-test database isolation, and a JSON fixtures loader |
-| `djangors-cli` (`dj`) | The `manage.py` equivalent: `new`, `run`, `migrate` (with rollback), `createsuperuser`, `shell` (a real `evcxr` Rust REPL), `dbshell`, `test`, `check --deploy`, and a plugin mechanism for a project's own `dj <custom-command>` |
+| `djangors-staticfiles` | Static file collection and serving, a pluggable `Storage` trait (local disk, optional `s3` feature for S3/MinIO/R2), optional malware/AV scanning of uploaded bytes via `clamd` |
+| `djangors-test` | In-process test client, real per-test database isolation on both PostgreSQL and in-memory SQLite (`TEST_BACKEND=sqlite`), and a JSON fixtures loader |
+| `djangors-cli` (`dj`) | The `manage.py` equivalent: `new` (with size-optimized `[profile.release]`), `run`, `makemigrations`, `migrate` (with rollback), `createsuperuser`, `shell` (a real `evcxr` Rust REPL), `dbshell`, `test`, `check --deploy`, and a plugin mechanism for a project's own `dj <custom-command>` |
 | `djangors-deploy` | `DeployProvider` trait for `dj deploy`. Ships a Render provider (real REST API) and an SSH/VPS provider (shells out to the system `ssh`); Railway/GCP/AWS not yet implemented |
-| `djangors-contrib-payments` | Payment provider integration (Paystack) with idempotent, DB-constraint-backed transaction recording; amounts always in integer minor units, never a float |
+| `djangors-contrib-payments` | Payment provider integrations (**Paystack** and **Bachs**) with HMAC-SHA512 webhook verification and idempotent, DB-constraint-backed transaction recording; amounts always in integer minor units, never a float |
 | `djangors-contrib-tenancy` | Multi-tenancy: a `Tenant` model, membership-verified per-request tenant resolution, and a one-line `Scoped` helper for real cross-tenant row isolation |
 | `djangors-contrib-*` | Sitemaps, RSS/Atom syndication, flat pages, redirects, flash messages, object-level permissions (guardian-style), TOTP/2FA, content types / generic foreign keys |
 
-Two full example apps exercise the framework end-to-end: `examples/polls` (the tutorial app, mirrors
-Django's own polls tutorial) and `examples/school` (an admin-heavy example proving the generic admin
-alone is enough to build a real CRUD app).
+Three example apps exercise the framework end-to-end: `examples/polls` (the tutorial app, mirrors
+Django's own polls tutorial), `examples/school` (an admin-heavy example proving the generic admin
+alone is enough to build a real CRUD app), and `examples/minimal-facade` (a minimal Postgres-only
+facade build demonstrating the 4.00 MiB release binary footprint).
 
 ## Quick start
 

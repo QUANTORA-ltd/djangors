@@ -126,21 +126,29 @@ HTTP response caching is notoriously prone to security leaks:
 
 ### Using the Cache Middleware
 
-To wire up response caching in your application:
+To wire up response caching in your application, wrap your `RouterService` in `CacheLayer` and mark cacheable responses with `.cacheable()` (or `.with_extension(CacheableResponse)`):
 
-```rust,illustrative
-use djangors::cache::{CacheLayer, CacheableResponse};
+```rust,compile
+use djangors::cache::{CacheLayer, InMemoryCache};
+use djangors::core::{DjangorsError, PathParams, Request, Response, Router, StatusCode};
+use djangors::core::router::RouterService;
 use std::sync::Arc;
 use std::time::Duration;
+use tower::ServiceBuilder;
 
-// 1. Set up the CacheLayer with your preferred cache backend
-let cache_backend = Arc::new(InMemoryCache::new(1000));
-let cache_layer = CacheLayer::new(cache_backend, Some(Duration::from_secs(300)));
+// 1. Mark specific responses as cacheable in your view handler
+async fn my_public_view(_req: Request, _params: PathParams) -> Result<Response, DjangorsError> {
+    Ok(Response::text(StatusCode::OK, "Hello, Cached World!").cacheable())
+}
 
-// 2. Mark specific responses as cacheable in your view handler
-async fn my_public_view() -> Response {
-    let mut response = Response::new("Hello, Cached World!".into());
-    response.extensions_mut().insert(CacheableResponse);
-    response
+fn wire_cache() {
+    // 2. Set up the CacheLayer with your preferred cache backend
+    let cache_backend = Arc::new(InMemoryCache::new(1000));
+    let cache_layer = CacheLayer::new(cache_backend, Some(Duration::from_secs(300)));
+
+    let router = Router::new().get("/public", my_public_view);
+    let _service: djangors::cache::CacheService<RouterService> = ServiceBuilder::new()
+        .layer(cache_layer)
+        .service(RouterService::new(router, false));
 }
 ```

@@ -122,6 +122,11 @@ path = "src/main.rs"
 djangors-core = {djangors_core_dep}
 tokio = {{ version = "1", features = ["full"] }}
 tower = {{ version = "0.5", features = ["util"] }}
+
+[profile.release]
+lto = "thin"
+strip = "symbols"
+codegen-units = 1
 "#
     );
 
@@ -375,7 +380,7 @@ pub async fn index(_req: Request, _params: PathParams) -> Result<Response, Djang
     Ok(())
 }
 
-/// Start the dev server.
+/// Start the dev server with file watching and browser live reload.
 pub fn run(port: u16) -> Result<(), String> {
     require_project_root()?;
     let manifest = std::fs::read_to_string("Cargo.toml").map_err(|e| e.to_string())?;
@@ -387,10 +392,16 @@ pub fn run(port: u16) -> Result<(), String> {
         .and_then(toml::Value::as_str)
         .ok_or_else(|| "Cargo.toml has no [package].name".to_string())?
         .to_string();
+
+    let (lr_port, lr_tx) = start_live_reload_server(port.saturating_add(1));
+
     let source = Path::new("src");
+    let templates = Path::new("templates");
     let mut child = None;
     let mut needs_build = true;
-    let mut last_mtime = project_mtime(source).max(file_mtime(Path::new("Cargo.toml")));
+    let mut last_mtime = project_mtime(source)
+        .max(project_mtime(templates))
+        .max(file_mtime(Path::new("Cargo.toml")));
     // v1 has no signal-handling dependency in the workspace; Ctrl-C may leave the child running.
     loop {
         if child.is_none() && needs_build {
@@ -402,13 +413,18 @@ pub fn run(port: u16) -> Result<(), String> {
             needs_build = false;
             if status.success() {
                 let binary = Path::new("target/debug").join(&package);
-                let spawned = std::process::Command::new(binary)
-                    .env("DJANGORS_PORT", port.to_string())
-                    .spawn();
-                match spawned {
+                let mut cmd = std::process::Command::new(binary);
+                cmd.env("DJANGORS_PORT", port.to_string());
+                if let Some(p) = lr_port {
+                    cmd.env("DJANGORS_LIVERELOAD_PORT", p.to_string());
+                }
+                match cmd.spawn() {
                     Ok(process) => {
                         child = Some(process);
                         println!("[dj run] serving on http://127.0.0.1:{port}");
+                        if let Some(tx) = &lr_tx {
+                            let _ = tx.send("reload".to_string());
+                        }
                     }
                     Err(e) => eprintln!("[dj run] failed to start binary: {e}"),
                 }
@@ -417,7 +433,9 @@ pub fn run(port: u16) -> Result<(), String> {
             }
         }
         std::thread::sleep(Duration::from_millis(500));
-        let current = project_mtime(source).max(file_mtime(Path::new("Cargo.toml")));
+        let current = project_mtime(source)
+            .max(project_mtime(templates))
+            .max(file_mtime(Path::new("Cargo.toml")));
         if current > last_mtime {
             last_mtime = current;
             println!("[dj run] change detected, rebuilding...");
@@ -428,6 +446,65 @@ pub fn run(port: u16) -> Result<(), String> {
             needs_build = true;
         }
     }
+}
+
+/// Starts a background WebSocket live-reload server for `dj run` on `preferred_port`
+/// (falling back to an OS-assigned ephemeral port if `preferred_port` is taken).
+pub fn start_live_reload_server(
+    preferred_port: u16,
+) -> (Option<u16>, Option<tokio::sync::broadcast::Sender<String>>) {
+    let std_listener = std::net::TcpListener::bind(("127.0.0.1", preferred_port))
+        .or_else(|_| std::net::TcpListener::bind(("127.0.0.1", 0)));
+    let std_listener = match std_listener {
+        Ok(l) => l,
+        Err(_) => return (None, None),
+    };
+    let _ = std_listener.set_nonblocking(true);
+    let actual_port = match std_listener.local_addr() {
+        Ok(addr) => addr.port(),
+        Err(_) => return (None, None),
+    };
+
+    let (tx, _) = tokio::sync::broadcast::channel::<String>(16);
+    let tx_for_router = tx.clone();
+
+    std::thread::spawn(move || {
+        let rt = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(rt) => rt,
+            Err(_) => return,
+        };
+        rt.block_on(async move {
+            let listener = match tokio::net::TcpListener::from_std(std_listener) {
+                Ok(l) => l,
+                Err(_) => return,
+            };
+            // The page is served from the app's port and connects here from that origin.
+            // The socket only ever sends "reload", so any origin is safe to accept.
+            let router = djangors_core::Router::new().ws_with_origin_policy(
+                "/__djangors/live-reload",
+                djangors_core::OriginPolicy::Any,
+                move |mut ws: djangors_core::WebSocket, _req, _params| {
+                    let mut rx = tx_for_router.subscribe();
+                    async move {
+                        while let Ok(msg) = rx.recv().await {
+                            if ws.send_text(&msg).await.is_err() {
+                                break;
+                            }
+                        }
+                    }
+                },
+            );
+            let settings = djangors_core::DjangorsSettings::default();
+            let _ = djangors_core::Djangors::new(settings, router)
+                .serve(listener)
+                .await;
+        });
+    });
+
+    (Some(actual_port), Some(tx))
 }
 
 fn file_mtime(path: &Path) -> SystemTime {
@@ -443,7 +520,10 @@ fn project_mtime(path: &Path) -> SystemTime {
             let p = entry.path();
             let mtime = if p.is_dir() {
                 project_mtime(&p)
-            } else if p.extension().is_some_and(|e| e == "rs") {
+            } else if p
+                .extension()
+                .is_some_and(|e| e == "rs" || e == "html" || e == "css" || e == "js")
+            {
                 file_mtime(&p)
             } else {
                 SystemTime::UNIX_EPOCH
@@ -1329,6 +1409,819 @@ pub fn collectstatic(source: Vec<PathBuf>, output: PathBuf) {
             eprintln!("[dj collectstatic] failed: {e}");
             std::process::exit(1);
         }
+    }
+}
+
+/// Generate an OpenAPI 3.1 JSON specification or a TypeScript fetch client (`--typescript`)
+/// by introspecting the project's registered models.
+pub fn openapi(
+    typescript: bool,
+    output: Option<PathBuf>,
+    title: &str,
+    api_version: &str,
+) -> Result<(), String> {
+    require_project_root()?;
+    let models = introspect_models()?;
+    let rendered = render_openapi_from_snapshots(&models, typescript, title, api_version);
+    if let Some(path) = output {
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+        }
+        std::fs::write(&path, &rendered)
+            .map_err(|e| format!("failed to write '{}': {e}", path.display()))?;
+        println!("[dj openapi] wrote {}", path.display());
+    } else {
+        println!("{rendered}");
+    }
+    Ok(())
+}
+
+/// Pure helper used by [`openapi`] and unit tests to render OpenAPI JSON or TypeScript
+/// from a slice of [`djangors_orm::ModelSnapshot`]s.
+pub fn render_openapi_from_snapshots(
+    models: &[djangors_orm::ModelSnapshot],
+    typescript: bool,
+    title: &str,
+    api_version: &str,
+) -> String {
+    let mut builder = djangors_rest::OpenApiBuilder::new(title, api_version);
+    for model in models {
+        let base_path = format!(
+            "/api/{}",
+            pluralize_snake(&to_snake_case(&model.struct_name))
+        );
+        builder.register_snapshot(model, &base_path);
+    }
+    if typescript {
+        builder.to_typescript()
+    } else {
+        serde_json::to_string_pretty(&builder.build()).expect("OpenAPI spec is serializable")
+    }
+}
+
+fn to_snake_case(input: &str) -> String {
+    let mut out = String::with_capacity(input.len() + 4);
+    for (i, ch) in input.chars().enumerate() {
+        if ch.is_ascii_uppercase() {
+            if i > 0 {
+                out.push('_');
+            }
+            out.push(ch.to_ascii_lowercase());
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+fn to_pascal_case(input: &str) -> String {
+    input
+        .split(['_', '-'])
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(first) => first.to_ascii_uppercase().to_string() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect()
+}
+
+fn pluralize_snake(singular: &str) -> String {
+    if singular.ends_with('s') || singular.ends_with("sh") || singular.ends_with("ch") {
+        format!("{singular}es")
+    } else if let Some(stem) = singular.strip_suffix('y') {
+        if stem.ends_with('a')
+            || stem.ends_with('e')
+            || stem.ends_with('i')
+            || stem.ends_with('o')
+            || stem.ends_with('u')
+        {
+            format!("{singular}s")
+        } else {
+            format!("{stem}ies")
+        }
+    } else {
+        format!("{singular}s")
+    }
+}
+
+/// Parsed field definition for `dj generate resource`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResourceField {
+    /// Field identifier on the Rust struct.
+    pub name: String,
+    /// Rust type string (e.g. `String`, `i64`, `bool`).
+    pub rust_type: String,
+    /// Optional `#[djangors(...)]` field attribute.
+    pub djangors_attr: Option<String>,
+    /// PostgreSQL column type for migration generation.
+    pub sql_type: String,
+    /// SQLite column type for migration generation.
+    pub sqlite_sql_type: String,
+    /// Default sample literal for generated tests.
+    pub sample_literal: String,
+}
+
+/// Parse a `name:type` resource field specification.
+pub fn parse_resource_field(spec: &str) -> Result<ResourceField, String> {
+    let (raw_name, raw_ty) = spec.split_once(':').ok_or_else(|| {
+        format!("invalid field spec '{spec}': expected 'name:type' (e.g. 'title:string')")
+    })?;
+    let name = raw_name.trim();
+    if name.is_empty()
+        || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        || name.chars().next().unwrap().is_ascii_digit()
+    {
+        return Err(format!("invalid field name '{name}' in '{spec}'"));
+    }
+    let ty = raw_ty.trim().to_ascii_lowercase();
+    let (rust_type, djangors_attr, sql_type, sqlite_sql_type, sample_literal) = match ty.as_str() {
+        "string" | "varchar" | "char" => (
+            "String".to_string(),
+            Some("#[djangors(max_length = 255)]".to_string()),
+            "VARCHAR(255) NOT NULL".to_string(),
+            "TEXT NOT NULL".to_string(),
+            format!("\"Sample {name}\".to_string()"),
+        ),
+        "text" => (
+            "String".to_string(),
+            None,
+            "TEXT NOT NULL".to_string(),
+            "TEXT NOT NULL".to_string(),
+            format!("\"Sample {name} body\".to_string()"),
+        ),
+        "int" | "i32" | "integer" => (
+            "i32".to_string(),
+            None,
+            "INTEGER NOT NULL".to_string(),
+            "INTEGER NOT NULL".to_string(),
+            "1".to_string(),
+        ),
+        "bigint" | "i64" => (
+            "i64".to_string(),
+            None,
+            "BIGINT NOT NULL".to_string(),
+            "INTEGER NOT NULL".to_string(),
+            "1".to_string(),
+        ),
+        "float" | "f64" => (
+            "f64".to_string(),
+            None,
+            "DOUBLE PRECISION NOT NULL".to_string(),
+            "REAL NOT NULL".to_string(),
+            "1.0".to_string(),
+        ),
+        "bool" | "boolean" => (
+            "bool".to_string(),
+            None,
+            "BOOLEAN NOT NULL DEFAULT FALSE".to_string(),
+            "INTEGER NOT NULL DEFAULT 0".to_string(),
+            "true".to_string(),
+        ),
+        "datetime" | "timestamp" => (
+            "chrono::DateTime<chrono::Utc>".to_string(),
+            None,
+            "TIMESTAMPTZ NOT NULL".to_string(),
+            "TEXT NOT NULL".to_string(),
+            "chrono::Utc::now()".to_string(),
+        ),
+        "uuid" => (
+            "uuid::Uuid".to_string(),
+            None,
+            "UUID NOT NULL".to_string(),
+            "TEXT NOT NULL".to_string(),
+            "uuid::Uuid::nil()".to_string(),
+        ),
+        "decimal" => (
+            "rust_decimal::Decimal".to_string(),
+            None,
+            "NUMERIC(19, 4) NOT NULL".to_string(),
+            "NUMERIC NOT NULL".to_string(),
+            "rust_decimal::Decimal::ZERO".to_string(),
+        ),
+        other => {
+            return Err(format!(
+                "unsupported field type '{other}' in '{spec}' (supported: string, text, int/i32, bigint/i64, float/f64, bool, datetime, uuid, decimal)"
+            ))
+        }
+    };
+    Ok(ResourceField {
+        name: name.to_string(),
+        rust_type,
+        djangors_attr,
+        sql_type,
+        sqlite_sql_type,
+        sample_literal,
+    })
+}
+
+/// Scaffold a full CRUD resource: model, SQL migration, serializer + ViewSet,
+/// admin registration, and test module (`dj generate resource <Name> <field:type>...`).
+pub fn generate_resource(
+    name: &str,
+    field_specs: &[String],
+    app_override: Option<&str>,
+) -> Result<(), String> {
+    require_project_root()?;
+    let dialect =
+        djangors_db::Dialect::from_url(&std::env::var("DATABASE_URL").unwrap_or_default());
+    generate_resource_in_dir(Path::new("."), name, field_specs, app_override, dialect)
+}
+
+/// Testable implementation of [`generate_resource`] operating on an explicit project root.
+pub fn generate_resource_in_dir(
+    root: &Path,
+    name: &str,
+    field_specs: &[String],
+    app_override: Option<&str>,
+    dialect: djangors_db::Dialect,
+) -> Result<(), String> {
+    if name.trim().is_empty()
+        || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        || name.chars().next().unwrap().is_ascii_digit()
+    {
+        return Err(format!("invalid resource name '{name}'"));
+    }
+
+    let struct_name = to_pascal_case(name);
+    let model_snake = to_snake_case(&struct_name);
+    let app_name = match app_override {
+        Some(a) => a.to_string(),
+        None => pluralize_snake(&model_snake),
+    };
+    if app_name.is_empty()
+        || !app_name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+        || app_name.chars().next().unwrap().is_ascii_digit()
+    {
+        return Err(format!("invalid app module name '{app_name}'"));
+    }
+
+    let mut fields = Vec::with_capacity(field_specs.len());
+    for spec in field_specs {
+        fields.push(parse_resource_field(spec)?);
+    }
+
+    let table_name = format!("{app_name}_{model_snake}");
+    let route_base = format!("/api/{}", pluralize_snake(&model_snake));
+
+    let app_dir = root.join("src").join(&app_name);
+    if app_dir.exists() {
+        return Err(format!(
+            "destination '{}' already exists",
+            app_dir.display()
+        ));
+    }
+    std::fs::create_dir_all(&app_dir).map_err(|e| e.to_string())?;
+
+    // 1. models.rs
+    let mut struct_fields = String::from("    #[djangors(primary_key, auto)]\n    pub id: i64,\n");
+    for f in &fields {
+        if let Some(attr) = &f.djangors_attr {
+            struct_fields.push_str(&format!("    {attr}\n"));
+        }
+        struct_fields.push_str(&format!("    pub {}: {},\n", f.name, f.rust_type));
+    }
+
+    let models_rs = format!(
+        "use djangors_macros::Model;\n\n\
+         #[derive(Model, Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]\n\
+         #[djangors(app = \"{app_name}\", table_name = \"{table_name}\")]\n\
+         pub struct {struct_name} {{\n\
+         {struct_fields}}}\n"
+    );
+
+    // 2. serializers.rs
+    let serializers_rs = format!(
+        "use djangors_rest::{{FieldSet, ModelSerializer}};\n\
+         use super::models::{struct_name};\n\n\
+         pub fn {model_snake}_serializer() -> ModelSerializer<{struct_name}> {{\n\
+         \x20   ModelSerializer::<{struct_name}>::new(FieldSet::all().read_only(&[\"id\"]))\n\
+         }}\n"
+    );
+
+    // 3. views.rs (ViewSet route mounting)
+    let filter_fields: Vec<String> = fields.iter().map(|f| format!("\"{}\"", f.name)).collect();
+    let filter_slice = filter_fields.join(", ");
+    let views_rs = format!(
+        "use djangors_core::Router;\n\
+         use djangors_rest::{{IsAuthenticated, ViewSetConfig, ViewSetOptions, viewset_routes_with_options}};\n\
+         use super::models::{struct_name};\n\
+         use super::serializers::{model_snake}_serializer;\n\n\
+         pub fn register_routes(router: Router) -> Router {{\n\
+         \x20   let config = ViewSetConfig::new()\n\
+         \x20       .with_filterable_fields(&[{filter_slice}])\n\
+         \x20       .with_orderable_fields(&[\"id\"]);\n\
+         \x20   let options = ViewSetOptions::<{struct_name}>::new(config)\n\
+         \x20       .with_serializer({model_snake}_serializer());\n\
+         \x20   viewset_routes_with_options::<{struct_name}, _>(router, \"{route_base}\", options, IsAuthenticated)\n\
+         }}\n"
+    );
+
+    // 4. admin.rs
+    let list_display: Vec<String> = std::iter::once("\"id\"".to_string())
+        .chain(fields.iter().take(4).map(|f| format!("\"{}\"", f.name)))
+        .collect();
+    let search_fields: Vec<String> = fields
+        .iter()
+        .filter(|f| f.rust_type == "String")
+        .map(|f| format!("\"{}\"", f.name))
+        .collect();
+    let list_filter: Vec<String> = fields
+        .iter()
+        .filter(|f| f.rust_type == "bool")
+        .map(|f| format!("\"{}\"", f.name))
+        .collect();
+
+    let search_line = if search_fields.is_empty() {
+        "None".to_string()
+    } else {
+        format!("Some(&[{}])", search_fields.join(", "))
+    };
+    let filter_line = if list_filter.is_empty() {
+        "None".to_string()
+    } else {
+        format!("Some(&[{}])", list_filter.join(", "))
+    };
+
+    let admin_rs = format!(
+        "use djangors_admin::{{AdminSite, ModelAdminConfig}};\n\
+         use super::models::{struct_name};\n\n\
+         pub fn register_admin(site: &AdminSite) {{\n\
+         \x20   site.register_with::<{struct_name}>(ModelAdminConfig {{\n\
+         \x20       list_display: Some(&[{}]),\n\
+         \x20       search_fields: {search_line},\n\
+         \x20       list_filter: {filter_line},\n\
+         \x20       ..Default::default()\n\
+         \x20   }});\n\
+         }}\n",
+        list_display.join(", ")
+    );
+
+    // 5. tests.rs
+    let mut sample_inits = String::from("        id: 1,\n");
+    for f in &fields {
+        sample_inits.push_str(&format!("        {}: {},\n", f.name, f.sample_literal));
+    }
+    let tests_rs = format!(
+        "use djangors_orm::Model as _;\n\
+         use super::models::{struct_name};\n\
+         use super::serializers::{model_snake}_serializer;\n\
+         use djangors_rest::Serializer as _;\n\n\
+         #[test]\n\
+         fn {model_snake}_metadata_and_json_roundtrip() {{\n\
+         \x20   assert_eq!({struct_name}::meta().table_name, \"{table_name}\");\n\
+         \x20   let item = {struct_name} {{\n\
+         {sample_inits}\
+         \x20   }};\n\
+         \x20   let bytes = {model_snake}_serializer().to_json_bytes(&item);\n\
+         \x20   let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();\n\
+         \x20   assert_eq!(json[\"id\"], 1);\n\
+         }}\n"
+    );
+
+    // 6. mod.rs
+    let mod_rs = "pub mod admin;\npub mod models;\npub mod serializers;\npub mod views;\n\n#[cfg(test)]\nmod tests;\n";
+
+    std::fs::write(app_dir.join("mod.rs"), mod_rs).map_err(|e| e.to_string())?;
+    std::fs::write(app_dir.join("models.rs"), models_rs).map_err(|e| e.to_string())?;
+    std::fs::write(app_dir.join("serializers.rs"), serializers_rs).map_err(|e| e.to_string())?;
+    std::fs::write(app_dir.join("views.rs"), views_rs).map_err(|e| e.to_string())?;
+    std::fs::write(app_dir.join("admin.rs"), admin_rs).map_err(|e| e.to_string())?;
+    std::fs::write(app_dir.join("tests.rs"), tests_rs).map_err(|e| e.to_string())?;
+
+    // 7. Numbered SQL migration file in migrations/
+    let mig_dir = root.join("migrations");
+    std::fs::create_dir_all(&mig_dir).map_err(|e| e.to_string())?;
+    let next_num = std::fs::read_dir(&mig_dir)
+        .map_err(|e| e.to_string())?
+        .filter_map(Result::ok)
+        .filter_map(|e| {
+            e.file_name()
+                .to_str()
+                .and_then(|s| s.get(..4))
+                .and_then(|n| n.parse::<u32>().ok())
+        })
+        .max()
+        .unwrap_or(0)
+        + 1;
+
+    let sqlite = matches!(dialect, djangors_db::Dialect::Sqlite);
+    let mut col_defs = vec![if sqlite {
+        "\"id\" INTEGER PRIMARY KEY AUTOINCREMENT".to_string()
+    } else {
+        "\"id\" BIGSERIAL PRIMARY KEY".to_string()
+    }];
+    for f in &fields {
+        let ty = if sqlite {
+            &f.sqlite_sql_type
+        } else {
+            &f.sql_type
+        };
+        col_defs.push(format!("\"{}\" {}", f.name, ty));
+    }
+    let up_sql = format!("CREATE TABLE \"{table_name}\" ({});", col_defs.join(", "));
+    let down_sql = format!("DROP TABLE \"{table_name}\";");
+    let mig_filename = format!("{next_num:04}_create_{table_name}.sql");
+    std::fs::write(
+        mig_dir.join(&mig_filename),
+        format!("-- up\n{up_sql}\n-- down\n{down_sql}\n"),
+    )
+    .map_err(|e| e.to_string())?;
+
+    println!(
+        "[dj generate resource] created src/{app_name}/ (models, serializers, views, admin, tests) and migrations/{mig_filename}\n\
+         \n\
+         Next steps:\n\
+         \x20 1. Add `mod {app_name};` to src/main.rs.\n\
+         \x20 2. Make sure Cargo.toml depends on djangors-macros, djangors-orm, djangors-rest,\n\
+         \x20    djangors-admin, serde (with \"derive\"), serde_json, and any of chrono / uuid /\n\
+         \x20    rust_decimal your field types use (or on the `djangors` facade crate).\n\
+         \x20 3. Mount the routes: `let router = {app_name}::views::register_routes(router);`\n\
+         \x20 4. Register the admin: `{app_name}::admin::register_admin(&site);`\n\
+         \x20 5. Run `dj migrate`."
+    );
+    Ok(())
+}
+
+/// Introspect an existing SQLite or PostgreSQL database and generate `#[derive(Model)]` structs.
+pub async fn inspectdb(
+    database_url: Option<String>,
+    output: Option<PathBuf>,
+    app_label: &str,
+) -> Result<(), String> {
+    let url = match database_url.or_else(|| std::env::var("DATABASE_URL").ok()) {
+        Some(u) if !u.trim().is_empty() => u,
+        _ => return Err("DATABASE_URL is not set and --database-url was not provided".into()),
+    };
+    let config = djangors_db::config::DatabaseConfig::new(url);
+    let db = djangors_db::Database::connect(&config)
+        .await
+        .map_err(|e| format!("failed to connect to database: {e}"))?;
+
+    let (code, warnings) = inspect_database_models(&db, app_label).await?;
+    for warning in &warnings {
+        eprintln!("[dj inspectdb] warning: {warning}");
+    }
+    if let Some(path) = output {
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+        }
+        std::fs::write(&path, &code)
+            .map_err(|e| format!("failed to write '{}': {e}", path.display()))?;
+        println!("[dj inspectdb] wrote {}", path.display());
+    } else {
+        println!("{code}");
+    }
+    Ok(())
+}
+
+/// Introspects all user tables in `db` (PostgreSQL or SQLite) and returns Rust source code
+/// containing `#[derive(Model)]` structs, plus one warning per column whose SQL type has no
+/// matching Djangors field type (for example `jsonb`, `bytea`, `inet`, arrays).
+pub async fn inspect_database_models(
+    db: &djangors_db::Database,
+    app_label: &str,
+) -> Result<(String, Vec<String>), String> {
+    let mut warnings = Vec::new();
+    let dialect = db.dialect();
+    let mut out = String::from(
+        "// Auto-generated by `dj inspectdb`. Review field types and relationships before use.\n\
+         use djangors_macros::Model;\n\n",
+    );
+
+    match dialect {
+        djangors_db::Dialect::Sqlite => {
+            let rows = db
+                .conn()
+                .fetch_all(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name != 'djangors_migrations' ORDER BY name",
+                    &[],
+                )
+                .await
+                .map_err(|e| e.to_string())?;
+
+            for row in rows {
+                let table_name: String = row
+                    .try_string_by_name("name")
+                    .map_err(|e| e.to_string())?
+                    .unwrap_or_default();
+                let pragma_sql = format!("PRAGMA table_info(\"{table_name}\")");
+                let cols = db
+                    .conn()
+                    .fetch_all(&pragma_sql, &[])
+                    .await
+                    .map_err(|e| e.to_string())?;
+
+                let struct_name = to_pascal_case(&table_name);
+                out.push_str(&format!(
+                    "#[derive(Model, Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]\n\
+                     #[djangors(app = \"{app_label}\", table_name = \"{table_name}\")]\n\
+                     pub struct {struct_name} {{\n"
+                ));
+
+                for col in cols {
+                    let col_name: String = col
+                        .try_string_by_name("name")
+                        .map_err(|e| e.to_string())?
+                        .unwrap_or_default();
+                    let col_type: String = col
+                        .try_string_by_name("type")
+                        .ok()
+                        .flatten()
+                        .unwrap_or_default();
+                    let notnull: i64 = col.try_i64_by_name("notnull").ok().flatten().unwrap_or(0);
+                    let pk: i64 = col.try_i64_by_name("pk").ok().flatten().unwrap_or(0);
+                    let is_pk = pk > 0;
+                    let nullable = notnull == 0 && !is_pk;
+                    let (rust_ty, max_len) = map_inspected_sql_type(&col_type, is_pk, nullable);
+                    if !is_supported_inspected_type(&col_type) {
+                        warnings.push(format!(
+                            "{table_name}.{col_name}: column type `{col_type}` has no Djangors field type; generated as String (reads and writes will fail until you change it)"
+                        ));
+                    }
+
+                    let mut attrs = Vec::new();
+                    if is_pk {
+                        attrs.push("primary_key".to_string());
+                        if rust_ty == "i64" || rust_ty == "i32" {
+                            attrs.push("auto".to_string());
+                        }
+                    }
+                    if let Some(len) = max_len {
+                        attrs.push(format!("max_length = {len}"));
+                    }
+                    let (field_ident, column_attr) = rust_field_for_column(&col_name);
+                    if let Some(attr) = column_attr {
+                        attrs.push(attr);
+                    }
+                    if !attrs.is_empty() {
+                        out.push_str(&format!("    #[djangors({})]\n", attrs.join(", ")));
+                    }
+                    out.push_str(&format!("    pub {field_ident}: {rust_ty},\n"));
+                }
+                out.push_str("}\n\n");
+            }
+        }
+        djangors_db::Dialect::Postgres => {
+            let rows = db
+                .conn()
+                .fetch_all(
+                    "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE' AND table_name != 'djangors_migrations' ORDER BY table_name",
+                    &[],
+                )
+                .await
+                .map_err(|e| e.to_string())?;
+
+            for row in rows {
+                let table_name: String = row
+                    .try_string_by_name("table_name")
+                    .map_err(|e| e.to_string())?
+                    .unwrap_or_default();
+                let pk_rows = db
+                    .conn()
+                    .fetch_all(
+                        "SELECT a.attname AS col_name FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey) WHERE i.indrelid = $1::regclass AND i.indisprimary",
+                        &[djangors_db::BindValue::Text(table_name.clone())],
+                    )
+                    .await
+                    .unwrap_or_default();
+                let pk_cols: std::collections::HashSet<String> = pk_rows
+                    .iter()
+                    .filter_map(|r| r.try_string_by_name("col_name").ok().flatten())
+                    .collect();
+
+                let cols = db
+                    .conn()
+                    .fetch_all(
+                        "SELECT column_name, data_type, is_nullable, column_default, character_maximum_length::bigint AS max_len FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1 ORDER BY ordinal_position",
+                        &[djangors_db::BindValue::Text(table_name.clone())],
+                    )
+                    .await
+                    .map_err(|e| e.to_string())?;
+
+                let struct_name = to_pascal_case(&table_name);
+                out.push_str(&format!(
+                    "#[derive(Model, Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]\n\
+                     #[djangors(app = \"{app_label}\", table_name = \"{table_name}\")]\n\
+                     pub struct {struct_name} {{\n"
+                ));
+
+                for col in cols {
+                    let col_name: String = col
+                        .try_string_by_name("column_name")
+                        .map_err(|e| e.to_string())?
+                        .unwrap_or_default();
+                    let data_type: String = col
+                        .try_string_by_name("data_type")
+                        .ok()
+                        .flatten()
+                        .unwrap_or_default();
+                    let is_nullable_str: String = col
+                        .try_string_by_name("is_nullable")
+                        .ok()
+                        .flatten()
+                        .unwrap_or_default();
+                    let col_default: Option<String> =
+                        col.try_string_by_name("column_default").ok().flatten();
+                    let max_len_db: Option<i64> = col.try_i64_by_name("max_len").ok().flatten();
+
+                    let is_pk = pk_cols.contains(&col_name);
+                    let nullable = is_nullable_str.eq_ignore_ascii_case("YES") && !is_pk;
+                    let (mut rust_ty, parsed_len) =
+                        map_inspected_sql_type(&data_type, is_pk, nullable);
+                    let max_len = max_len_db
+                        .and_then(|n| u32::try_from(n).ok())
+                        .or(parsed_len);
+                    if is_pk && rust_ty == "i32" {
+                        rust_ty = "i64".to_string();
+                    }
+
+                    let mut attrs = Vec::new();
+                    if is_pk {
+                        attrs.push("primary_key".to_string());
+                        if col_default
+                            .as_deref()
+                            .is_some_and(|d| d.contains("nextval"))
+                            || rust_ty == "i64"
+                        {
+                            attrs.push("auto".to_string());
+                        }
+                    }
+                    if let Some(len) = max_len {
+                        attrs.push(format!("max_length = {len}"));
+                    }
+                    if !is_supported_inspected_type(&data_type) {
+                        warnings.push(format!(
+                            "{table_name}.{col_name}: column type `{data_type}` has no Djangors field type; generated as String (reads and writes will fail until you change it)"
+                        ));
+                    }
+                    let (field_ident, column_attr) = rust_field_for_column(&col_name);
+                    if let Some(attr) = column_attr {
+                        attrs.push(attr);
+                    }
+                    if !attrs.is_empty() {
+                        out.push_str(&format!("    #[djangors({})]\n", attrs.join(", ")));
+                    }
+                    out.push_str(&format!("    pub {field_ident}: {rust_ty},\n"));
+                }
+                out.push_str("}\n\n");
+            }
+        }
+    }
+
+    Ok((out, warnings))
+}
+
+/// The Rust type `dj inspectdb` maps a raw SQL column type to, or `None` when Djangors has no
+/// field type for it (json/jsonb, bytea/blob, inet, arrays, geometric types, intervals, ...).
+fn inspected_base_type(raw_type: &str, is_pk: bool) -> Option<&'static str> {
+    let upper = raw_type.trim().to_ascii_uppercase();
+    // Strip any `(n)` / `(p, s)` suffix so `VARCHAR(120)` and `NUMERIC(10, 2)` match by name.
+    let name = upper.split('(').next().unwrap_or("").trim();
+    if name.ends_with("[]") || name == "ARRAY" {
+        return None;
+    }
+    let is_integer = matches!(
+        name,
+        "INT"
+            | "INTEGER"
+            | "INT2"
+            | "INT4"
+            | "INT8"
+            | "SMALLINT"
+            | "TINYINT"
+            | "MEDIUMINT"
+            | "BIGINT"
+            | "SERIAL"
+            | "SMALLSERIAL"
+            | "BIGSERIAL"
+            | "SERIAL4"
+            | "SERIAL8"
+            | "UNSIGNED BIG INT"
+    );
+    let ty = if is_integer {
+        if is_pk
+            || matches!(
+                name,
+                "BIGINT" | "INT8" | "BIGSERIAL" | "SERIAL8" | "UNSIGNED BIG INT"
+            )
+        {
+            "i64"
+        } else {
+            "i32"
+        }
+    } else if matches!(name, "BOOL" | "BOOLEAN") {
+        "bool"
+    } else if matches!(
+        name,
+        "REAL" | "FLOAT" | "FLOAT4" | "FLOAT8" | "DOUBLE" | "DOUBLE PRECISION"
+    ) {
+        "f64"
+    } else if matches!(name, "NUMERIC" | "DECIMAL") {
+        "rust_decimal::Decimal"
+    } else if name == "UUID" {
+        "uuid::Uuid"
+    } else if name.starts_with("TIMESTAMP") || name == "DATETIME" || name == "TIMESTAMPTZ" {
+        "chrono::DateTime<chrono::Utc>"
+    } else if name == "DATE" {
+        "chrono::NaiveDate"
+    } else if name == "TIME" || name.starts_with("TIME WITH") {
+        "chrono::NaiveTime"
+    } else if name == "TEXT"
+        || name.contains("CHAR")
+        || name == "CLOB"
+        || name == "CITEXT"
+        || name.is_empty()
+    {
+        "String"
+    } else {
+        return None;
+    };
+    Some(ty)
+}
+
+fn is_supported_inspected_type(raw_type: &str) -> bool {
+    inspected_base_type(raw_type, false).is_some()
+}
+
+fn map_inspected_sql_type(raw_type: &str, is_pk: bool, nullable: bool) -> (String, Option<u32>) {
+    let upper = raw_type.trim().to_ascii_uppercase();
+    let mut max_len = None;
+    if let Some(start) = upper.find('(') {
+        if let Some(end) = upper[start + 1..].find(')') {
+            let inside = &upper[start + 1..start + 1 + end];
+            if !inside.contains(',') {
+                max_len = inside.trim().parse::<u32>().ok();
+            }
+        }
+    }
+    let base = inspected_base_type(raw_type, is_pk).unwrap_or("String");
+    if base != "String" {
+        max_len = None;
+    }
+
+    let full_ty = if nullable {
+        format!("Option<{base}>")
+    } else {
+        base.to_string()
+    };
+    (full_ty, max_len)
+}
+
+/// Field identifier for a database column, plus a `column = "..."` attribute when the
+/// identifier had to differ from the column name.
+fn rust_field_for_column(column: &str) -> (String, Option<String>) {
+    let is_plain_ident = !column.is_empty()
+        && column
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && !column.starts_with(|c: char| c.is_ascii_digit());
+    if is_plain_ident && !matches!(column, "self" | "Self" | "super" | "crate" | "_") {
+        return (sanitize_rust_ident(column), None);
+    }
+    let mut ident: String = column
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if ident.is_empty() || ident.starts_with(|c: char| c.is_ascii_digit()) {
+        ident.insert(0, '_');
+    }
+    if matches!(ident.as_str(), "self" | "super" | "crate" | "_") {
+        ident.push('_');
+    }
+    let escaped = column.replace('\\', "\\\\").replace('"', "\\\"");
+    (
+        sanitize_rust_ident(&ident),
+        Some(format!("column = \"{escaped}\"")),
+    )
+}
+
+fn sanitize_rust_ident(name: &str) -> String {
+    const KEYWORDS: &[&str] = &[
+        "as", "async", "await", "break", "const", "continue", "dyn", "else", "enum", "extern",
+        "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut",
+        "pub", "ref", "return", "static", "struct", "trait", "true", "type", "unsafe", "use",
+        "where", "while", "abstract", "become", "box", "do", "final", "gen", "macro", "override",
+        "priv", "try", "typeof", "unsized", "virtual", "yield",
+    ];
+    if KEYWORDS.contains(&name) {
+        format!("r#{name}")
+    } else {
+        name.to_string()
     }
 }
 

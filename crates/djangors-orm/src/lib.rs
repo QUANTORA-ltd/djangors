@@ -11,6 +11,8 @@ pub mod aggregate;
 pub mod error;
 /// Query expression tree nodes, operators, and macros.
 pub mod expr;
+/// Zero-intermediate-allocation JSON byte-buffer writers for models.
+pub mod json;
 /// Model runtime metadata structures and field definitions.
 pub mod meta;
 /// Process-local query result cache and invalidation.

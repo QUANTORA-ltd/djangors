@@ -12,12 +12,17 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[features]
+default = ["postgres", "sqlite"]
+postgres = ["djangors-core/postgres", "djangors-i18n/postgres"]
+sqlite = ["djangors-core/sqlite", "djangors-i18n/sqlite"]
+
 [dependencies]
 minijinja = { version = "2.21.0", features = ["loader"] }
 thiserror = "2.0.18"
 serde = { version = "1.0.228", features = ["derive"] }
-djangors-core = { path = "../djangors-core", version = "0.7.0" }
-djangors-i18n = { path = "../djangors-i18n", version = "0.7.0" }
+djangors-core = { path = "../djangors-core", version = "0.9.0", default-features = false }
+djangors-i18n = { path = "../djangors-i18n", version = "0.9.0", default-features = false }
 chrono = { version = "0.4", features = ["std", "serde"] }
 
 [dev-dependencies]

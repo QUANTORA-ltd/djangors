@@ -6,7 +6,7 @@ Part of [Djangors](https://github.com/Chidi09/djangors), a batteries-included we
 
 ```toml
 [dependencies]
-djangors-contrib-sitemaps = "0.6"
+djangors-contrib-sitemaps = "0.9"
 ```
 
 Provides XML sitemap generation for Djangors applications. It builds structured sitemap indexes and feed documents for search engine crawling and indexing.

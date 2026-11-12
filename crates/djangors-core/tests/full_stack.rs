@@ -82,11 +82,9 @@ async fn full_stack_request_hits_real_database() {
     // build settings carrying the port the OS actually handed back).
     let listener: TcpListener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let settings = DjangorsSettings {
-        host: "127.0.0.1".to_string(),
-        port: addr.port(),
-        ..Default::default()
-    };
+    let settings = DjangorsSettings::new()
+        .with_host("127.0.0.1")
+        .with_port(addr.port());
     let app = Djangors::new(settings, router);
 
     tokio::spawn(async move {

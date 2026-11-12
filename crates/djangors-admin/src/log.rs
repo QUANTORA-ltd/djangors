@@ -49,7 +49,7 @@ pub struct FieldDiffItem {
 }
 
 /// Audit log entry model recording staff admin actions.
-#[derive(DeriveModel, Debug, Clone, serde::Serialize, sqlx::FromRow)]
+#[derive(DeriveModel, Debug, Clone, serde::Serialize)]
 #[djangors(app = "admin", table_name = "djangors_admin_log")]
 pub struct LogEntry {
     /// Primary key log entry ID.

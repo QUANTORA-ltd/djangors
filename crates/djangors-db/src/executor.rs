@@ -1,7 +1,10 @@
 //! Abstraction over where a query runs: a connection pool, or an open
 //! transaction.
 
-use sqlx::{PgConnection, PgPool, SqliteConnection, SqlitePool};
+#[cfg(feature = "postgres")]
+use sqlx::{PgConnection, PgPool};
+#[cfg(feature = "sqlite")]
+use sqlx::{SqliteConnection, SqlitePool};
 
 use crate::bind::{BindValue, NullKind};
 use crate::database::Database;
@@ -12,15 +15,20 @@ use crate::row::DbRow;
 /// A borrowed handle to whatever a query should run against.
 pub enum Conn<'a> {
     /// Run against the PostgreSQL connection pool.
+    #[cfg(feature = "postgres")]
     PgPool(&'a PgPool),
     /// Run against a single PostgreSQL connection in a transaction.
+    #[cfg(feature = "postgres")]
     PgTx(&'a mut PgConnection),
     /// Run against the SQLite connection pool.
+    #[cfg(feature = "sqlite")]
     SqlitePool(&'a SqlitePool),
     /// Run against a single SQLite connection in a transaction.
+    #[cfg(feature = "sqlite")]
     SqliteTx(&'a mut SqliteConnection),
 }
 
+#[cfg(feature = "postgres")]
 fn build_pg_query<'q>(
     sql: &'q str,
     params: &'q [BindValue],
@@ -47,6 +55,7 @@ fn build_pg_query<'q>(
     q
 }
 
+#[cfg(feature = "sqlite")]
 fn build_sqlite_query<'q>(
     sql: &'q str,
     params: &'q [BindValue],
@@ -80,28 +89,37 @@ impl<'a> Conn<'a> {
         sql: &str,
         params: &[BindValue],
     ) -> Result<Vec<DbRow>, sqlx::Error> {
-        match self {
+        let start = crate::query_log::is_logging_active().then(std::time::Instant::now);
+        let res = match self {
+            #[cfg(feature = "postgres")]
             Conn::PgPool(pool) => {
                 let q = build_pg_query(sql, params);
                 let rows = q.fetch_all(*pool).await?;
                 Ok(rows.into_iter().map(DbRow::Pg).collect())
             }
+            #[cfg(feature = "postgres")]
             Conn::PgTx(tx) => {
                 let q = build_pg_query(sql, params);
                 let rows = q.fetch_all(&mut **tx).await?;
                 Ok(rows.into_iter().map(DbRow::Pg).collect())
             }
+            #[cfg(feature = "sqlite")]
             Conn::SqlitePool(pool) => {
                 let q = build_sqlite_query(sql, params);
                 let rows = q.fetch_all(*pool).await?;
                 Ok(rows.into_iter().map(DbRow::Sqlite).collect())
             }
+            #[cfg(feature = "sqlite")]
             Conn::SqliteTx(tx) => {
                 let q = build_sqlite_query(sql, params);
                 let rows = q.fetch_all(&mut **tx).await?;
                 Ok(rows.into_iter().map(DbRow::Sqlite).collect())
             }
+        };
+        if let Some(t0) = start {
+            crate::query_log::record_query(sql, params.len(), t0.elapsed().as_micros() as u64);
         }
+        res
     }
 
     /// Execute the query, requiring exactly one row.
@@ -110,28 +128,37 @@ impl<'a> Conn<'a> {
         sql: &str,
         params: &[BindValue],
     ) -> Result<DbRow, sqlx::Error> {
-        match self {
+        let start = crate::query_log::is_logging_active().then(std::time::Instant::now);
+        let res = match self {
+            #[cfg(feature = "postgres")]
             Conn::PgPool(pool) => {
                 let q = build_pg_query(sql, params);
                 let row = q.fetch_one(*pool).await?;
                 Ok(DbRow::Pg(row))
             }
+            #[cfg(feature = "postgres")]
             Conn::PgTx(tx) => {
                 let q = build_pg_query(sql, params);
                 let row = q.fetch_one(&mut **tx).await?;
                 Ok(DbRow::Pg(row))
             }
+            #[cfg(feature = "sqlite")]
             Conn::SqlitePool(pool) => {
                 let q = build_sqlite_query(sql, params);
                 let row = q.fetch_one(*pool).await?;
                 Ok(DbRow::Sqlite(row))
             }
+            #[cfg(feature = "sqlite")]
             Conn::SqliteTx(tx) => {
                 let q = build_sqlite_query(sql, params);
                 let row = q.fetch_one(&mut **tx).await?;
                 Ok(DbRow::Sqlite(row))
             }
+        };
+        if let Some(t0) = start {
+            crate::query_log::record_query(sql, params.len(), t0.elapsed().as_micros() as u64);
         }
+        res
     }
 
     /// Execute the query, returning the row if there is one.
@@ -140,67 +167,93 @@ impl<'a> Conn<'a> {
         sql: &str,
         params: &[BindValue],
     ) -> Result<Option<DbRow>, sqlx::Error> {
-        match self {
+        let start = crate::query_log::is_logging_active().then(std::time::Instant::now);
+        let res = match self {
+            #[cfg(feature = "postgres")]
             Conn::PgPool(pool) => {
                 let q = build_pg_query(sql, params);
                 let row = q.fetch_optional(*pool).await?;
                 Ok(row.map(DbRow::Pg))
             }
+            #[cfg(feature = "postgres")]
             Conn::PgTx(tx) => {
                 let q = build_pg_query(sql, params);
                 let row = q.fetch_optional(&mut **tx).await?;
                 Ok(row.map(DbRow::Pg))
             }
+            #[cfg(feature = "sqlite")]
             Conn::SqlitePool(pool) => {
                 let q = build_sqlite_query(sql, params);
                 let row = q.fetch_optional(*pool).await?;
                 Ok(row.map(DbRow::Sqlite))
             }
+            #[cfg(feature = "sqlite")]
             Conn::SqliteTx(tx) => {
                 let q = build_sqlite_query(sql, params);
                 let row = q.fetch_optional(&mut **tx).await?;
                 Ok(row.map(DbRow::Sqlite))
             }
+        };
+        if let Some(t0) = start {
+            crate::query_log::record_query(sql, params.len(), t0.elapsed().as_micros() as u64);
         }
+        res
     }
 
     /// Execute the query for its side effect, returning the affected-row count.
     pub async fn execute(&mut self, sql: &str, params: &[BindValue]) -> Result<u64, sqlx::Error> {
-        match self {
+        let start = crate::query_log::is_logging_active().then(std::time::Instant::now);
+        let res = match self {
+            #[cfg(feature = "postgres")]
             Conn::PgPool(pool) => {
                 let q = build_pg_query(sql, params);
                 let res = q.execute(*pool).await?;
                 Ok(res.rows_affected())
             }
+            #[cfg(feature = "postgres")]
             Conn::PgTx(tx) => {
                 let q = build_pg_query(sql, params);
                 let res = q.execute(&mut **tx).await?;
                 Ok(res.rows_affected())
             }
+            #[cfg(feature = "sqlite")]
             Conn::SqlitePool(pool) => {
                 let q = build_sqlite_query(sql, params);
                 let res = q.execute(*pool).await?;
                 Ok(res.rows_affected())
             }
+            #[cfg(feature = "sqlite")]
             Conn::SqliteTx(tx) => {
                 let q = build_sqlite_query(sql, params);
                 let res = q.execute(&mut **tx).await?;
                 Ok(res.rows_affected())
             }
+        };
+        if let Some(t0) = start {
+            crate::query_log::record_query(sql, params.len(), t0.elapsed().as_micros() as u64);
         }
+        res
     }
 
     /// The database dialect for this connection handle.
     pub fn dialect(&self) -> Dialect {
         match self {
+            #[cfg(feature = "postgres")]
             Conn::PgPool(_) | Conn::PgTx(_) => Dialect::Postgres,
+            #[cfg(feature = "sqlite")]
             Conn::SqlitePool(_) | Conn::SqliteTx(_) => Dialect::Sqlite,
         }
     }
 
     /// Whether this handle is inside an open transaction.
     pub fn in_transaction(&self) -> bool {
-        matches!(self, Conn::PgTx(_) | Conn::SqliteTx(_))
+        match self {
+            #[cfg(feature = "postgres")]
+            Conn::PgTx(_) => true,
+            #[cfg(feature = "sqlite")]
+            Conn::SqliteTx(_) => true,
+            _ => false,
+        }
     }
 
     /// Establishes a new savepoint with the given name inside the current transaction.
@@ -281,12 +334,14 @@ impl DbExecutor for &Database {
     }
 }
 
+#[cfg(feature = "postgres")]
 impl DbExecutor for &mut PgConnection {
     fn conn(&mut self) -> Conn<'_> {
         Conn::PgTx(self)
     }
 }
 
+#[cfg(feature = "sqlite")]
 impl DbExecutor for &mut SqliteConnection {
     fn conn(&mut self) -> Conn<'_> {
         Conn::SqliteTx(self)
@@ -296,9 +351,13 @@ impl DbExecutor for &mut SqliteConnection {
 impl DbExecutor for Conn<'_> {
     fn conn(&mut self) -> Conn<'_> {
         match self {
+            #[cfg(feature = "postgres")]
             Conn::PgPool(pool) => Conn::PgPool(pool),
+            #[cfg(feature = "postgres")]
             Conn::PgTx(tx) => Conn::PgTx(tx),
+            #[cfg(feature = "sqlite")]
             Conn::SqlitePool(pool) => Conn::SqlitePool(pool),
+            #[cfg(feature = "sqlite")]
             Conn::SqliteTx(tx) => Conn::SqliteTx(tx),
         }
     }

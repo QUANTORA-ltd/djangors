@@ -6,10 +6,10 @@ Part of [Djangors](https://github.com/Chidi09/djangors), a batteries-included we
 
 ```toml
 [dependencies]
-djangors-mail = "0.6"
+djangors-mail = "0.9"
 ```
 
-Provides email messaging utilities and pluggable delivery backends for Djangors applications to compose and send emails over SMTP or test backends.
+Provides email messaging utilities (`#[non_exhaustive]` `Message` builder) and pluggable delivery backends (`SmtpBackend` over `rustls`, `FileBackend`, `ConsoleBackend`, and `InMemoryBackend`) for Djangors applications.
 
 - Documentation: https://docs.rs/djangors-mail
 - Guides: https://djangors.vercel.app/docs/

@@ -1,6 +1,6 @@
 # Object-Relational Mapping (ORM)
 
-`djangors-orm` provides Django-style querysets, model metadata, expression macros, and database integration for PostgreSQL (via `sqlx`).
+`djangors-orm` provides Django-style querysets, model metadata, expression macros, compile-time JSON writers, and database integration for PostgreSQL and SQLite (via `sqlx`).
 
 ## Defining Models
 
@@ -59,14 +59,19 @@ pub struct Choice {
 - **`db_index`**: Creates a database index on the column.
 - **`verbose_name = "..."`**, **`help_text = "..."`**: Descriptive labels for admin/forms metadata.
 - **`column = "col_name"`**: Overrides the database column name if different from the struct field name.
+- **`auto_now_add`**: Populates a `DateTime<Utc>` field with `Utc::now()` automatically when a new row is inserted via `save(db)`.
+- **`auto_now`**: Refreshes a `DateTime<Utc>` field with `Utc::now()` automatically on both `save(db)` and `update(db)`.
+- **`choices = [("VALUE", "Human Label"), ...]`**: Restricts a `String` field to an allowed set of values (validated in forms/serializers and emitted as a SQL `CHECK` constraint by migrations).
 - **`foreign_key(on_delete = "...", related_name = "...")`**: Configures foreign key behavior. `on_delete` options: `"cascade"` (default), `"protect"`, `"set_null"`, `"restrict"`, `"do_nothing"`.
 
 ### Supported Field Types
 - Integer: `i32` (`FieldKind::Integer`), `i64` (`FieldKind::BigInt`)
 - Float: `f32`, `f64` (`FieldKind::Float`)
-- String: `String` (`FieldKind::Char` or `FieldKind::Text`)
+- Decimal: `rust_decimal::Decimal` (`FieldKind::Decimal { max_digits, decimal_places }`)
+- String: `String` (`FieldKind::Char` with `max_length`, or `FieldKind::Text` without)
 - Boolean: `bool` (`FieldKind::Boolean`)
-- Datetime: `chrono::DateTime<chrono::Utc>` (`FieldKind::DateTime`)
+- Datetime & Date/Time: `chrono::DateTime<chrono::Utc>` (`FieldKind::DateTime`), `chrono::NaiveDate` (`FieldKind::Date`), `chrono::NaiveTime` (`FieldKind::Time`), `chrono::Duration` (`FieldKind::Duration`)
+- UUID: `uuid::Uuid` (`FieldKind::Uuid`)
 - Foreign Key: `ForeignKey<TargetModel>`
 - One-to-One Key: `OneToOne<TargetModel>`
 - Many-to-Many Marker: `ManyToMany<TargetModel>`
@@ -104,9 +109,6 @@ pub struct ManagedModel {
 ```
 
 By overriding the manager, calling `ManagedModel::objects()` will automatically retrieve a queryset pre-filtered or configured according to your manager definition.
-
-> [!NOTE]
-> Types like `NaiveDate`, `NaiveTime`, `Duration`, `Uuid`, and `Decimal` are defined in `FieldKind` for schema metadata, but currently trigger a compile error on `Model` derive for save/update operations.
 
 ---
 
@@ -590,4 +592,28 @@ let routing_map = ModelDatabaseMap::new(
 
 // Retrieve the database configured for a specific model
 let db = routing_map.db_for::<User>();
+```
+
+## Compile-Time Direct JSON Serialization (`write_json`)
+
+Every `#[derive(Model)]` struct automatically generates a specialized, Fastify-style (`fast-json-stringify`) JSON writer on the `Model` trait:
+
+- **`model.write_json(&mut buf)`**: Writes all non-`ManyToMany` model fields directly into a `Vec<u8>` buffer with pre-escaped static `"\"field_name\":"` byte literals in lexicographical key order (using `itoa` for integers and `ryu` for floats), avoiding intermediate `Vec<(&'static str, BindValue)>` and `serde_json::Map` allocations.
+- **`model.write_json_filtered(&mut buf, |field_name| ...)`**: Same direct writer, filtered by a field-name predicate (used by `djangors-rest` when a `FieldSet` restricts readable fields).
+
+```rust,compile
+# use polls::models::Question;
+# use djangors_orm::Model;
+# use chrono::Utc;
+# fn main() {
+let q = Question {
+    id: 1,
+    question_text: "Fast JSON?".to_string(),
+    pub_date: Utc::now(),
+};
+
+let mut buf = Vec::with_capacity(128);
+q.write_json(&mut buf);
+assert!(std::str::from_utf8(&buf).unwrap().contains("\"question_text\":\"Fast JSON?\""));
+# }
 ```

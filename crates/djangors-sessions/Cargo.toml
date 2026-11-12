@@ -12,8 +12,13 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[features]
+default = ["postgres", "sqlite"]
+postgres = ["djangors-core/postgres"]
+sqlite = ["djangors-core/sqlite"]
+
 [dependencies]
-djangors-core = { path = "../djangors-core", version = "0.7.0" }
+djangors-core = { path = "../djangors-core", version = "0.9.0", default-features = false }
 hmac = "0.12.1"
 sha2 = "0.10.9"
 base64 = "0.22.1"

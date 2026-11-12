@@ -37,6 +37,24 @@ pub trait Pagination: Send + Sync + 'static {
         results: Vec<serde_json::Value>,
     ) -> serde_json::Value;
 
+    /// Stream the paginated response envelope directly into `buf`, invoking
+    /// `write_results(buf)` to write the `"results":[...]` array without
+    /// intermediate `serde_json::Value` allocations.
+    fn write_envelope(
+        &self,
+        req: &Request,
+        total: i64,
+        write_results: &mut dyn FnMut(&mut Vec<u8>),
+        buf: &mut Vec<u8>,
+    ) {
+        let mut results_buf = Vec::new();
+        write_results(&mut results_buf);
+        let results: Vec<serde_json::Value> =
+            serde_json::from_slice(&results_buf).unwrap_or_default();
+        let env = self.envelope(req, total, results);
+        let _ = serde_json::to_writer(&mut *buf, &env);
+    }
+
     /// Rows per page for this request.
     ///
     /// ViewSets need the size before they have a row count (the cursor path
@@ -118,6 +136,28 @@ impl Pagination for PageNumberPagination {
             "results": results,
         })
     }
+
+    fn write_envelope(
+        &self,
+        req: &Request,
+        total: i64,
+        write_results: &mut dyn FnMut(&mut Vec<u8>),
+        buf: &mut Vec<u8>,
+    ) {
+        let limit = resolve_size(req, self.page_size, self.max_page_size);
+        let paginator = Paginator::new(total, limit);
+        let page = requested_page(req);
+        let total_pages = paginator.total_pages();
+        buf.extend_from_slice(b"{\"count\":");
+        djangors_orm::json::write_json_i64(buf, total);
+        buf.extend_from_slice(b",\"page\":");
+        djangors_orm::json::write_json_i64(buf, page);
+        buf.extend_from_slice(b",\"total_pages\":");
+        djangors_orm::json::write_json_i64(buf, total_pages);
+        buf.extend_from_slice(b",\"results\":");
+        write_results(buf);
+        buf.push(b'}');
+    }
 }
 
 /// Reads `?limit=` and `?offset=` directly, and reports `count` / `limit` /
@@ -179,6 +219,25 @@ impl Pagination for LimitOffsetPagination {
             "results": results,
         })
     }
+
+    fn write_envelope(
+        &self,
+        req: &Request,
+        total: i64,
+        write_results: &mut dyn FnMut(&mut Vec<u8>),
+        buf: &mut Vec<u8>,
+    ) {
+        let slice = self.resolved(req);
+        buf.extend_from_slice(b"{\"count\":");
+        djangors_orm::json::write_json_i64(buf, total);
+        buf.extend_from_slice(b",\"limit\":");
+        djangors_orm::json::write_json_i64(buf, slice.limit);
+        buf.extend_from_slice(b",\"offset\":");
+        djangors_orm::json::write_json_i64(buf, slice.offset);
+        buf.extend_from_slice(b",\"results\":");
+        write_results(buf);
+        buf.push(b'}');
+    }
 }
 
 /// Keyset pagination over an ordered field, reporting `next_cursor` /
@@ -218,6 +277,27 @@ impl CursorPagination {
             "previous_cursor": serde_json::Value::Null,
         })
     }
+
+    /// Stream the cursor envelope directly into `buf` without intermediate
+    /// `serde_json::Value` allocations.
+    pub fn write_envelope_with_cursor(
+        &self,
+        total: i64,
+        write_results: &mut dyn FnMut(&mut Vec<u8>),
+        next_cursor: Option<&str>,
+        buf: &mut Vec<u8>,
+    ) {
+        buf.extend_from_slice(b"{\"count\":");
+        djangors_orm::json::write_json_i64(buf, total);
+        buf.extend_from_slice(b",\"results\":");
+        write_results(buf);
+        buf.extend_from_slice(b",\"next_cursor\":");
+        match next_cursor {
+            Some(c) => djangors_orm::json::write_json_str(buf, c),
+            None => djangors_orm::json::write_json_null(buf),
+        }
+        buf.extend_from_slice(b",\"previous_cursor\":null}");
+    }
 }
 
 impl Pagination for CursorPagination {
@@ -239,6 +319,16 @@ impl Pagination for CursorPagination {
         results: Vec<serde_json::Value>,
     ) -> serde_json::Value {
         self.envelope_with_cursor(total, results, None)
+    }
+
+    fn write_envelope(
+        &self,
+        _req: &Request,
+        total: i64,
+        write_results: &mut dyn FnMut(&mut Vec<u8>),
+        buf: &mut Vec<u8>,
+    ) {
+        self.write_envelope_with_cursor(total, write_results, None, buf);
     }
 }
 

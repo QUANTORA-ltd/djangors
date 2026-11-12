@@ -13,7 +13,12 @@ license.workspace = true
 authors.workspace = true
 
 [features]
-default = []
+default = ["postgres", "sqlite", "cache", "ws"]
+postgres = ["djangors-orm/postgres", "djangors-cache?/postgres"]
+sqlite = ["djangors-orm/sqlite", "djangors-cache?/sqlite"]
+cache = ["dep:djangors-cache"]
+ws = []
+debug-panel = []
 sentry = ["dep:sentry", "dep:sentry-tracing"]
 
 [dependencies]
@@ -56,8 +61,8 @@ serde_urlencoded = "0.7.1"
 multer = "3.1.0"
 rand = "0.8.7"
 base64 = "0.22.1"
-djangors-orm = { path = "../djangors-orm", version = "0.7.0" }
-djangors-cache = { path = "../djangors-cache", version = "0.7.0" }
+djangors-orm = { path = "../djangors-orm", version = "0.9.0", default-features = false }
+djangors-cache = { path = "../djangors-cache", version = "0.9.0", default-features = false, optional = true }
 inventory = "0.3.24"
 
 [dev-dependencies]

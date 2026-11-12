@@ -45,6 +45,43 @@ jobs:
           command: cargo doc --workspace --no-deps
           environment:
             RUSTDOCFLAGS: "-D warnings"
+      - run:
+          name: Check minimal facade and single-backend feature combinations
+          command: |
+            cargo check -p djangors --no-default-features --features postgres
+            cargo check -p djangors --no-default-features --features sqlite
+            cargo check -p djangors-db --no-default-features --features postgres
+            cargo check -p djangors-db --no-default-features --features sqlite
+            # Verify backend isolation: a Postgres-only facade build must not pull in SQLite,
+            # and a SQLite-only facade build must not pull in sqlx-postgres.
+            # Written as `if ...; then exit 1` because `set -e` ignores a `!`-negated
+            # pipeline, so `! cmd | grep -q` would never fail the step.
+            if cargo tree -p djangors --no-default-features --features postgres -e normal | grep "libsqlite3-sys"; then
+              echo "Postgres-only facade build pulls in SQLite" >&2
+              exit 1
+            fi
+            if cargo tree -p djangors --no-default-features --features sqlite -e normal | grep "sqlx-postgres"; then
+              echo "SQLite-only facade build pulls in sqlx-postgres" >&2
+              exit 1
+            fi
+      - run:
+          name: Measure release binary size
+          command: |
+            # Build separately: one `cargo build -p a -p b` unifies features across both
+            # packages, so minimal-facade would be measured with polls' full feature set.
+            cargo build --release -p minimal-facade
+            MIN_BYTES=$(stat -c%s target/release/minimal-facade)
+            cargo build --release -p polls
+            MIN_MIB=$(awk "BEGIN { printf \"%.2f\", $MIN_BYTES / (1024 * 1024) }")
+            POLLS_BYTES=$(stat -c%s target/release/polls)
+            POLLS_MIB=$(awk "BEGIN { printf \"%.2f\", $POLLS_BYTES / (1024 * 1024) }")
+            echo "Release binary size (examples/minimal-facade, postgres-only): ${MIN_MIB} MiB (${MIN_BYTES} bytes)"
+            echo "Release binary size (examples/polls, full stack): ${POLLS_MIB} MiB (${POLLS_BYTES} bytes)"
+            # Enforce a 6 MiB ceiling on the minimal facade binary (~4.0 MiB baseline)
+            # and a 14 MiB ceiling on the full polls binary (~11.5 MiB baseline).
+            test "$MIN_BYTES" -lt 6291456
+            test "$POLLS_BYTES" -lt 14680064
+            test "$MIN_BYTES" -lt "$POLLS_BYTES"
       - save_cache:
           key: cargo-registry-{{ checksum "Cargo.lock" }}
           paths:

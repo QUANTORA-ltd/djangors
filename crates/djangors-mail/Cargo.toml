@@ -16,7 +16,7 @@ authors.workspace = true
 async-trait = "0.1.86"
 thiserror = "2.0.18"
 tracing = "0.1.44"
-lettre = { version = "0.11.22", default-features = false, features = ["builder", "smtp-transport", "tokio1", "tokio1-native-tls"] }
+lettre = { version = "0.11.22", default-features = false, features = ["builder", "smtp-transport", "tokio1", "tokio1-rustls-tls"] }
 tokio = { version = "1.53.0", features = ["fs", "rt", "time"] }
 
 [dev-dependencies]
