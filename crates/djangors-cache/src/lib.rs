@@ -551,5 +551,101 @@ impl CachedResponse {
     }
 }
 
+/// Distributed lock backed by Redis `SET key token NX PX ttl` and Lua-script release.
+#[cfg(feature = "redis")]
+pub struct RedisLock;
+
+#[cfg(feature = "redis")]
+impl RedisLock {
+    /// Attempts to acquire a lock on `key` for `ttl`.
+    ///
+    /// Returns `Ok(Some(guard))` if acquired, or `Ok(None)` if another caller
+    /// already holds `key`. `ttl` must exceed the expected work duration so the
+    /// lock does not expire mid-operation.
+    pub async fn acquire(
+        client: &redis::Client,
+        key: &str,
+        ttl: Duration,
+    ) -> Result<Option<RedisLockGuard>, CacheError> {
+        use rand::RngCore;
+        let mut bytes = [0_u8; 16];
+        rand::rngs::OsRng.fill_bytes(&mut bytes);
+        let token: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+
+        let mut conn = client
+            .get_multiplexed_async_connection()
+            .await
+            .map_err(|e| CacheError::Backend(e.to_string()))?;
+        let ttl_ms = ttl.as_millis().max(1) as u64;
+        let res: Option<String> = redis::cmd("SET")
+            .arg(key)
+            .arg(&token)
+            .arg("NX")
+            .arg("PX")
+            .arg(ttl_ms)
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| CacheError::Backend(e.to_string()))?;
+
+        if res.is_some() {
+            Ok(Some(RedisLockGuard {
+                client: client.clone(),
+                key: key.to_string(),
+                token,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+/// Guard representing an acquired [`RedisLock`].
+///
+/// Call [`release`](Self::release) when done to delete the key only if the
+/// ownership token still matches.
+#[cfg(feature = "redis")]
+#[derive(Debug, Clone)]
+pub struct RedisLockGuard {
+    client: redis::Client,
+    key: String,
+    token: String,
+}
+
+#[cfg(feature = "redis")]
+impl RedisLockGuard {
+    /// Returns the locked Redis key.
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    /// Returns the ownership token stored under `key`.
+    pub fn token(&self) -> &str {
+        &self.token
+    }
+
+    /// Releases the lock using a Lua script that deletes `key` only if its
+    /// stored value still equals this guard's token.
+    ///
+    /// Returns `Ok(true)` if the lock was deleted, or `Ok(false)` if it had
+    /// already expired or been replaced by another owner.
+    pub async fn release(self) -> Result<bool, CacheError> {
+        let mut conn = self
+            .client
+            .get_multiplexed_async_connection()
+            .await
+            .map_err(|e| CacheError::Backend(e.to_string()))?;
+        let script = redis::Script::new(
+            "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+        );
+        let deleted: i64 = script
+            .key(&self.key)
+            .arg(&self.token)
+            .invoke_async(&mut conn)
+            .await
+            .map_err(|e| CacheError::Backend(e.to_string()))?;
+        Ok(deleted == 1)
+    }
+}
+
 #[cfg(test)]
 mod tests;

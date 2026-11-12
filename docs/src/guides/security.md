@@ -170,3 +170,38 @@ on the same host); `ClamAvScanner::tcp(host, port)` connects over TCP instead. S
 generally can't read arbitrary application-owned paths. Scanning in-memory bytes also means
 the check can happen before anything touches disk at all. This requires a real `clamd` daemon
 already running and reachable; nothing in this module starts one for you.
+
+---
+
+## CORS
+
+To let browser front ends on another origin call your API, configure `CorsConfig` and build a
+Tower layer with `cors_layer(&config)`.
+
+```rust,compile
+# use djangors_core::middleware::{cors_layer, csrf_layer, CorsConfig};
+# use djangors_core::{DjangorsError, Router};
+# use tower::ServiceBuilder;
+# fn example(settings: &djangors_core::DjangorsSettings, router: Router) -> Result<(), DjangorsError> {
+// Origins come from `cors_allowed_origins` in djangors.toml or
+// DJANGORS_CORS_ALLOWED_ORIGINS=https://app.example.com,https://admin.example.com
+let cors = cors_layer(&CorsConfig::from_settings(settings).allow_credentials(true))?;
+
+let service = ServiceBuilder::new()
+    .layer(cors)
+    .layer(csrf_layer())
+    .service(router);
+# let _ = service;
+# Ok(())
+# }
+```
+
+Each origin is `scheme://host[:port]` exactly as browsers send it, with no path or trailing
+slash; `cors_layer` returns an error for anything else. With `allow_credentials(true)`, cookies
+are sent cross-origin, so state-changing requests still go through CSRF: the front end must send
+the `X-CSRFToken` header.
+
+Always place `cors_layer` **outside** `csrf_layer()` so preflight `OPTIONS` requests are answered
+before CSRF checks run. `cors_layer` rejects `"*"` combined with `allow_credentials(true)` because
+browsers forbid wildcard origins with credentials, and `dj check --deploy` warns if
+`cors_allowed_origins` contains `"*"` when `debug` is `false`.

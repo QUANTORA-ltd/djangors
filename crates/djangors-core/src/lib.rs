@@ -38,6 +38,8 @@ pub mod groups;
 pub mod groups_pg;
 /// Handler trait definitions for standard and streaming HTTP routes.
 pub mod handler;
+/// Liveness (`/healthz`) and readiness (`/readyz`) health-check endpoints.
+pub mod health;
 /// HTTP request/response logging middleware.
 pub mod logging;
 /// Standard HTTP middleware layers (CSRF, Request ID, etc.).
@@ -51,6 +53,8 @@ pub mod path_params;
 pub mod ratelimit;
 /// Request structure wrapper.
 pub mod request;
+/// Resilience primitives: retries, timeouts, and circuit breakers.
+pub mod resilience;
 /// Response structure wrapper.
 pub mod response;
 /// URL routing engine and pattern matching.
@@ -65,6 +69,8 @@ pub mod signals;
 pub mod sse;
 /// Type-map state storage container.
 pub mod state;
+/// API versioning extractors and deprecation response middleware.
+pub mod versioning;
 /// RFC 6455 WebSocket upgrade and frame protocol (`ws` feature).
 #[cfg(feature = "ws")]
 pub mod ws;
@@ -79,16 +85,23 @@ pub use groups::{GroupHandle, Groups};
 #[cfg(feature = "postgres")]
 pub use groups_pg::PgGroups;
 pub use handler::{Handler, StreamingHandler};
+#[cfg(feature = "cache")]
+pub use health::CacheCheck;
+pub use health::{DatabaseCheck, HealthCheck, HealthChecks};
 pub use pagination::{decode_cursor, encode_cursor, CursorError, CursorPage, Paginator};
 pub use path_params::PathParams;
 #[cfg(feature = "cache")]
 pub use ratelimit::{rate_limited, ByIp, RateLimitKey, RateLimiter};
 pub use request::Request;
+#[cfg(feature = "resilience")]
+pub use resilience::{retry, RetryPolicy};
+pub use resilience::{with_timeout, BreakerError, CircuitBreaker, CircuitState, TimedOut};
 pub use response::Response;
 pub use router::Router;
 pub use settings::DjangorsSettings;
 pub use sse::StreamingResponse;
 pub use state::AppState;
+pub use versioning::{ApiVersion, DeprecationLayer, DeprecationService, VersionSource, Versioning};
 #[cfg(feature = "ws")]
 pub use ws::{
     upgrade_websocket, upgrade_websocket_with_policy, OriginPolicy, WebSocket, WsHandler, WsMessage,

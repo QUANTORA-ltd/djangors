@@ -16,7 +16,7 @@ authors.workspace = true
 default = ["postgres", "sqlite"]
 postgres = ["djangors-db/postgres"]
 sqlite = ["djangors-db/sqlite"]
-redis = ["dep:redis"]
+redis = ["dep:redis", "dep:rand"]
 
 [dependencies]
 async-trait = "0.1.86"
@@ -35,6 +35,7 @@ http-body = "1.0.1"
 sha2 = "0.10.9"
 tracing = "0.1.44"
 redis = { version = "1.4.1", features = ["tokio-comp"], optional = true }
+rand = { version = "0.8.7", optional = true }
 
 [dev-dependencies]
 sqlx = { version = "0.9.0", features = ["runtime-tokio", "postgres"] }

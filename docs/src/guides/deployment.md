@@ -23,14 +23,14 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 CMD ["/app/server"]
 ```
 
-### `/healthz` Route
-Projects include a dedicated `/healthz` endpoint returning HTTP `200 OK` for container orchestrators (Docker, Kubernetes) and load balancers:
+### `/healthz` and `/readyz` Routes
+Projects include `/healthz` (liveness) and `/readyz` (readiness) endpoints via `Router::health(HealthChecks::new())` for container orchestrators (Docker, Kubernetes) and load balancers. See [How to Add Health and Readiness Checks](../how-to/health-checks.md) for configuring `DatabaseCheck`, `CacheCheck`, and custom checks.
 
 ```rust,compile
-# use djangors_core::{Request, PathParams, Response, DjangorsError, StatusCode};
-pub async fn healthz(_req: Request, _params: PathParams) -> Result<Response, DjangorsError> {
-    Ok(Response::text(StatusCode::OK, "ok"))
-}
+# use djangors_core::{HealthChecks, Router};
+# fn example() -> Router {
+Router::new().health(HealthChecks::new())
+# }
 ```
 
 ---

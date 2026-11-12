@@ -612,6 +612,185 @@ where
     }
 }
 
+/// Configuration for [`cors_layer`].
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct CorsConfig {
+    /// Allowed origin strings (e.g. `"https://app.example.com"` or `"*"`).
+    pub allowed_origins: Vec<String>,
+    /// Allowed HTTP methods for cross-origin requests.
+    pub allowed_methods: Vec<hyper::http::Method>,
+    /// Allowed request header names (lowercased).
+    pub allowed_headers: Vec<String>,
+    /// Response headers exposed to browser JavaScript.
+    pub expose_headers: Vec<String>,
+    /// Whether `Access-Control-Allow-Credentials: true` is sent.
+    pub allow_credentials: bool,
+    /// Preflight cache duration (`Access-Control-Max-Age`).
+    pub max_age: Option<std::time::Duration>,
+}
+
+impl Default for CorsConfig {
+    fn default() -> Self {
+        Self {
+            allowed_origins: Vec::new(),
+            allowed_methods: vec![
+                hyper::http::Method::GET,
+                hyper::http::Method::POST,
+                hyper::http::Method::PUT,
+                hyper::http::Method::PATCH,
+                hyper::http::Method::DELETE,
+                hyper::http::Method::OPTIONS,
+            ],
+            allowed_headers: vec![
+                "content-type".to_string(),
+                "authorization".to_string(),
+                "x-api-key".to_string(),
+                "x-csrftoken".to_string(),
+                "idempotency-key".to_string(),
+            ],
+            expose_headers: Vec::new(),
+            allow_credentials: false,
+            max_age: Some(std::time::Duration::from_secs(3600)),
+        }
+    }
+}
+
+impl CorsConfig {
+    /// Creates a [`CorsConfig`] with framework defaults.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Creates a [`CorsConfig`] with framework defaults and the origins from
+    /// [`DjangorsSettings::cors_allowed_origins`](crate::settings::DjangorsSettings)
+    /// (`cors_allowed_origins` in `djangors.toml` or `DJANGORS_CORS_ALLOWED_ORIGINS`).
+    pub fn from_settings(settings: &crate::settings::DjangorsSettings) -> Self {
+        Self::default().allowed_origins(settings.cors_allowed_origins.iter().cloned())
+    }
+
+    /// Sets the allowed origins (exact origin URLs or `"*"`).
+    pub fn allowed_origins(mut self, origins: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.allowed_origins = origins.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Sets the allowed HTTP methods.
+    pub fn allowed_methods(
+        mut self,
+        methods: impl IntoIterator<Item = hyper::http::Method>,
+    ) -> Self {
+        self.allowed_methods = methods.into_iter().collect();
+        self
+    }
+
+    /// Sets the allowed request headers.
+    pub fn allowed_headers(mut self, headers: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.allowed_headers = headers.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Sets the response headers exposed to browser clients.
+    pub fn expose_headers(mut self, headers: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.expose_headers = headers.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Sets whether credentials (cookies, authorization headers) are allowed.
+    pub fn allow_credentials(mut self, allow: bool) -> Self {
+        self.allow_credentials = allow;
+        self
+    }
+
+    /// Sets the preflight `Access-Control-Max-Age` duration.
+    pub fn max_age(mut self, max_age: Option<std::time::Duration>) -> Self {
+        self.max_age = max_age;
+        self
+    }
+}
+
+/// Builds a [`tower_http::cors::CorsLayer`] from a [`CorsConfig`].
+///
+/// Rejects `"*"` in `allowed_origins` when `allow_credentials` is `true`
+/// (browsers reject wildcard origins with credentials), and rejects malformed
+/// origin or header strings.
+pub fn cors_layer(
+    config: &CorsConfig,
+) -> Result<tower_http::cors::CorsLayer, crate::error::DjangorsError> {
+    let has_wildcard = config.allowed_origins.iter().any(|o| o.trim() == "*");
+    if has_wildcard && config.allow_credentials {
+        return Err(crate::error::DjangorsError::Internal(
+            "CORS configuration error: allow_credentials cannot be true when allowed_origins contains '*'".to_string(),
+        ));
+    }
+
+    let mut layer = tower_http::cors::CorsLayer::new()
+        .allow_methods(config.allowed_methods.clone())
+        .allow_credentials(config.allow_credentials);
+
+    if has_wildcard {
+        layer = layer.allow_origin(tower_http::cors::Any);
+    } else if !config.allowed_origins.is_empty() {
+        let mut origins = Vec::with_capacity(config.allowed_origins.len());
+        for origin in &config.allowed_origins {
+            let trimmed = origin.trim();
+            // An origin is `scheme://host[:port]` with nothing after it. Browsers send it
+            // exactly like that, so `https://app.example.com/` would never match.
+            let host_part = trimmed.split_once("://").map_or("", |(_, rest)| rest);
+            let valid_uri = !host_part.is_empty()
+                && !host_part.contains(['/', '?', '#'])
+                && trimmed
+                    .parse::<hyper::Uri>()
+                    .ok()
+                    .is_some_and(|uri| uri.scheme().is_some() && uri.authority().is_some());
+            if !valid_uri {
+                return Err(crate::error::DjangorsError::Internal(format!(
+                    "CORS configuration error: invalid origin '{origin}'"
+                )));
+            }
+            let header_val = hyper::http::HeaderValue::from_str(trimmed).map_err(|e| {
+                crate::error::DjangorsError::Internal(format!(
+                    "CORS configuration error: invalid origin '{origin}': {e}"
+                ))
+            })?;
+            origins.push(header_val);
+        }
+        layer = layer.allow_origin(tower_http::cors::AllowOrigin::list(origins));
+    }
+
+    if !config.allowed_headers.is_empty() {
+        let mut headers = Vec::with_capacity(config.allowed_headers.len());
+        for h in &config.allowed_headers {
+            let name = hyper::http::HeaderName::from_bytes(h.trim().as_bytes()).map_err(|e| {
+                crate::error::DjangorsError::Internal(format!(
+                    "CORS configuration error: invalid allowed header '{h}': {e}"
+                ))
+            })?;
+            headers.push(name);
+        }
+        layer = layer.allow_headers(headers);
+    }
+
+    if !config.expose_headers.is_empty() {
+        let mut headers = Vec::with_capacity(config.expose_headers.len());
+        for h in &config.expose_headers {
+            let name = hyper::http::HeaderName::from_bytes(h.trim().as_bytes()).map_err(|e| {
+                crate::error::DjangorsError::Internal(format!(
+                    "CORS configuration error: invalid expose header '{h}': {e}"
+                ))
+            })?;
+            headers.push(name);
+        }
+        layer = layer.expose_headers(headers);
+    }
+
+    if let Some(max_age) = config.max_age {
+        layer = layer.max_age(max_age);
+    }
+
+    Ok(layer)
+}
+
 #[cfg(test)]
 #[path = "middleware_tests.rs"]
 mod tests;

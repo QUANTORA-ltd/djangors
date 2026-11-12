@@ -134,6 +134,7 @@ environment variable when the settings are loaded with `DjangorsSettings::from_e
 | `host` | `DJANGORS_HOST` | `127.0.0.1` |
 | `port` | `DJANGORS_PORT` | `8000` |
 | `max_body_bytes` | `DJANGORS_MAX_BODY_BYTES` | `10485760` (10 MiB) |
+| `cors_allowed_origins` | `DJANGORS_CORS_ALLOWED_ORIGINS` | empty |
 
 `max_body_bytes` is the largest request body the router will read. See
 [Request size limit](http-and-middleware.md#request-size-limit).

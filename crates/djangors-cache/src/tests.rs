@@ -586,3 +586,46 @@ async fn idempotency_rejects_bodies_over_the_limit_before_the_handler_runs() {
     assert_eq!(declared.status(), StatusCode::PAYLOAD_TOO_LARGE);
     assert_eq!(count.load(Ordering::SeqCst), 1);
 }
+
+#[cfg(feature = "redis")]
+#[tokio::test]
+async fn redis_lock_acquire_release_and_wrong_token() {
+    let Ok(url) = std::env::var("REDIS_URL") else {
+        return;
+    };
+    let client = redis::Client::open(url.as_str()).unwrap();
+    let key = format!("djangors:test:lock:{}", std::process::id());
+
+    let guard = RedisLock::acquire(&client, &key, Duration::from_secs(10))
+        .await
+        .unwrap()
+        .expect("first acquire should succeed");
+
+    // Second acquire fails while held.
+    let second = RedisLock::acquire(&client, &key, Duration::from_secs(10))
+        .await
+        .unwrap();
+    assert!(second.is_none());
+
+    // Release with a wrong token does not delete the lock.
+    let wrong_guard = RedisLockGuard {
+        client: client.clone(),
+        key: key.clone(),
+        token: "wrong-token".to_string(),
+    };
+    assert!(!wrong_guard.release().await.unwrap());
+
+    // Still locked.
+    assert!(RedisLock::acquire(&client, &key, Duration::from_secs(10))
+        .await
+        .unwrap()
+        .is_none());
+
+    // Release with the real guard succeeds, and re-acquire succeeds.
+    assert!(guard.release().await.unwrap());
+    let reacquired = RedisLock::acquire(&client, &key, Duration::from_secs(10))
+        .await
+        .unwrap()
+        .expect("re-acquire after release should succeed");
+    assert!(reacquired.release().await.unwrap());
+}

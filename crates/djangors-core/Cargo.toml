@@ -13,11 +13,12 @@ license.workspace = true
 authors.workspace = true
 
 [features]
-default = ["postgres", "sqlite", "cache", "ws"]
-postgres = ["djangors-orm/postgres", "djangors-cache?/postgres"]
-sqlite = ["djangors-orm/sqlite", "djangors-cache?/sqlite"]
+default = ["postgres", "sqlite", "cache", "ws", "resilience"]
+postgres = ["djangors-orm/postgres", "djangors-db/postgres", "djangors-cache?/postgres"]
+sqlite = ["djangors-orm/sqlite", "djangors-db/sqlite", "djangors-cache?/sqlite"]
 cache = ["dep:djangors-cache"]
 ws = []
+resilience = ["dep:backon"]
 debug-panel = []
 sentry = ["dep:sentry", "dep:sentry-tracing"]
 otel = [
@@ -64,6 +65,7 @@ tower-http = { version = "0.7.0", features = [
     "trace",
     "compression-gzip",
     "compression-br",
+    "cors",
     "set-header",
     "normalize-path",
     "request-id",
@@ -78,11 +80,13 @@ multer = "3.1.0"
 rand = "0.8.7"
 base64 = "0.22.1"
 djangors-orm = { path = "../djangors-orm", version = "0.11.0", default-features = false }
+djangors-db = { path = "../djangors-db", version = "0.11.0", default-features = false }
 djangors-cache = { path = "../djangors-cache", version = "0.11.0", default-features = false, optional = true }
+backon = { version = "1.6.0", default-features = false, features = ["std", "tokio-sleep"], optional = true }
 inventory = "0.3.24"
 
 [dev-dependencies]
-djangors-db = { path = "../djangors-db" }
 djangors-orm = { path = "../djangors-orm" }
 djangors-macros = { path = "../djangors-macros" }
 sqlx = { version = "0.9.0", features = ["runtime-tokio", "postgres"] }
+tokio = { version = "1.53.0", features = ["test-util"] }
