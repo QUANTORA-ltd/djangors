@@ -60,9 +60,38 @@ fn test_parse_createsuperuser() {
     ];
     let cli = Cli::try_parse_from(args).unwrap();
     match cli.command {
-        Commands::Createsuperuser { username, email } => {
+        Commands::Createsuperuser {
+            username,
+            email,
+            skip_validation,
+        } => {
             assert_eq!(username, "admin");
             assert_eq!(email, "admin@example.com");
+            assert!(!skip_validation);
+        }
+        _ => panic!("Expected Commands::Createsuperuser"),
+    }
+}
+
+#[test]
+fn test_parse_createsuperuser_skip_validation() {
+    let args = vec![
+        "dj",
+        "createsuperuser",
+        "--username",
+        "admin",
+        "--skip-validation",
+    ];
+    let cli = Cli::try_parse_from(args).unwrap();
+    match cli.command {
+        Commands::Createsuperuser {
+            username,
+            email,
+            skip_validation,
+        } => {
+            assert_eq!(username, "admin");
+            assert_eq!(email, "");
+            assert!(skip_validation);
         }
         _ => panic!("Expected Commands::Createsuperuser"),
     }

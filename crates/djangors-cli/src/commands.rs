@@ -151,7 +151,8 @@ codegen-units = 1
 pub mod views;
 "#;
 
-    let main_rs = r#"use djangors_core::{Djangors, DjangorsError, DjangorsSettings, Router};
+    let main_rs =
+        r#"use djangors_core::{Djangors, DjangorsError, DjangorsSettings, HealthChecks, Router};
 
 use __LIB__::views;
 
@@ -168,7 +169,7 @@ async fn main() -> Result<(), DjangorsError> {
 
     let router = Router::new()
         .get("/", views::welcome)
-        .get("/healthz", views::healthz);
+        .health(HealthChecks::new());
     let router_service = djangors_core::router::RouterService::new(router, settings.debug);
 
     let service = tower::ServiceBuilder::new()
@@ -178,7 +179,7 @@ async fn main() -> Result<(), DjangorsError> {
     Djangors::new(settings, Router::new()).run_service(service).await
 }
 "#
-    .replace("__LIB__", &lib_ident);
+        .replace("__LIB__", &lib_ident);
 
     let seed_rs = r#"//! Seed data for development databases. Run it with `dj seed`.
 //!
@@ -214,10 +215,6 @@ pub async fn welcome(_req: Request, _params: PathParams) -> Result<Response, Dja
 </body></html>"
             .to_string(),
     ))
-}
-
-pub async fn healthz(_req: Request, _params: PathParams) -> Result<Response, DjangorsError> {
-    Ok(Response::text(StatusCode::OK, "ok"))
 }
 "#;
 
@@ -640,6 +637,17 @@ pub fn check(deploy: bool) -> Result<Vec<String>, String> {
             if !settings.debug && settings.allowed_hosts == default_hosts {
                 issues.push(
                     "ALLOWED_HOSTS looks like the default; set it explicitly for production".into(),
+                );
+            }
+            if !settings.debug
+                && settings
+                    .cors_allowed_origins
+                    .iter()
+                    .any(|o| o.trim() == "*")
+            {
+                issues.push(
+                    "CORS_ALLOWED_ORIGINS contains '*'; specify explicit origins in production"
+                        .into(),
                 );
             }
         }
@@ -1309,7 +1317,7 @@ pub async fn create_superuser_impl(
 ///
 /// Note: non-interactive only, mirrors Django's `DJANGO_SUPERUSER_PASSWORD` convention;
 /// interactive prompting deferred.
-pub async fn createsuperuser(username: String, email: String) {
+pub async fn createsuperuser(username: String, email: String, skip_validation: bool) {
     let password = match std::env::var("DJANGORS_SUPERUSER_PASSWORD") {
         Ok(val) if !val.is_empty() => val,
         _ => {
@@ -1317,6 +1325,20 @@ pub async fn createsuperuser(username: String, email: String) {
             std::process::exit(1);
         }
     };
+
+    if !skip_validation {
+        let attrs = djangors_auth::UserAttributes::new(&username, &email);
+        if let Err(errors) = djangors_auth::validate_password(
+            &password,
+            Some(&attrs),
+            &djangors_auth::default_validators(),
+        ) {
+            for msg in errors {
+                eprintln!("[dj createsuperuser] password validation error: {msg}");
+            }
+            std::process::exit(1);
+        }
+    }
 
     let db_url = match std::env::var("DATABASE_URL") {
         Ok(url) => url,

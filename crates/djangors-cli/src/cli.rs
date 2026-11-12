@@ -103,6 +103,10 @@ pub enum Commands {
         /// The email address for the superuser.
         #[arg(long, default_value = "")]
         email: String,
+
+        /// Skip password complexity validation.
+        #[arg(long)]
+        skip_validation: bool,
     },
     /// Create/update the standard view/add/change/delete permissions for every registered model.
     #[command(name = "createpermissions")]
