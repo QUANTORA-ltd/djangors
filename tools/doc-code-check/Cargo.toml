@@ -11,7 +11,7 @@ djangors-db = { path = "../../crates/djangors-db" }
 djangors-orm = { path = "../../crates/djangors-orm" }
 djangors-forms = { path = "../../crates/djangors-forms" }
 djangors-admin = { path = "../../crates/djangors-admin" }
-djangors-auth = { path = "../../crates/djangors-auth" }
+djangors-auth = { path = "../../crates/djangors-auth", features = ["passkeys"] }
 djangors-cache = { path = "../../crates/djangors-cache" }
 djangors-mail = { path = "../../crates/djangors-mail" }
 djangors-migrations = { path = "../../crates/djangors-migrations" }
