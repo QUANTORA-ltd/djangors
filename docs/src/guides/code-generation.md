@@ -147,8 +147,10 @@ try {
 `ClientOptions.fetch` lets you pass your own `fetch` implementation, for example in
 tests or older runtimes.
 
-**Check the paths.** The generator assumes each model is served at
-`/api/<plural>/`, the layout `dj generate resource` produces. If you mount a ViewSet
+**Check the paths.** By default, the generator assumes each model is served at
+`/api/<plural>/`, the layout `dj generate resource` produces. Set `--api-prefix <PREFIX>`
+to change the prefix and repeat `--model <NAME>` to include only matching Rust struct names.
+If you mount a ViewSet
 somewhere else, or don't expose a model over REST at all, edit the generated paths or
 delete those methods. Regenerate the client whenever your models change; the file
 starts with a "do not edit" header for that reason.

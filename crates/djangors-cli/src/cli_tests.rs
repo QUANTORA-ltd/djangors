@@ -185,12 +185,25 @@ fn test_parse_openapi_typescript() {
             output,
             title,
             api_version,
+            api_prefix,
+            model,
         } => {
             assert!(typescript);
             assert_eq!(output, Some(PathBuf::from("client.ts")));
             assert_eq!(title, "Blog API");
             assert_eq!(api_version, "0.1.0");
+            assert_eq!(api_prefix, "/api");
+            assert!(model.is_empty());
         }
+        _ => panic!("Expected Commands::Openapi"),
+    }
+}
+
+#[test]
+fn test_parse_openapi_prefix_and_models() {
+    let cli = Cli::try_parse_from(["dj", "openapi", "--api-prefix", "/v2", "--model", "Post", "--model", "User"]).unwrap();
+    match cli.command {
+        Commands::Openapi { api_prefix, model, .. } => { assert_eq!(api_prefix, "/v2"); assert_eq!(model, vec!["Post".to_string(), "User".to_string()]); }
         _ => panic!("Expected Commands::Openapi"),
     }
 }

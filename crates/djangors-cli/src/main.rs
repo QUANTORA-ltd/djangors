@@ -157,8 +157,10 @@ async fn main() {
             output,
             title,
             api_version,
+            api_prefix,
+            model,
         } => {
-            if let Err(e) = commands::openapi(typescript, output, &title, &api_version) {
+            if let Err(e) = commands::openapi(typescript, output, &title, &api_version, &api_prefix, &model) {
                 eprintln!("[dj openapi] error: {e}");
                 std::process::exit(1);
             }

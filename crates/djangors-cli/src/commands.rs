@@ -1419,10 +1419,12 @@ pub fn openapi(
     output: Option<PathBuf>,
     title: &str,
     api_version: &str,
+    api_prefix: &str,
+    model_filter: &[String],
 ) -> Result<(), String> {
     require_project_root()?;
     let models = introspect_models()?;
-    let rendered = render_openapi_from_snapshots(&models, typescript, title, api_version);
+    let rendered = render_openapi_from_snapshots(&models, typescript, title, api_version, api_prefix, model_filter)?;
     if let Some(path) = output {
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
@@ -1445,19 +1447,31 @@ pub fn render_openapi_from_snapshots(
     typescript: bool,
     title: &str,
     api_version: &str,
-) -> String {
+    api_prefix: &str,
+    model_filter: &[String],
+) -> Result<String, String> {
+    let available = models.iter().map(|m| m.struct_name.clone()).collect::<Vec<_>>();
+    let unknown = model_filter.iter().filter(|name| !available.contains(name)).cloned().collect::<Vec<_>>();
+    if !unknown.is_empty() { return Err(format!("unknown model(s): {}; available models: {}", unknown.join(", "), available.join(", "))); }
+    let prefix = format!("/{}", api_prefix.trim_matches('/'));
+    let prefix = if prefix == "/" { String::new() } else { prefix };
+    let assumption = format!("Paths assume each model is mounted at {}/<plural>/.", prefix);
     let mut builder = djangors_rest::OpenApiBuilder::new(title, api_version);
     for model in models {
+        if !model_filter.is_empty() && !model_filter.contains(&model.struct_name) { continue; }
         let base_path = format!(
-            "/api/{}",
+            "{}/{}",
+            prefix,
             pluralize_snake(&to_snake_case(&model.struct_name))
         );
         builder.register_snapshot(model, &base_path);
     }
     if typescript {
-        builder.to_typescript()
+        Ok(format!("// {assumption}\n{}", builder.to_typescript()))
     } else {
-        serde_json::to_string_pretty(&builder.build()).expect("OpenAPI spec is serializable")
+        let mut spec = builder.build();
+        spec["info"]["description"] = serde_json::Value::String(assumption);
+        Ok(serde_json::to_string_pretty(&spec).expect("OpenAPI spec is serializable"))
     }
 }
 

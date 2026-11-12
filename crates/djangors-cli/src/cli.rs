@@ -139,6 +139,12 @@ pub enum Commands {
         /// API version used in the generated OpenAPI specification.
         #[arg(long, default_value = "0.1.0")]
         api_version: String,
+        /// API path prefix used for every model.
+        #[arg(long, default_value = "/api")]
+        api_prefix: String,
+        /// Include only the named model (repeatable; defaults to all models).
+        #[arg(long = "model")]
+        model: Vec<String>,
     },
     /// Generate code artifacts such as full-stack CRUD resources (`dj generate resource`).
     #[command(name = "generate")]
