@@ -32,6 +32,28 @@ All notable changes to Djangors are documented here. Format loosely follows
   `Cross-Origin-Resource-Policy`; `SecurityHeadersBuilder` and `PermissionsPolicyBuilder`
   configure them. `CspBuilder::with_nonce()` adds a per-request nonce (`CspNonce`), exposed to
   templates as `csp_nonce()`. `dj check --deploy` warns when security headers are missing.
+- **Signing API** (`djangors_core::signing`): `Signer` and `TimestampSigner` with a salt per
+  purpose, optional compression (`dumps`/`loads`), `secret_key_fallbacks` for key rotation, and
+  signed URLs (`sign_url`/`verify_signed_url`). GDPR export links now use it.
+- **Magic-link login** (`djangors_auth::magic_link`): single-use, hashed, 15-minute login links
+  with throttling and a POST confirmation page, so mail scanners can't use them up.
+- **Admin impersonation** (`djangors_auth::impersonation`): superusers can act as a
+  non-superuser, with an audit log, an admin banner, and a way back. `NotImpersonating` blocks
+  sensitive actions; `change_password` refuses while impersonating.
+- **Secrets providers** (`djangors_core::secrets`, default feature `secrets`): environment,
+  `.env`, file (Docker/Kubernetes secrets), HashiCorp Vault, and chains of them.
+- **Encryption key rotation**: `KeyRing` with several keys (`DJANGORS_FIELD_ENCRYPTION_KEYS`);
+  new ciphertexts carry a key id and old ones still decrypt. `dj rotate-encryption-keys`
+  re-encrypts in batches.
+- **LDAP / Active Directory** (feature `ldap`): `LdapBackend` over rustls, with RFC 4514/4515
+  escaping, group mapping, and optional user creation on first login. Empty passwords are refused.
+- **Social login** (`djangors-contrib-oauth`, feature `oauth-client`): Google, Microsoft, Apple,
+  GitHub and generic OIDC, with PKCE, `state`, `nonce` and JWKS-verified ID tokens.
+- **OAuth 2 / OIDC provider** (`djangors-contrib-oauth`, feature `oauth-provider`):
+  authorization code with PKCE, client credentials, rotating refresh tokens with reuse
+  detection, revocation, introspection, UserInfo, JWKS and discovery.
+- **SAML 2.0 SSO** (`djangors-contrib-saml`, feature `saml`): pure-Rust signature checks
+  against pinned IdP certificates, with protection against signature wrapping, XXE and replay.
 
 ### Changed
 

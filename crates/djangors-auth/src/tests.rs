@@ -1596,3 +1596,33 @@ async fn test_gdpr_export_and_scheduled_deletion() {
     assert!(!reloaded.is_active);
     assert!(reloaded.username.starts_with("deleted_user_"));
 }
+
+#[test]
+fn test_gdpr_export_token_roundtrip_and_rejections() {
+    let secret = b"export-token-test-secret-0123456789";
+    let token = gdpr::sign_export_download_token(42, secret, Duration::from_secs(600)).unwrap();
+    assert_eq!(gdpr::verify_export_download_token(&token, secret), Some(42));
+
+    // Another secret does not verify the token.
+    assert_eq!(
+        gdpr::verify_export_download_token(&token, b"a-different-secret-value-xxxxxxxx"),
+        None
+    );
+
+    // Tampering with the user id invalidates the signature.
+    let forged = token.replacen("42.", "43.", 1);
+    assert_eq!(gdpr::verify_export_download_token(&forged, secret), None);
+
+    // An already expired token is rejected.
+    let expired = gdpr::sign_export_download_token(42, secret, Duration::ZERO).unwrap();
+    assert_eq!(gdpr::verify_export_download_token(&expired, secret), None);
+}
+
+#[test]
+fn test_gdpr_export_token_fails_closed_without_secret() {
+    assert!(gdpr::sign_export_download_token(1, b"", Duration::from_secs(60)).is_err());
+    assert_eq!(
+        gdpr::verify_export_download_token("1.9999999999:AAAA", b""),
+        None
+    );
+}

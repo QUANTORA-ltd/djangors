@@ -62,16 +62,25 @@ Rows written before a field was marked `encrypted` contain plaintext. Those valu
 
 ## Key rotation
 
-To rotate, move the current key into `DJANGORS_FIELD_ENCRYPTION_OLD_KEYS` and set a new key:
+Configure keys with `DJANGORS_FIELD_ENCRYPTION_KEYS` as a comma-separated list of base64-encoded 32-byte keys, **newest first**:
 
 ```text
-DJANGORS_FIELD_ENCRYPTION_KEY=<new key>
-DJANGORS_FIELD_ENCRYPTION_OLD_KEYS=<previous key>[,<older key>...]
+DJANGORS_FIELD_ENCRYPTION_KEYS=<newest key>,<previous key>[,<older key>...]
 ```
 
-Reads try the current key first and then each old key. Writes always use the current key. Rows written under an old key are re-encrypted when they are next saved or updated. To re-encrypt everything at once, load each row and call `save` or `update` on it. Once no rows depend on an old key, remove it from the list.
+(The older two-variable form `DJANGORS_FIELD_ENCRYPTION_KEY` + `DJANGORS_FIELD_ENCRYPTION_OLD_KEYS` continues to work when `DJANGORS_FIELD_ENCRYPTION_KEYS` is unset.)
 
-Keep the old keys in the list for as long as any row may still hold a value encrypted with them.
+New writes always encrypt using the first key in `DJANGORS_FIELD_ENCRYPTION_KEYS` and tag each ciphertext with its key ID (`enc:v1:<key_id>:<base64>`). Reads look up the named key ID directly, while legacy untagged ciphertexts (`enc:v1:<base64>`) remain readable via key 0 and any older keys in the list.
+
+### Batch re-encryption with `dj rotate-encryption-keys`
+
+After prepending a new key to `DJANGORS_FIELD_ENCRYPTION_KEYS`, re-encrypt existing rows in transactional batches of 500 (default):
+
+```bash
+dj rotate-encryption-keys --model billing.PaymentMethod --batch 500
+```
+
+Each batch commits inside its own transaction and skips rows already tagged with the newest key ID, so an interrupted run can be resumed safely by running the command again. Once every row has been rotated, remove the retired keys from `DJANGORS_FIELD_ENCRYPTION_KEYS`. If any row references a missing or wrong key ID, decryption returns an error rather than exposing ciphertext.
 
 ## What you cannot do
 

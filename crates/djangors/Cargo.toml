@@ -36,6 +36,7 @@ default = [
     "ws",
     "password-strength",
     "resilience",
+    "secrets",
 ]
 postgres = [
     "djangors-db/postgres",
@@ -55,6 +56,8 @@ postgres = [
     "djangors-contrib-tenancy?/postgres",
     "djangors-contrib-history?/postgres",
     "djangors-contrib-orgs?/postgres",
+    "djangors-contrib-oauth?/postgres",
+    "djangors-contrib-saml?/postgres",
 ]
 sqlite = [
     "djangors-db/sqlite",
@@ -74,13 +77,16 @@ sqlite = [
     "djangors-contrib-tenancy?/sqlite",
     "djangors-contrib-history?/sqlite",
     "djangors-contrib-orgs?/sqlite",
+    "djangors-contrib-oauth?/sqlite",
+    "djangors-contrib-saml?/sqlite",
 ]
 migrations = ["dep:djangors-migrations"]
 rest = ["dep:djangors-rest"]
-admin = ["dep:djangors-admin", "djangors-rest?/admin", "djangors-contrib-orgs?/admin"]
+admin = ["dep:djangors-admin", "djangors-rest?/admin", "djangors-contrib-orgs?/admin", "djangors-contrib-oauth?/admin", "djangors-contrib-saml?/admin"]
 auth = ["dep:djangors-auth"]
 passkeys = ["auth", "djangors-auth/passkeys"]
 password-strength = ["auth", "djangors-auth/password-strength"]
+ldap = ["auth", "djangors-auth/ldap"]
 forms = ["dep:djangors-forms"]
 captcha = ["forms", "djangors-forms/captcha", "djangors-core/captcha"]
 sessions = ["dep:djangors-sessions"]
@@ -101,6 +107,10 @@ ws = ["djangors-core/ws"]
 debug-panel = ["djangors-core/debug-panel"]
 otel = ["djangors-core/otel"]
 resilience = ["djangors-core/resilience"]
+secrets = ["djangors-core/secrets"]
+oauth-client = ["dep:djangors-contrib-oauth", "auth", "sessions", "djangors-contrib-oauth/client"]
+oauth-provider = ["dep:djangors-contrib-oauth", "auth", "sessions", "djangors-contrib-oauth/provider"]
+saml = ["dep:djangors-contrib-saml", "auth", "sessions", "cache"]
 
 [dependencies]
 djangors-core = { path = "../djangors-core", version = "0.12.0", default-features = false }
@@ -122,4 +132,6 @@ djangors-pdf = { path = "../djangors-pdf", version = "0.12.0", optional = true }
 djangors-contrib-payments = { path = "../djangors-contrib-payments", version = "0.12.0", default-features = false, optional = true }
 djangors-contrib-tenancy = { path = "../djangors-contrib-tenancy", version = "0.12.0", default-features = false, optional = true }
 djangors-contrib-history = { path = "../djangors-contrib-history", version = "0.12.0", default-features = false, optional = true }
+djangors-contrib-oauth = { path = "../djangors-contrib-oauth", version = "0.12.0", default-features = false, optional = true }
 djangors-contrib-orgs = { path = "../djangors-contrib-orgs", version = "0.12.0", default-features = false, optional = true }
+djangors-contrib-saml = { path = "../djangors-contrib-saml", version = "0.12.0", default-features = false, optional = true }

@@ -1,4 +1,8 @@
-use super::{decrypt_str, encrypt_str, encrypt_value, parse_key, seal, set_keys_for_tests, PREFIX};
+use super::{
+    decrypt_str, decrypt_str_with_ring, encrypt_str, encrypt_str_with_ring, encrypt_value,
+    parse_key, rotate_model_keys_with_ring, rotate_registered_model_keys_with_ring, seal,
+    set_keys_for_tests, KeyRing, PREFIX,
+};
 use crate::error::OrmError;
 use crate::expr::{SetExpr, Value};
 use crate::meta::Model;
@@ -407,4 +411,169 @@ async fn grouping_aggregating_and_functions_on_encrypted_fields_are_rejected() {
         .await
         .unwrap();
     assert_eq!(counted.len(), 1);
+}
+
+#[test]
+fn key_ring_from_comma_separated_newest_first_uses_first_key() {
+    let newest = [11u8; 32];
+    let older = [12u8; 32];
+    let csv = format!(
+        " {} , {} , ",
+        STANDARD.encode(newest),
+        STANDARD.encode(older)
+    );
+    let ring_both = KeyRing::from_comma_separated(&csv).unwrap();
+    let ring_newest_only = KeyRing::from_keys(vec![newest]).unwrap();
+
+    assert_eq!(ring_both.len(), 2);
+    assert_eq!(
+        ring_both.current_key_id(),
+        ring_newest_only.current_key_id()
+    );
+
+    let ct = encrypt_str_with_ring(&ring_both, "top secret").unwrap();
+    assert!(ct.starts_with(&format!("{PREFIX}{}:", ring_both.current_key_id())));
+    assert_eq!(
+        decrypt_str_with_ring(&ring_newest_only, &ct).unwrap(),
+        "top secret"
+    );
+
+    // Empty or malformed key lists fail closed.
+    assert!(KeyRing::from_comma_separated(" , ").is_err());
+    assert!(KeyRing::from_comma_separated("not-valid-base64").is_err());
+}
+
+#[test]
+fn old_data_stays_readable_after_prepending_new_key_and_wrong_key_errors() {
+    let k1 = [21u8; 32];
+    let k2 = [22u8; 32];
+    let k3 = [23u8; 32];
+
+    let ring_v1 = KeyRing::from_keys(vec![k1]).unwrap();
+    let tagged_under_k1 = encrypt_str_with_ring(&ring_v1, "tagged k1").unwrap();
+    let legacy_under_k1 = ciphertext_under(&k1, "legacy k1");
+
+    // Rotate by prepending k2 (newest first): [k2, k1].
+    let ring_v2 = KeyRing::from_keys(vec![k2, k1]).unwrap();
+    assert_eq!(
+        decrypt_str_with_ring(&ring_v2, &tagged_under_k1).unwrap(),
+        "tagged k1"
+    );
+    assert_eq!(
+        decrypt_str_with_ring(&ring_v2, &legacy_under_k1).unwrap(),
+        "legacy k1"
+    );
+
+    // New writes always use k2 (first key).
+    let tagged_under_k2 = encrypt_str_with_ring(&ring_v2, "tagged k2").unwrap();
+    assert!(ring_v2.needs_rotation(&tagged_under_k1));
+    assert!(ring_v2.needs_rotation(&legacy_under_k1));
+    assert!(!ring_v2.needs_rotation(&tagged_under_k2));
+
+    // A ring missing k1 (e.g. [k3]) fails with a clear key-id error.
+    let wrong_ring = KeyRing::from_keys(vec![k3]).unwrap();
+    let err = decrypt_str_with_ring(&wrong_ring, &tagged_under_k1).unwrap_err();
+    match err {
+        OrmError::InvalidQuery(msg) => assert!(msg.contains(ring_v1.current_key_id())),
+        other => panic!("expected InvalidQuery, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn batch_rotation_reencrypts_and_is_resumable() {
+    let db = connect_memory().await;
+    let k_old = [31u8; 32];
+    let k_new = [32u8; 32];
+    let old_ring = KeyRing::from_keys(vec![k_old]).unwrap();
+    let new_ring = KeyRing::from_keys(vec![k_new, k_old]).unwrap();
+
+    // Insert 5 rows: 2 key-tagged old, 2 legacy untagged old, 1 already current (+ optional NULL/Some).
+    let samples = [
+        (encrypt_str_with_ring(&old_ring, "s1").unwrap(), None),
+        (
+            ciphertext_under(&k_old, "s2"),
+            Some(encrypt_str_with_ring(&old_ring, "o2").unwrap()),
+        ),
+        (encrypt_str_with_ring(&old_ring, "s3").unwrap(), None),
+        (ciphertext_under(&k_old, "s4"), None),
+        (encrypt_str_with_ring(&new_ring, "s5").unwrap(), None),
+    ];
+    for (sec, opt) in &samples {
+        let sql = format!(
+            "INSERT INTO encrypted_test_model (secret, optional_secret, title) VALUES ({}, {}, {})",
+            db.dialect().placeholder(1),
+            db.dialect().placeholder(2),
+            db.dialect().placeholder(3),
+        );
+        db.conn()
+            .execute(
+                &sql,
+                &[
+                    BindValue::Text(sec.clone()),
+                    match opt {
+                        Some(v) => BindValue::Text(v.clone()),
+                        None => BindValue::Null(djangors_db::NullKind::Text),
+                    },
+                    BindValue::Text("row".to_string()),
+                ],
+            )
+            .await
+            .unwrap();
+    }
+
+    // Rotate in batches of 2 across 5 rows -> 3 batches, 4 rows updated (5th already current).
+    let report = rotate_model_keys_with_ring::<EncryptedNote>(&db, &new_ring, 2)
+        .await
+        .unwrap();
+    assert_eq!(report.table_name, "encrypted_test_model");
+    assert_eq!(report.rows_scanned, 5);
+    assert_eq!(report.rows_updated, 4);
+    assert_eq!(report.batches, 3);
+
+    // Every stored column now uses the newest key id and decrypts with new_ring ONLY (k_old removed!).
+    let only_new = KeyRing::from_keys(vec![k_new]).unwrap();
+    for id in 1..=5 {
+        let raw = raw_column(&db, "secret", id).await.unwrap();
+        assert!(raw.starts_with(&format!("{PREFIX}{}:", only_new.current_key_id())));
+        assert_eq!(
+            decrypt_str_with_ring(&only_new, &raw).unwrap(),
+            format!("s{id}")
+        );
+    }
+    let raw_opt2 = raw_column(&db, "optional_secret", 2).await.unwrap();
+    assert_eq!(decrypt_str_with_ring(&only_new, &raw_opt2).unwrap(), "o2");
+
+    // Re-running is a no-op (resumable / idempotent).
+    let second =
+        rotate_registered_model_keys_with_ring(&db, &only_new, "test_app.EncryptedNote", 2)
+            .await
+            .unwrap();
+    assert_eq!(second.rows_scanned, 5);
+    assert_eq!(second.rows_updated, 0);
+}
+
+#[tokio::test]
+async fn rotation_with_missing_key_rolls_back_batch_and_errors() {
+    let db = connect_memory().await;
+    let k_a = [41u8; 32];
+    let k_b = [42u8; 32];
+    let ring_a = KeyRing::from_keys(vec![k_a]).unwrap();
+    let ring_b = KeyRing::from_keys(vec![k_b]).unwrap();
+
+    let good = encrypt_str_with_ring(&ring_a, "good").unwrap();
+    let unknown = encrypt_str_with_ring(&ring_b, "unknown").unwrap();
+
+    insert_raw_secret(&db, &good).await;
+    insert_raw_secret(&db, &unknown).await;
+
+    // Rotating a single batch of 2 under [k_new, k_a] hits `unknown` on row 2 -> batch rolls back!
+    let k_new = [43u8; 32];
+    let partial_ring = KeyRing::from_keys(vec![k_new, k_a]).unwrap();
+    let err = rotate_model_keys_with_ring::<EncryptedNote>(&db, &partial_ring, 2)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, OrmError::InvalidQuery(_)));
+
+    // Because the batch rolled back, row 1 still holds `good` (under k_a).
+    assert_eq!(raw_column(&db, "secret", 1).await.unwrap(), good);
 }

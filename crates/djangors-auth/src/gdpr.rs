@@ -1,14 +1,12 @@
 //! GDPR user data export (ZIP archive) and scheduled account deletion / anonymization.
 
 use crate::{Auth, AuthError, User};
-use base64::Engine as _;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use djangors_core::settings::DjangorsSettings;
+use djangors_core::signing::{Signer, SigningError};
 use djangors_core::{DjangorsError, PathParams, Request, Response, StatusCode};
 use djangors_db::{BindValue, Database};
 use djangors_orm::Model as _;
-use hmac::{Hmac, Mac};
-use sha2::Sha256;
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::io::{Cursor, Write};
@@ -17,8 +15,6 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
-
-type HmacSha256 = Hmac<Sha256>;
 
 /// Boxed future returned by GDPR user data exporters.
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -240,29 +236,35 @@ pub async fn export_user_data(
     Ok(cursor.into_inner())
 }
 
-/// Generates a short-lived HMAC-signed download token for a user's GDPR export.
-pub fn sign_export_download_token(user_id: i64, secret: &[u8], ttl: Duration) -> String {
+/// Salt that domain-separates GDPR export download tokens from every other signed value.
+const EXPORT_TOKEN_SALT: &str = "djangors-auth.gdpr_export.v1";
+
+/// Generates a short-lived signed download token for a user's GDPR export.
+///
+/// The token is `user_id.expires_at:signature`, signed with
+/// [`djangors_core::signing::Signer`] under [`EXPORT_TOKEN_SALT`]. Fails if `secret` is empty.
+pub fn sign_export_download_token(
+    user_id: i64,
+    secret: &[u8],
+    ttl: Duration,
+) -> Result<String, SigningError> {
+    let signer = Signer::new(secret, EXPORT_TOKEN_SALT)?;
     let expires_at = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or(Duration::ZERO)
         .as_secs()
         .saturating_add(ttl.as_secs());
-    let msg = format!("gdpr_export.{user_id}.{expires_at}");
-    let mut mac = HmacSha256::new_from_slice(secret).expect("HMAC accepts any key length");
-    mac.update(msg.as_bytes());
-    let sig = mac.finalize().into_bytes();
-    let eng = base64::engine::general_purpose::URL_SAFE_NO_PAD;
-    format!("{}.{}.{}", user_id, expires_at, eng.encode(sig))
+    Ok(signer.sign(&format!("{user_id}.{expires_at}")))
 }
 
 /// Verifies a GDPR export download token and returns the `user_id` if valid and unexpired.
+/// Returns `None` if `secret` is empty.
 pub fn verify_export_download_token(token: &str, secret: &[u8]) -> Option<i64> {
-    let parts: Vec<&str> = token.split('.').collect();
-    if parts.len() != 3 {
-        return None;
-    }
-    let user_id: i64 = parts[0].parse().ok()?;
-    let expires_at: u64 = parts[1].parse().ok()?;
+    let signer = Signer::new(secret, EXPORT_TOKEN_SALT).ok()?;
+    let value = signer.unsign(token).ok()?;
+    let (user_id, expires_at) = value.split_once('.')?;
+    let user_id: i64 = user_id.parse().ok()?;
+    let expires_at: u64 = expires_at.parse().ok()?;
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or(Duration::ZERO)
@@ -270,13 +272,6 @@ pub fn verify_export_download_token(token: &str, secret: &[u8]) -> Option<i64> {
     if expires_at <= now {
         return None;
     }
-    let sig_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(parts[2])
-        .ok()?;
-    let msg = format!("gdpr_export.{user_id}.{expires_at}");
-    let mut mac = HmacSha256::new_from_slice(secret).ok()?;
-    mac.update(msg.as_bytes());
-    mac.verify_slice(&sig_bytes).ok()?;
     Some(user_id)
 }
 
@@ -304,7 +299,8 @@ pub async fn request_export_view(
     let Auth(user) =
         <Auth<User> as djangors_core::extract::FromRequest>::from_request(&req).await?;
     let secret = export_secret(&req)?;
-    let token = sign_export_download_token(user.id, &secret, Duration::from_secs(3600));
+    let token = sign_export_download_token(user.id, &secret, Duration::from_secs(3600))
+        .map_err(|e| DjangorsError::Internal(e.to_string()))?;
     Response::json(
         StatusCode::OK,
         &serde_json::json!({

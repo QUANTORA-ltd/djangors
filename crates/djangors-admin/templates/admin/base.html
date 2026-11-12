@@ -69,6 +69,7 @@ h1 { font-size: 1.25rem; margin: 0 0 1rem; }
 {% if accent_color %}<style>:root { --accent: {{ accent_color }}; }</style>{% endif %}
 </head>
 <body>
+{% if impersonation_banner %}{{ impersonation_banner|safe }}{% endif %}
 <h1>{% if logo_url %}<img src="{{ logo_url|safe }}" alt="" class="site-logo">{% endif %}{{ site_header }}</h1>
 {% block content %}{% endblock %}
 </body>

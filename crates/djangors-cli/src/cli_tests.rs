@@ -318,3 +318,53 @@ fn test_parse_seed_force() {
         _ => panic!("Expected Commands::Seed"),
     }
 }
+
+#[test]
+fn test_parse_rotate_encryption_keys_defaults() {
+    let cli = Cli::try_parse_from([
+        "dj",
+        "rotate-encryption-keys",
+        "--model",
+        "billing.PaymentMethod",
+    ])
+    .unwrap();
+    match cli.command {
+        Commands::RotateEncryptionKeys {
+            model,
+            batch,
+            database_url,
+        } => {
+            assert_eq!(model, "billing.PaymentMethod");
+            assert_eq!(batch, 500);
+            assert!(database_url.is_none());
+        }
+        _ => panic!("Expected Commands::RotateEncryptionKeys"),
+    }
+}
+
+#[test]
+fn test_parse_rotate_encryption_keys_custom_batch() {
+    let cli = Cli::try_parse_from([
+        "dj",
+        "rotate-encryption-keys",
+        "--model",
+        "users.Profile",
+        "--batch",
+        "100",
+        "--database-url",
+        "sqlite::memory:",
+    ])
+    .unwrap();
+    match cli.command {
+        Commands::RotateEncryptionKeys {
+            model,
+            batch,
+            database_url,
+        } => {
+            assert_eq!(model, "users.Profile");
+            assert_eq!(batch, 100);
+            assert_eq!(database_url.as_deref(), Some("sqlite::memory:"));
+        }
+        _ => panic!("Expected Commands::RotateEncryptionKeys"),
+    }
+}

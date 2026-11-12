@@ -2458,6 +2458,37 @@ pub async fn clearsessions(database_url: Option<&str>) -> Result<u64, String> {
         .map_err(|e| format!("failed to clear expired sessions: {e}"))
 }
 
+/// Re-encrypts `#[djangors(encrypted)]` columns on `model` (`app.Model`) in
+/// transactional batches by invoking the project's compiled binary with
+/// `DJANGORS_RUN_COMMAND=rotate-encryption-keys`.
+pub fn rotate_encryption_keys(
+    model: &str,
+    batch: usize,
+    database_url: Option<&str>,
+) -> Result<(), String> {
+    require_project_root()?;
+    if batch == 0 {
+        return Err("--batch must be at least 1".to_string());
+    }
+    let batch_str = batch.to_string();
+    let mut args = vec!["--", "--model", model, "--batch", &batch_str];
+    if let Some(url) = database_url {
+        args.push("--database-url");
+        args.push(url);
+    }
+    let status = std::process::Command::new("cargo")
+        .args(["run", "--quiet"])
+        .args(&args)
+        .env("DJANGORS_RUN_COMMAND", "rotate-encryption-keys")
+        .current_dir(".")
+        .status()
+        .map_err(|e| format!("failed to run cargo: {e}"))?;
+    if !status.success() {
+        return Err("encryption key rotation command failed".to_string());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 #[path = "commands_tests.rs"]
 mod tests;

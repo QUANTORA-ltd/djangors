@@ -26,6 +26,7 @@ fn builtin_command_names() -> std::collections::HashSet<&'static str> {
         "generate",
         "inspectdb",
         "clearsessions",
+        "rotate-encryption-keys",
     ]
     .into_iter()
     .collect()
@@ -209,6 +210,17 @@ async fn main() {
                     eprintln!("[dj clearsessions] error: {e}");
                     std::process::exit(1);
                 }
+            }
+        }
+        Commands::RotateEncryptionKeys {
+            model,
+            batch,
+            database_url,
+        } => {
+            if let Err(e) = commands::rotate_encryption_keys(&model, batch, database_url.as_deref())
+            {
+                eprintln!("[dj rotate-encryption-keys] error: {e}");
+                std::process::exit(1);
             }
         }
     }

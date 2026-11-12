@@ -31,10 +31,10 @@ pub use sqlx;
 
 pub use djangors_db::{BindValue, DbRow, Dialect, NullKind};
 pub use meta::{
-    all_registered_models, m2m_through_table, DefaultValue, FieldKind, FieldMeta, FieldSnapshot,
-    ForeignKey, IndexMeta, IndexSnapshot, Manager, ManyToMany, Model, ModelDatabaseMap, ModelForm,
-    ModelMeta, ModelRegistration, ModelSnapshot, OnDelete, OneToOne, RelationKind, RelationMeta,
-    RelationSnapshot, SnapshotDefault,
+    all_registered_models, m2m_through_table, DefaultValue, EncryptedFieldsRegistration, FieldKind,
+    FieldMeta, FieldSnapshot, ForeignKey, IndexMeta, IndexSnapshot, Manager, ManyToMany, Model,
+    ModelDatabaseMap, ModelForm, ModelMeta, ModelRegistration, ModelSnapshot, OnDelete, OneToOne,
+    RelationKind, RelationMeta, RelationSnapshot, SnapshotDefault,
 };
 
 pub use aggregate::{AggExpr, AggResult, FuncExpr};

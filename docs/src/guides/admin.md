@@ -313,3 +313,32 @@ The default build does all of this via `tenant_compare` plus PK-scoped querysets
 admin" design, and the fail-closed resolution rules in full — read it before writing a custom
 `ModelAdmin` for a scoped site.
 
+## Admin impersonation
+
+`djangors_auth::impersonation` allows active superusers to temporarily act as another non-superuser account (`POST /admin/impersonate/{user_id}` and `POST /admin/impersonate/stop`) via `impersonation_router()`:
+
+- Only active superusers can start impersonation; superusers cannot be impersonated and nesting is refused.
+- `Auth<User>` returns the target user while `req.impersonator()` (`RequestImpersonation` trait) returns the real superuser.
+- Every start and stop is logged to `auth_impersonation_log` (create once via `create_impersonation_log_table`).
+- Sensitive actions (such as password changes via `change_password`, or routes guarded with the `NotImpersonating` extractor / `ensure_not_impersonating`) are rejected with `403 Forbidden` while impersonating.
+- `impersonation_banner_html(&req)` renders a stop-impersonating banner (included automatically in the admin index template).
+
+```rust,illustrative
+use djangors::auth::{create_impersonation_log_table, impersonation_router, NotImpersonating};
+use djangors::core::{DjangorsError, PathParams, Request, Response, Router, StatusCode};
+
+async fn change_email(
+    req: Request,
+    _params: PathParams,
+) -> Result<Response, DjangorsError> {
+    let _not_imp = NotImpersonating::from_request(&req).await?;
+    Ok(Response::text(StatusCode::OK, "updated"))
+}
+
+# async fn example(db: &djangors::db::Database) -> Result<(), djangors::auth::AuthError> {
+create_impersonation_log_table(db).await?;
+let _router = Router::new().mount("", impersonation_router());
+# Ok(())
+# }
+```
+

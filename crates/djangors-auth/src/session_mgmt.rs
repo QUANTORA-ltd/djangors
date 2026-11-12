@@ -217,6 +217,11 @@ pub async fn change_password<U: AuthUser>(
     user: &mut U,
     new_password: &str,
 ) -> Result<(), AuthError> {
+    if crate::impersonation::is_impersonating(req) {
+        return Err(AuthError::Session(
+            "cannot change password while impersonating another user".to_string(),
+        ));
+    }
     let db = req
         .state::<Database>()
         .ok_or_else(|| AuthError::Session("database state absent".to_string()))?;

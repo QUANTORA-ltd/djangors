@@ -22,8 +22,15 @@ use thiserror::Error;
 pub mod email_verification;
 /// GDPR user data export and scheduled account deletion / anonymization.
 pub mod gdpr;
+/// Admin impersonation (`start_impersonation_view`, `stop_impersonation_view`, `NotImpersonating`).
+pub mod impersonation;
 /// User invitation workflow (`Invitation`, `invite`, `accept_invitation`, `revoke_invitation`).
 pub mod invitations;
+/// LDAP / Active Directory authentication backend (`LdapBackend`, `LdapConfig`).
+#[cfg(feature = "ldap")]
+pub mod ldap;
+/// Passwordless magic-link login (`send_login_link`, `consume_login_link`, `magic_link_router`).
+pub mod magic_link;
 #[cfg(feature = "passkeys")]
 pub mod passkeys;
 /// Password complexity validators (`MinimumLength`, `NumericPassword`, etc.).
@@ -41,10 +48,24 @@ pub use gdpr::{
     request_account_deletion, request_export_view, run_scheduled_deletions, AnonymizeHook,
     UserDataRegistry,
 };
+pub use impersonation::{
+    create_impersonation_log_table, ensure_not_impersonating, impersonation_banner_html,
+    impersonation_router, is_impersonating, NotImpersonating, RequestImpersonation,
+    IMPERSONATOR_KEY,
+};
 pub use invitations::{
     accept_invitation, accept_invitation_page, accept_invitation_submit, admin_invitations_list,
     create_invitation_table, invitation_router, invite, resend_invitation, revoke_invitation,
     Invitation,
+};
+#[cfg(feature = "ldap")]
+pub use ldap::{
+    escape_dn_value, escape_filter_value, LdapAttributeMap, LdapBackend, LdapConfig,
+    LdapGroupMapping, LdapUserProfile,
+};
+pub use magic_link::{
+    consume_login_link, create_login_link_tables, hash_login_token, magic_link_router,
+    send_login_link, LoginLink, LoginLinkPolicy,
 };
 #[cfg(feature = "password-strength")]
 pub use password_validation::StrengthValidator;
@@ -105,6 +126,9 @@ pub enum AuthError {
     /// GDPR export or deletion error.
     #[error("gdpr error: {0}")]
     Gdpr(String),
+    /// LDAP / Active Directory communication or configuration error.
+    #[error("ldap error: {0}")]
+    Ldap(String),
 }
 
 impl From<AuthError> for djangors_core::DjangorsError {
@@ -156,6 +180,9 @@ impl From<AuthError> for djangors_core::DjangorsError {
                 err.to_string(),
             ),
             AuthError::Gdpr(msg) => djangors_core::DjangorsError::Internal(msg),
+            AuthError::Ldap(msg) => {
+                djangors_core::DjangorsError::Internal(format!("ldap error: {msg}"))
+            }
         }
     }
 }
