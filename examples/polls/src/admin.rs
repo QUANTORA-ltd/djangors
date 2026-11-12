@@ -1,7 +1,6 @@
 //! Admin registration for the polls app — the Djangors equivalent of
-//! Django's `admin.py`. Registers each model with the default (no
-//! customization) `ModelAdmin`; per-model customization (`list_display`,
-//! filters, inlines) is a later Phase 5 feature.
+//! Django's `admin.py`. Registers `Question` and `Choice` along with
+//! `djangors_auth` group/permission models.
 
 use crate::models::{Choice, Question};
 use djangors_admin::AdminSite;

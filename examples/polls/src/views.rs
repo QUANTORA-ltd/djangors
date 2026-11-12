@@ -9,11 +9,6 @@ pub async fn hello(_req: Request, _params: PathParams) -> Result<Response, Djang
     Ok(Response::text(StatusCode::OK, "Hello, world!"))
 }
 
-/// Liveness/readiness probe for deployment platforms (e.g. Render's health check).
-pub async fn healthz(_req: Request, _params: PathParams) -> Result<Response, DjangorsError> {
-    Ok(Response::text(StatusCode::OK, "ok"))
-}
-
 pub async fn index(req: Request, _params: PathParams) -> Result<Response, DjangorsError> {
     let db = req
         .state::<djangors_db::Database>()

@@ -9,4 +9,5 @@ This is Django's tutorial app, ported to Djangors.
 - **Auth and login-gating**: 100% real — `AuthBackend`, `ModelBackend`, `Auth<U>` extractor for login-gated voting, and `login`/`logout` session helpers.
 - **Route-name reversal (`reverse!()`)**: Still aspirational. The views use explicit route string formatting (`format!()`) instead.
 - **Migrations**: Still raw-SQL-in-tests (not real migration files).
-- **Admin**: Real (v1) — `AdminSite` serves the staff-gated `/admin/` index and per-model changelists (sorting, pagination). Change forms, delete confirmation, and `ModelAdmin` customization (`list_display`, filters, inlines) are later Phase 5 slices.
+- **Admin**: Real — `AdminSite` serves the staff-gated `/admin/` index, per-model changelists (sorting, pagination, search, filters, `date_hierarchy`, `list_editable`), change forms, and delete confirmation.
+- **Health & CORS**: `Router::health(HealthChecks::new())` serves `/healthz` and `/readyz`, and `cors_layer(&CorsConfig::from_settings(&settings))` is wired in `main.rs`.

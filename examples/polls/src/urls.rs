@@ -1,3 +1,4 @@
+use djangors_core::health::HealthChecks;
 use djangors_core::Router;
 
 use crate::views;
@@ -5,8 +6,8 @@ use crate::views;
 pub fn urls() -> Router {
     djangors_admin::favicon_routes(
         Router::new()
+            .health(HealthChecks::new())
             .get("/hello/", views::hello)
-            .get("/healthz", views::healthz)
             .get("/", views::index)
             .get("/{question_id:i64}/", views::detail)
             .get("/{question_id:i64}/results/", views::results)
