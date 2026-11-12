@@ -6,7 +6,7 @@ Part of [Djangors](https://github.com/Chidi09/djangors), a batteries-included we
 
 ```toml
 [dependencies]
-djangors-tasks = "0.6"
+djangors-tasks = "0.9"
 ```
 
 Provides a distributed background task queue system, `#[task]` attribute macro, and worker loop for Djangors. Features include database task models (`QueuedTask`, `RecurringTask`), compile-time task registration via `inventory`, and database-level concurrency locking for worker execution.

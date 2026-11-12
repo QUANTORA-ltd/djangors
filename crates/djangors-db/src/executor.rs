@@ -89,7 +89,8 @@ impl<'a> Conn<'a> {
         sql: &str,
         params: &[BindValue],
     ) -> Result<Vec<DbRow>, sqlx::Error> {
-        match self {
+        let start = crate::query_log::is_logging_active().then(std::time::Instant::now);
+        let res = match self {
             #[cfg(feature = "postgres")]
             Conn::PgPool(pool) => {
                 let q = build_pg_query(sql, params);
@@ -114,7 +115,11 @@ impl<'a> Conn<'a> {
                 let rows = q.fetch_all(&mut **tx).await?;
                 Ok(rows.into_iter().map(DbRow::Sqlite).collect())
             }
+        };
+        if let Some(t0) = start {
+            crate::query_log::record_query(sql, params.len(), t0.elapsed().as_micros() as u64);
         }
+        res
     }
 
     /// Execute the query, requiring exactly one row.
@@ -123,7 +128,8 @@ impl<'a> Conn<'a> {
         sql: &str,
         params: &[BindValue],
     ) -> Result<DbRow, sqlx::Error> {
-        match self {
+        let start = crate::query_log::is_logging_active().then(std::time::Instant::now);
+        let res = match self {
             #[cfg(feature = "postgres")]
             Conn::PgPool(pool) => {
                 let q = build_pg_query(sql, params);
@@ -148,7 +154,11 @@ impl<'a> Conn<'a> {
                 let row = q.fetch_one(&mut **tx).await?;
                 Ok(DbRow::Sqlite(row))
             }
+        };
+        if let Some(t0) = start {
+            crate::query_log::record_query(sql, params.len(), t0.elapsed().as_micros() as u64);
         }
+        res
     }
 
     /// Execute the query, returning the row if there is one.
@@ -157,7 +167,8 @@ impl<'a> Conn<'a> {
         sql: &str,
         params: &[BindValue],
     ) -> Result<Option<DbRow>, sqlx::Error> {
-        match self {
+        let start = crate::query_log::is_logging_active().then(std::time::Instant::now);
+        let res = match self {
             #[cfg(feature = "postgres")]
             Conn::PgPool(pool) => {
                 let q = build_pg_query(sql, params);
@@ -182,12 +193,17 @@ impl<'a> Conn<'a> {
                 let row = q.fetch_optional(&mut **tx).await?;
                 Ok(row.map(DbRow::Sqlite))
             }
+        };
+        if let Some(t0) = start {
+            crate::query_log::record_query(sql, params.len(), t0.elapsed().as_micros() as u64);
         }
+        res
     }
 
     /// Execute the query for its side effect, returning the affected-row count.
     pub async fn execute(&mut self, sql: &str, params: &[BindValue]) -> Result<u64, sqlx::Error> {
-        match self {
+        let start = crate::query_log::is_logging_active().then(std::time::Instant::now);
+        let res = match self {
             #[cfg(feature = "postgres")]
             Conn::PgPool(pool) => {
                 let q = build_pg_query(sql, params);
@@ -212,7 +228,11 @@ impl<'a> Conn<'a> {
                 let res = q.execute(&mut **tx).await?;
                 Ok(res.rows_affected())
             }
+        };
+        if let Some(t0) = start {
+            crate::query_log::record_query(sql, params.len(), t0.elapsed().as_micros() as u64);
         }
+        res
     }
 
     /// The database dialect for this connection handle.

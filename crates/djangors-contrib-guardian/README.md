@@ -6,7 +6,7 @@ Part of [Djangors](https://github.com/Chidi09/djangors), a batteries-included we
 
 ```toml
 [dependencies]
-djangors-contrib-guardian = "0.6"
+djangors-contrib-guardian = "0.9"
 ```
 
 Provides granular object-level permission checking and management for Djangors, layered on top of `djangors_auth::has_perm`. Helpers like `has_perm_for_object` allow authorization checks against individual model instances in custom views and handlers.

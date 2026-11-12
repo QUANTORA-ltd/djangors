@@ -124,6 +124,58 @@ pub enum Commands {
         #[arg(long, default_value = "staticfiles")]
         output: PathBuf,
     },
+    /// Generate an OpenAPI 3.1 JSON specification or a typed TypeScript fetch client.
+    #[command(name = "openapi")]
+    Openapi {
+        /// Emit TypeScript types and a typed fetch client instead of raw OpenAPI JSON.
+        #[arg(long)]
+        typescript: bool,
+        /// Optional output file path (writes to stdout if omitted).
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// API title used in the generated OpenAPI specification.
+        #[arg(long, default_value = "Djangors API")]
+        title: String,
+        /// API version used in the generated OpenAPI specification.
+        #[arg(long, default_value = "0.1.0")]
+        api_version: String,
+    },
+    /// Generate code artifacts such as full-stack CRUD resources (`dj generate resource`).
+    #[command(name = "generate")]
+    Generate {
+        /// Generator subcommand.
+        #[command(subcommand)]
+        target: GenerateCommands,
+    },
+    /// Introspect an existing database schema and emit `#[derive(Model)]` Rust structs.
+    #[command(name = "inspectdb")]
+    Inspectdb {
+        /// Optional database URL override (defaults to `DATABASE_URL` environment variable).
+        #[arg(long)]
+        database_url: Option<String>,
+        /// Optional output file path (writes to stdout if omitted).
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// App label applied to generated `#[djangors(app = "...")]` attributes.
+        #[arg(long, default_value = "app")]
+        app: String,
+    },
+}
+
+/// Subcommands for `dj generate`.
+#[derive(Subcommand, Debug, Clone)]
+pub enum GenerateCommands {
+    /// Scaffold a model, SQL migration, REST serializer + ViewSet, admin registration, and test file.
+    #[command(name = "resource")]
+    Resource {
+        /// PascalCase model name (e.g. `Post` or `BlogComment`).
+        name: String,
+        /// Field specifications in `name:type` format (e.g. `title:string body:text published:bool`).
+        fields: Vec<String>,
+        /// App module name under `src/<app>/` (defaults to the snake_case plural of `name`).
+        #[arg(long)]
+        app: Option<String>,
+    },
 }
 
 #[cfg(test)]

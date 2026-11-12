@@ -6,10 +6,14 @@ Part of [Djangors](https://github.com/Chidi09/djangors), a batteries-included we
 
 ```toml
 [dependencies]
-djangors = "0.6"
+# Batteries-included (all subsystems + both PostgreSQL and SQLite enabled by default)
+djangors = "0.9"
+
+# Or a minimal PostgreSQL-only build (~4.0 MiB release binary):
+# djangors = { version = "0.9", default-features = false, features = ["postgres", "rest"] }
 ```
 
-The main workspace meta-crate bringing together the Djangors web framework components. It re-exports ORM, migrations, admin interface, forms, auth, sessions, views, templates, static files, caching, background tasks, mail, i18n, and contrib modules into a cohesive Django-inspired experience for Rust developers.
+The main workspace meta-crate bringing together the Djangors web framework components. It re-exports ORM, migrations, admin interface, forms, auth, sessions, views, templates, static files, caching, background tasks, mail, i18n, PDF generation, and contrib modules behind granular Cargo feature flags (`full` by default).
 
 - Documentation: https://docs.rs/djangors
 - Guides: https://djangors.vercel.app/docs/

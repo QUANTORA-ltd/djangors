@@ -95,7 +95,15 @@ impl DbRow {
     ) -> Result<Option<chrono::DateTime<chrono::Utc>>, sqlx::Error> {
         match self {
             #[cfg(feature = "postgres")]
-            DbRow::Pg(r) => r.try_get(idx),
+            DbRow::Pg(r) => r
+                .try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(idx)
+                // `TIMESTAMP WITHOUT TIME ZONE` columns decode as NaiveDateTime;
+                // treat them as UTC so DateTime<Utc> fields work on either type.
+                .or_else(|e| {
+                    r.try_get::<Option<chrono::NaiveDateTime>, _>(idx)
+                        .map(|v| v.map(|n| n.and_utc()))
+                        .map_err(|_| e)
+                }),
             #[cfg(feature = "sqlite")]
             DbRow::Sqlite(r) => r.try_get(idx),
         }
@@ -182,7 +190,15 @@ impl DbRow {
     ) -> Result<Option<chrono::DateTime<chrono::Utc>>, sqlx::Error> {
         match self {
             #[cfg(feature = "postgres")]
-            DbRow::Pg(r) => r.try_get(name),
+            DbRow::Pg(r) => r
+                .try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(name)
+                // `TIMESTAMP WITHOUT TIME ZONE` columns decode as NaiveDateTime;
+                // treat them as UTC so DateTime<Utc> fields work on either type.
+                .or_else(|e| {
+                    r.try_get::<Option<chrono::NaiveDateTime>, _>(name)
+                        .map(|v| v.map(|n| n.and_utc()))
+                        .map_err(|_| e)
+                }),
             #[cfg(feature = "sqlite")]
             DbRow::Sqlite(r) => r.try_get(name),
         }

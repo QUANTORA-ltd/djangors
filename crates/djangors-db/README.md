@@ -6,10 +6,14 @@ Part of [Djangors](https://github.com/Chidi09/djangors), a batteries-included we
 
 ```toml
 [dependencies]
-djangors-db = "0.6"
+# Both PostgreSQL and SQLite enabled by default:
+djangors-db = "0.9"
+
+# Or select a single backend:
+# djangors-db = { version = "0.9", default-features = false, features = ["postgres"] }
 ```
 
-Provides database backends, connection pool management, and transaction handling for Djangors built on SQLx. It supports configuration-driven connection pooling and explicit transaction isolation levels across database engines.
+Provides database backends (PostgreSQL and SQLite, each behind its own Cargo feature flag), connection pool management, dialect-aware SQL execution, savepoints, and transaction handling for Djangors built on SQLx.
 
 - Documentation: https://docs.rs/djangors-db
 - Guides: https://djangors.vercel.app/docs/

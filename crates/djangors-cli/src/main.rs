@@ -2,7 +2,7 @@ mod cli;
 mod commands;
 
 use clap::Parser;
-use cli::{Cli, Commands};
+use cli::{Cli, Commands, GenerateCommands};
 
 fn builtin_command_names() -> std::collections::HashSet<&'static str> {
     [
@@ -21,6 +21,9 @@ fn builtin_command_names() -> std::collections::HashSet<&'static str> {
         "shell",
         "test",
         "collectstatic",
+        "openapi",
+        "generate",
+        "inspectdb",
     ]
     .into_iter()
     .collect()
@@ -148,6 +151,35 @@ async fn main() {
         }
         Commands::Collectstatic { source, output } => {
             commands::collectstatic(source, output);
+        }
+        Commands::Openapi {
+            typescript,
+            output,
+            title,
+            api_version,
+        } => {
+            if let Err(e) = commands::openapi(typescript, output, &title, &api_version) {
+                eprintln!("[dj openapi] error: {e}");
+                std::process::exit(1);
+            }
+        }
+        Commands::Generate { target } => match target {
+            GenerateCommands::Resource { name, fields, app } => {
+                if let Err(e) = commands::generate_resource(&name, &fields, app.as_deref()) {
+                    eprintln!("[dj generate resource] error: {e}");
+                    std::process::exit(1);
+                }
+            }
+        },
+        Commands::Inspectdb {
+            database_url,
+            output,
+            app,
+        } => {
+            if let Err(e) = commands::inspectdb(database_url, output, &app).await {
+                eprintln!("[dj inspectdb] error: {e}");
+                std::process::exit(1);
+            }
         }
     }
 }

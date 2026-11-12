@@ -6,7 +6,7 @@ Part of [Djangors](https://github.com/Chidi09/djangors), a batteries-included we
 
 ```toml
 [dependencies]
-djangors-contrib-syndication = "0.6"
+djangors-contrib-syndication = "0.9"
 ```
 
 Provides RSS 2.0 and Atom feed generation for Djangors applications. It allows web applications to publish structured content syndication feeds for news items, blog posts, or model updates.

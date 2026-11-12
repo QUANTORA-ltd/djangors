@@ -67,8 +67,11 @@ jobs:
       - run:
           name: Measure release binary size
           command: |
-            cargo build --release -p minimal-facade -p polls
+            # Build separately: one `cargo build -p a -p b` unifies features across both
+            # packages, so minimal-facade would be measured with polls' full feature set.
+            cargo build --release -p minimal-facade
             MIN_BYTES=$(stat -c%s target/release/minimal-facade)
+            cargo build --release -p polls
             MIN_MIB=$(awk "BEGIN { printf \"%.2f\", $MIN_BYTES / (1024 * 1024) }")
             POLLS_BYTES=$(stat -c%s target/release/polls)
             POLLS_MIB=$(awk "BEGIN { printf \"%.2f\", $POLLS_BYTES / (1024 * 1024) }")

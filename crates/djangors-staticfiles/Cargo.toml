@@ -23,7 +23,7 @@ clamav = ["tokio/net", "tokio/io-util"]
 thiserror = "2.0.18"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
-djangors-core = { path = "../djangors-core", version = "0.8.0", default-features = false }
+djangors-core = { path = "../djangors-core", version = "0.9.0", default-features = false }
 sha2 = "0.10.9"
 hyper = "1.10"
 async-trait = "0.1.86"

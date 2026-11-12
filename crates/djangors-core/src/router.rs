@@ -284,6 +284,43 @@ impl Router {
         self.sse(path, handler)
     }
 
+    /// Register an RFC 6455 WebSocket endpoint at `path`.
+    ///
+    /// Performs the HTTP `101 Switching Protocols` handshake on `GET` requests
+    /// with `Upgrade: websocket` and invokes `handler` with the upgraded [`crate::ws::WebSocket`].
+    /// Browser handshakes must come from the same origin; see
+    /// [`Router::ws_with_origin_policy`] to allow others.
+    #[cfg(feature = "ws")]
+    pub fn ws(self, path: &str, handler: impl crate::ws::WsHandler + 'static) -> Self {
+        self.ws_with_origin_policy(path, crate::ws::OriginPolicy::SameOrigin, handler)
+    }
+
+    /// Register a WebSocket endpoint with an explicit [`crate::ws::OriginPolicy`].
+    #[cfg(feature = "ws")]
+    pub fn ws_with_origin_policy(
+        self,
+        path: &str,
+        policy: crate::ws::OriginPolicy,
+        handler: impl crate::ws::WsHandler + 'static,
+    ) -> Self {
+        let handler = Arc::new(handler);
+        let policy = Arc::new(policy);
+        self.get(path, move |req: Request, params: PathParams| {
+            let handler = Arc::clone(&handler);
+            let policy = Arc::clone(&policy);
+            async move {
+                crate::ws::upgrade_websocket_with_policy(
+                    &req,
+                    params,
+                    &policy,
+                    move |ws, r, p| async move {
+                        handler.call(ws, r, p).await;
+                    },
+                )
+            }
+        })
+    }
+
     /// Register a GET handler.
     pub fn get(self, path: &str, handler: impl Handler + 'static) -> Self {
         self.route(path, Method::GET, handler)
@@ -465,7 +502,15 @@ impl Router {
             Some((idx, params)) => match &self.routes[idx].handler {
                 HandlerKind::Standard(handler) => {
                     let handler = handler.clone();
-                    let join_handle = tokio::spawn(async move { handler.call(req, params).await });
+                    let query_log =
+                        djangors_orm::djangors_db::query_log::current_query_log_handle();
+                    let join_handle = tokio::spawn(async move {
+                        djangors_orm::djangors_db::query_log::with_inherited_query_log(
+                            query_log,
+                            handler.call(req, params),
+                        )
+                        .await
+                    });
                     match join_handle.await {
                         Ok(Ok(resp)) => Ok(ResponseKind::Standard(resp)),
                         Ok(Err(e)) => Err(e),
@@ -561,13 +606,24 @@ impl Router {
     /// Body read errors are converted to 500 responses.
     pub async fn dispatch<B>(
         &self,
-        hyper_req: hyper::Request<B>,
+        mut hyper_req: hyper::Request<B>,
     ) -> hyper::Response<http_body_util::Full<Bytes>>
     where
         B: hyper::body::Body<Data = Bytes> + Send,
         B::Error: fmt::Display,
     {
-        let (parts, body) = hyper_req.into_parts();
+        #[cfg(feature = "ws")]
+        let upgrade_slot = is_websocket_upgrade(hyper_req.headers()).then(|| {
+            crate::ws::UpgradeSlot(Arc::new(std::sync::Mutex::new(Some(hyper::upgrade::on(
+                &mut hyper_req,
+            )))))
+        });
+
+        let (mut parts, body) = hyper_req.into_parts();
+        #[cfg(feature = "ws")]
+        if let Some(slot) = upgrade_slot {
+            parts.extensions.insert(slot);
+        }
 
         let body_bytes = match http_body_util::BodyExt::collect(body).await {
             Ok(collected) => collected.to_bytes(),
@@ -620,14 +676,25 @@ impl Router {
     /// or a production-safe generic page depending on the `debug` setting.
     pub async fn dispatch_debug<B>(
         &self,
-        hyper_req: hyper::Request<B>,
+        mut hyper_req: hyper::Request<B>,
         debug: bool,
     ) -> hyper::Response<http_body_util::Full<Bytes>>
     where
         B: hyper::body::Body<Data = Bytes> + Send,
         B::Error: fmt::Display,
     {
-        let (parts, body) = hyper_req.into_parts();
+        #[cfg(feature = "ws")]
+        let upgrade_slot = is_websocket_upgrade(hyper_req.headers()).then(|| {
+            crate::ws::UpgradeSlot(Arc::new(std::sync::Mutex::new(Some(hyper::upgrade::on(
+                &mut hyper_req,
+            )))))
+        });
+
+        let (mut parts, body) = hyper_req.into_parts();
+        #[cfg(feature = "ws")]
+        if let Some(slot) = upgrade_slot {
+            parts.extensions.insert(slot);
+        }
 
         let body_bytes = match http_body_util::BodyExt::collect(body).await {
             Ok(collected) => collected.to_bytes(),
@@ -686,14 +753,25 @@ impl Router {
     /// Supports both standard and streaming responses.
     pub async fn dispatch_boxed<B>(
         &self,
-        hyper_req: hyper::Request<B>,
+        mut hyper_req: hyper::Request<B>,
         debug: bool,
     ) -> hyper::Response<http_body_util::combinators::BoxBody<Bytes, std::convert::Infallible>>
     where
         B: hyper::body::Body<Data = Bytes> + Send,
         B::Error: fmt::Display,
     {
-        let (parts, body) = hyper_req.into_parts();
+        #[cfg(feature = "ws")]
+        let upgrade_slot = is_websocket_upgrade(hyper_req.headers()).then(|| {
+            crate::ws::UpgradeSlot(Arc::new(std::sync::Mutex::new(Some(hyper::upgrade::on(
+                &mut hyper_req,
+            )))))
+        });
+
+        let (mut parts, body) = hyper_req.into_parts();
+        #[cfg(feature = "ws")]
+        if let Some(slot) = upgrade_slot {
+            parts.extensions.insert(slot);
+        }
 
         let body_bytes = match http_body_util::BodyExt::collect(body).await {
             Ok(collected) => collected.to_bytes(),
@@ -795,6 +873,14 @@ impl tower::Service<hyper::Request<hyper::body::Incoming>> for RouterService {
             Ok(resp)
         })
     }
+}
+
+#[cfg(feature = "ws")]
+fn is_websocket_upgrade(headers: &hyper::HeaderMap) -> bool {
+    headers
+        .get(hyper::http::header::UPGRADE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.eq_ignore_ascii_case("websocket"))
 }
 
 #[cfg(test)]

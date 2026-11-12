@@ -380,3 +380,87 @@ async fn cross_process_lock_genuinely_serializes_two_separate_connections() {
         "log should show both connections, not the same one twice - log: {log:?}"
     );
 }
+
+#[derive(Debug, Clone, PartialEq, djangors_macros::Model, djangors_macros::Factory)]
+#[djangors(app = "test")]
+struct FactoryArticle {
+    #[djangors(primary_key, auto)]
+    pub id: i64,
+    #[djangors(max_length = 120)]
+    pub title: String,
+    pub author_email: String,
+    #[djangors(default = 10)]
+    pub views: i64,
+    #[djangors(default = true)]
+    pub published: bool,
+    pub subtitle: Option<String>,
+}
+
+#[tokio::test]
+async fn factory_derive_builds_and_persists_records() {
+    use djangors_orm::Model;
+
+    // 1. In-memory build with sensible defaults and unique sequences
+    let first = FactoryArticle::factory().build();
+    let second = FactoryArticle::factory().build();
+    assert_eq!(first.id, 0);
+    assert!(first.title.starts_with("title_"));
+    assert_ne!(first.title, second.title);
+    assert!(first.author_email.ends_with("@example.com"));
+    assert_eq!(first.views, 10);
+    assert!(first.published);
+    assert_eq!(first.subtitle, None);
+
+    // 2. Fluent field overrides
+    let custom = FactoryArticle::factory()
+        .with_title("Custom Title")
+        .with_views(42)
+        .with_published(false)
+        .with_subtitle(Some("Deep dive".to_string()))
+        .build();
+    assert_eq!(custom.title, "Custom Title");
+    assert_eq!(custom.views, 42);
+    assert!(!custom.published);
+    assert_eq!(custom.subtitle.as_deref(), Some("Deep dive"));
+
+    // 3. Persist via create() and create_many() against an isolated SQLite DB
+    let db = Database::connect(&DatabaseConfig::new("sqlite::memory:"))
+        .await
+        .expect("connect sqlite memory");
+    db.conn()
+        .execute(
+            "CREATE TABLE test_factory_article (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            author_email TEXT NOT NULL,
+            views BIGINT NOT NULL,
+            published BOOLEAN NOT NULL,
+            subtitle TEXT NULL
+        )",
+            &[],
+        )
+        .await
+        .expect("create table");
+
+    let saved = FactoryArticle::factory()
+        .with_title("Persisted Post")
+        .create(&db)
+        .await
+        .expect("factory create");
+    assert!(saved.id > 0);
+    assert_eq!(saved.title, "Persisted Post");
+
+    let batch = FactoryArticle::factory()
+        .with_views(99)
+        .create_many(&db, 3)
+        .await
+        .expect("factory create_many");
+    assert_eq!(batch.len(), 3);
+    assert!(batch.iter().all(|item| item.id > 0 && item.views == 99));
+
+    let count = FactoryArticle::objects()
+        .count(&db)
+        .await
+        .expect("count articles");
+    assert_eq!(count, 4);
+}

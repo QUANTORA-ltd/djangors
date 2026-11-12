@@ -1,6 +1,8 @@
 #![deny(missing_docs)]
 //! Small, in-process testing helpers for Djangors applications.
 
+pub use djangors_macros::Factory;
+
 use bytes::Bytes;
 use djangors_core::{AppState, Request, Response, Router};
 use djangors_db::{config::DatabaseConfig, Database, DbError};

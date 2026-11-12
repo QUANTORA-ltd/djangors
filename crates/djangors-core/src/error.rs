@@ -21,6 +21,53 @@ impl ErrorRenderer for JsonErrorRenderer {
     }
 }
 
+/// An [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) Problem Details
+/// (`application/problem+json`) error renderer.
+///
+/// Renders any [`DjangorsError`] (across REST ViewSets, form validation, and
+/// authentication failures) as a single RFC 9457 Problem Details JSON object
+/// using Djangors's direct JSON byte writer (`write_json_str` / `write_json_i64`),
+/// including the request path as `instance` and any field/validation map under
+/// `errors` (plus `details` for compatibility).
+#[derive(Debug, Clone, Default)]
+pub struct ProblemDetailsRenderer {
+    type_prefix: String,
+}
+
+impl ProblemDetailsRenderer {
+    /// Creates a new `ProblemDetailsRenderer` with the default `"urn:djangors:error:"`
+    /// type URI prefix.
+    pub fn new() -> Self {
+        Self {
+            type_prefix: "urn:djangors:error:".to_string(),
+        }
+    }
+
+    /// Creates a `ProblemDetailsRenderer` using a custom `type` URI prefix
+    /// (for example `"https://api.example.com/problems/"`).
+    pub fn with_type_prefix(prefix: impl Into<String>) -> Self {
+        Self {
+            type_prefix: prefix.into(),
+        }
+    }
+}
+
+impl ErrorRenderer for ProblemDetailsRenderer {
+    fn render(&self, err: &DjangorsError, req: &Request) -> Response {
+        // Renderers do not know the debug flag, so internal error text is never exposed here.
+        let redacted;
+        let shown = if err.is_internal() {
+            redacted = DjangorsError::Internal("Internal Server Error".to_string());
+            &redacted
+        } else {
+            err
+        };
+        let mut buf = Vec::with_capacity(256);
+        shown.write_problem_json_with_prefix(&self.type_prefix, Some(req.path()), &mut buf);
+        Response::problem_json_bytes(shown.status_code(), buf)
+    }
+}
+
 /// An application-defined error carrying an explicit status code, a stable
 /// machine-readable code, and optional structured details.
 ///
@@ -204,30 +251,58 @@ impl DjangorsError {
         }
         req.header("accept")
             .and_then(|v| v.to_str().ok())
-            .is_some_and(|accept| accept.contains("application/json"))
+            .is_some_and(|accept| {
+                accept.contains("application/json") || accept.contains("application/problem+json")
+            })
+    }
+
+    fn prefers_problem_json(&self, req: &Request) -> bool {
+        req.header("accept")
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|accept| accept.contains("application/problem+json"))
     }
 
     /// Render this error into the response the caller should receive.
     ///
     /// Resolution order:
     /// 1. A project-registered [`ErrorRenderer`], if one is in state.
-    /// 2. The JSON envelope, when the caller asked for JSON or this is an
+    /// 2. RFC 9457 `application/problem+json` when requested via `Accept`.
+    /// 3. The JSON envelope, when the caller asked for JSON or this is an
     ///    [`ApiError`].
-    /// 3. The rich debug page (when `debug`) or the minimal production page.
+    /// 4. The rich debug page (when `debug`) or the minimal production page.
     ///
     /// Handlers do not call this — the router does, on every error path.
     pub fn render(&self, req: &Request, debug: bool) -> Response {
         if let Some(resp) = self.try_custom_render(req) {
             return resp;
         }
-        if self.prefers_json(req) {
-            return self.into_json_response();
+        // Internal error text can carry SQL, file paths or upstream responses; outside
+        // debug mode JSON clients get the same generic message the HTML page shows.
+        let redacted;
+        let shown = if !debug && self.is_internal() {
+            redacted = DjangorsError::Internal("Internal Server Error".to_string());
+            &redacted
+        } else {
+            self
+        };
+        if shown.prefers_problem_json(req) {
+            return shown.into_problem_response_for(Some(req.path()));
+        }
+        if shown.prefers_json(req) {
+            return shown.into_json_response();
         }
         if debug {
             crate::debug_page::render_debug_page(self, req)
         } else {
             crate::debug_page::render_production_error_page(self.status_code())
         }
+    }
+
+    fn is_internal(&self) -> bool {
+        matches!(
+            self,
+            DjangorsError::Internal(_) | DjangorsError::Panicked(_)
+        )
     }
 
     /// Return the HTTP status code for this error.
@@ -244,38 +319,94 @@ impl DjangorsError {
         }
     }
 
-    /// Render this error as the standard JSON error envelope.
+    /// Render this error as the standard JSON error envelope using the direct
+    /// byte writer.
     ///
     /// The shape is `{"error": {"status", "code", "message", "details"?}}`.
     /// `details` is omitted entirely when absent.
     pub fn into_json_response(&self) -> Response {
-        #[derive(serde::Serialize)]
-        struct Envelope<'a> {
-            error: ErrorBody<'a>,
-        }
-        #[derive(serde::Serialize)]
-        struct ErrorBody<'a> {
-            status: u16,
-            code: &'a str,
-            message: &'a str,
-            #[serde(skip_serializing_if = "Option::is_none")]
-            details: Option<&'a serde_json::Value>,
-        }
+        let mut buf = Vec::with_capacity(192);
+        self.write_error_envelope_json(&mut buf);
+        Response::json_bytes(self.status_code(), buf)
+    }
+
+    /// Write the standard `{"error": {"status", "code", "message", "details"?}}`
+    /// JSON envelope directly into `buf` without intermediate structs.
+    pub fn write_error_envelope_json(&self, buf: &mut Vec<u8>) {
+        use djangors_orm::json::{write_json_i64, write_json_str};
 
         let status = self.status_code();
         let message = self.message();
-        Response::json(
-            status,
-            &Envelope {
-                error: ErrorBody {
-                    status: status.as_u16(),
-                    code: self.code(),
-                    message: &message,
-                    details: self.details(),
-                },
-            },
-        )
-        .expect("JSON error envelope is serializable")
+        buf.extend_from_slice(b"{\"error\":{\"status\":");
+        write_json_i64(buf, status.as_u16() as i64);
+        buf.extend_from_slice(b",\"code\":");
+        write_json_str(buf, self.code());
+        buf.extend_from_slice(b",\"message\":");
+        write_json_str(buf, &message);
+        if let Some(details) = self.details() {
+            buf.extend_from_slice(b",\"details\":");
+            let _ = serde_json::to_writer(&mut *buf, details);
+        }
+        buf.extend_from_slice(b"}}");
+    }
+
+    /// Write an [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) Problem Details
+    /// JSON body directly into `buf` using Djangors's direct JSON primitives.
+    ///
+    /// Emits `type`, `title`, `status`, `code`, `detail`, optional `instance`,
+    /// and optional `errors` / `details` extension members.
+    pub fn write_problem_json(&self, instance: Option<&str>, buf: &mut Vec<u8>) {
+        self.write_problem_json_with_prefix("urn:djangors:error:", instance, buf);
+    }
+
+    pub(crate) fn write_problem_json_with_prefix(
+        &self,
+        type_prefix: &str,
+        instance: Option<&str>,
+        buf: &mut Vec<u8>,
+    ) {
+        use djangors_orm::json::{write_json_i64, write_json_str};
+
+        let status = self.status_code();
+        let title = status.canonical_reason().unwrap_or("Error");
+        let code = self.code();
+        let detail = self.message();
+        let type_uri = format!("{type_prefix}{code}");
+
+        buf.extend_from_slice(b"{\"type\":");
+        write_json_str(buf, &type_uri);
+        buf.extend_from_slice(b",\"title\":");
+        write_json_str(buf, title);
+        buf.extend_from_slice(b",\"status\":");
+        write_json_i64(buf, status.as_u16() as i64);
+        buf.extend_from_slice(b",\"code\":");
+        write_json_str(buf, code);
+        buf.extend_from_slice(b",\"detail\":");
+        write_json_str(buf, &detail);
+        if let Some(inst) = instance {
+            buf.extend_from_slice(b",\"instance\":");
+            write_json_str(buf, inst);
+        }
+        if let Some(details) = self.details() {
+            buf.extend_from_slice(b",\"errors\":");
+            let _ = serde_json::to_writer(&mut *buf, details);
+            buf.extend_from_slice(b",\"details\":");
+            let _ = serde_json::to_writer(&mut *buf, details);
+        }
+        buf.push(b'}');
+    }
+
+    /// Render this error as an RFC 9457 `application/problem+json` response.
+    pub fn into_problem_response(&self) -> Response {
+        self.into_problem_response_for(None)
+    }
+
+    /// Render this error as an RFC 9457 `application/problem+json` response
+    /// with an optional request `instance` URI.
+    pub fn into_problem_response_for(&self, instance: Option<&str>) -> Response {
+        let mut buf = Vec::with_capacity(256);
+        self.write_problem_json(instance, &mut buf);
+        Response::problem_json_bytes(self.status_code(), buf)
     }
 
     /// Render this error as a plain-text response.
@@ -324,10 +455,25 @@ impl DjangorsError {
         if let Some(resp) = self.try_custom_render(req) {
             return resp;
         }
+        if self.prefers_problem_json(req) {
+            return self.into_problem_response_for(Some(req.path()));
+        }
         if self.prefers_json(req) {
             return self.into_json_response();
         }
         self.text_response()
+    }
+}
+
+impl From<djangors_orm::djangors_forms::FormErrors> for DjangorsError {
+    fn from(errors: djangors_orm::djangors_forms::FormErrors) -> Self {
+        let details = errors.to_json();
+        DjangorsError::api(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation_error",
+            "Form validation failed",
+        )
+        .with_details(details)
     }
 }
 

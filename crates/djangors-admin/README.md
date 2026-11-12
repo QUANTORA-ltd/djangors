@@ -6,7 +6,7 @@ Part of [Djangors](https://github.com/Chidi09/djangors), a batteries-included we
 
 ```toml
 [dependencies]
-djangors-admin = "0.6"
+djangors-admin = "0.9"
 ```
 
 Provides an automatic database-driven administration interface mirroring Django's Admin. Key components include `AdminSite` as the central registry mounting admin routes and `ModelAdmin` for customizing lists, forms, validation, and actions for registered ORM models with dynamic CSRF-protected template rendering.

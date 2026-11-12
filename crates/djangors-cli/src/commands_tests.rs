@@ -739,3 +739,253 @@ fn test_format_showmigrations_output() {
         "polls\n [X] 0001_initial\n [ ] 0002_add_field\n [?] 0003_deleted (missing from disk)\n";
     assert_eq!(formatted, expected);
 }
+
+#[test]
+fn test_render_openapi_typescript_client() {
+    let snapshot = djangors_orm::ModelSnapshot {
+        struct_name: "Post".to_string(),
+        app_label: "posts".to_string(),
+        table_name: "posts_post".to_string(),
+        fields: vec![
+            djangors_orm::FieldSnapshot {
+                name: "id".to_string(),
+                column_name: "id".to_string(),
+                kind: djangors_orm::FieldKind::BigInt,
+                nullable: false,
+                primary_key: true,
+                auto: true,
+                unique: true,
+                db_index: true,
+                default: djangors_orm::SnapshotDefault::None,
+                max_length: None,
+            },
+            djangors_orm::FieldSnapshot {
+                name: "title".to_string(),
+                column_name: "title".to_string(),
+                kind: djangors_orm::FieldKind::Char,
+                nullable: false,
+                primary_key: false,
+                auto: false,
+                unique: false,
+                db_index: false,
+                default: djangors_orm::SnapshotDefault::None,
+                max_length: Some(255),
+            },
+            djangors_orm::FieldSnapshot {
+                name: "published".to_string(),
+                column_name: "published".to_string(),
+                kind: djangors_orm::FieldKind::Boolean,
+                nullable: false,
+                primary_key: false,
+                auto: false,
+                unique: false,
+                db_index: false,
+                default: djangors_orm::SnapshotDefault::Bool(false),
+                max_length: None,
+            },
+        ],
+        relations: Vec::new(),
+        unique_together: Vec::new(),
+        ordering: Vec::new(),
+        indexes: Vec::new(),
+    };
+
+    let ts = render_openapi_from_snapshots(&[snapshot], true, "Blog API", "1.0.0");
+    assert!(ts.contains("export interface ProblemDetails {"));
+    assert!(ts.contains("export class ProblemDetailsError extends Error {"));
+    assert!(ts.contains("export interface Post {"));
+    assert!(ts.contains("  id: number;"));
+    assert!(ts.contains("  title: string;"));
+    assert!(ts.contains("  published: boolean;"));
+    assert!(ts.contains("export interface PostCreateInput {"));
+    assert!(ts.contains("  id?: number;"));
+    assert!(ts.contains("export class DjangorsApiClient {"));
+    assert!(ts.contains("async listPost("));
+    assert!(ts.contains("async createPost(data: PostCreateInput): Promise<Post>"));
+}
+
+#[test]
+fn test_generate_resource_scaffolds_full_stack_files() {
+    let temp = std::env::temp_dir().join(format!("dj_gen_resource_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&temp);
+    std::fs::create_dir_all(temp.join("src")).unwrap();
+
+    let specs = vec![
+        "title:string".to_string(),
+        "body:text".to_string(),
+        "published:bool".to_string(),
+    ];
+    generate_resource_in_dir(&temp, "Post", &specs, None, djangors_db::Dialect::Postgres).unwrap();
+
+    let models = std::fs::read_to_string(temp.join("src/posts/models.rs")).unwrap();
+    assert!(models.contains("pub struct Post"));
+    assert!(models.contains("#[djangors(max_length = 255)]"));
+    assert!(models.contains("pub title: String"));
+    assert!(models.contains("pub body: String"));
+    assert!(models.contains("pub published: bool"));
+
+    let serializers = std::fs::read_to_string(temp.join("src/posts/serializers.rs")).unwrap();
+    assert!(serializers.contains("pub fn post_serializer() -> ModelSerializer<Post>"));
+
+    let views = std::fs::read_to_string(temp.join("src/posts/views.rs")).unwrap();
+    assert!(views.contains("\"/api/posts\""));
+
+    let admin = std::fs::read_to_string(temp.join("src/posts/admin.rs")).unwrap();
+    assert!(admin.contains("site.register_with::<Post>"));
+
+    let tests = std::fs::read_to_string(temp.join("src/posts/tests.rs")).unwrap();
+    assert!(tests.contains("fn post_metadata_and_json_roundtrip()"));
+
+    let mig = std::fs::read_to_string(temp.join("migrations/0001_create_posts_post.sql")).unwrap();
+    assert!(mig.contains("CREATE TABLE \"posts_post\""));
+    assert!(mig.contains("DROP TABLE \"posts_post\""));
+    assert!(mig.contains("BIGSERIAL PRIMARY KEY"));
+
+    let _ = std::fs::remove_dir_all(&temp);
+}
+
+#[tokio::test]
+async fn test_generate_resource_sqlite_migration_applies() {
+    let temp = std::env::temp_dir().join(format!("dj_gen_resource_sqlite_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&temp);
+    std::fs::create_dir_all(temp.join("src")).unwrap();
+
+    let specs: Vec<String> = [
+        "title:string",
+        "body:text",
+        "published:bool",
+        "views:int",
+        "score:float",
+        "created:datetime",
+        "token:uuid",
+        "price:decimal",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    generate_resource_in_dir(&temp, "Post", &specs, None, djangors_db::Dialect::Sqlite).unwrap();
+
+    let mig = std::fs::read_to_string(temp.join("migrations/0001_create_posts_post.sql")).unwrap();
+    assert!(mig.contains("INTEGER PRIMARY KEY AUTOINCREMENT"));
+    assert!(!mig.contains("BIGSERIAL"));
+    assert!(!mig.contains("TIMESTAMPTZ"));
+    let up = mig
+        .split("-- down")
+        .next()
+        .unwrap()
+        .trim_start_matches("-- up")
+        .trim();
+
+    let config = djangors_db::config::DatabaseConfig::new("sqlite::memory:")
+        .max_connections(1)
+        .min_connections(1);
+    let db = Database::connect(&config).await.unwrap();
+    db.conn().execute(up, &[]).await.unwrap();
+
+    let _ = std::fs::remove_dir_all(&temp);
+}
+
+#[tokio::test]
+async fn test_inspectdb_sqlite_generates_derive_model_structs() {
+    let config = djangors_db::config::DatabaseConfig::new("sqlite::memory:")
+        .max_connections(1)
+        .min_connections(1);
+    let db = Database::connect(&config).await.unwrap();
+    db.conn()
+        .execute(
+            "CREATE TABLE blog_article (id INTEGER PRIMARY KEY AUTOINCREMENT, title VARCHAR(120) NOT NULL, views INTEGER NOT NULL, summary TEXT)",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    let (generated, _) = inspect_database_models(&db, "blog").await.unwrap();
+    assert!(generated.contains("#[djangors(app = \"blog\", table_name = \"blog_article\")]"));
+    assert!(generated.contains("pub struct BlogArticle {"));
+    assert!(generated.contains("#[djangors(primary_key, auto)]"));
+    assert!(generated.contains("pub id: i64,"));
+    assert!(generated.contains("#[djangors(max_length = 120)]"));
+    assert!(generated.contains("pub title: String,"));
+    assert!(generated.contains("pub views: i32,"));
+    assert!(generated.contains("pub summary: Option<String>,"));
+}
+
+#[test]
+fn test_live_reload_server_starts_and_broadcasts() {
+    let (port, tx) = start_live_reload_server(0);
+    assert!(port.is_some());
+    assert!(tx.is_some());
+}
+
+#[test]
+fn test_inspected_type_mapping_does_not_match_int_substrings() {
+    assert_eq!(inspected_base_type("integer", false), Some("i32"));
+    assert_eq!(inspected_base_type("bigint", false), Some("i64"));
+    assert_eq!(inspected_base_type("integer", true), Some("i64"));
+    assert_eq!(
+        inspected_base_type("character varying", false),
+        Some("String")
+    );
+    assert_eq!(inspected_base_type("VARCHAR(120)", false), Some("String"));
+    assert_eq!(
+        inspected_base_type("numeric(10, 2)", false),
+        Some("rust_decimal::Decimal")
+    );
+    assert_eq!(
+        inspected_base_type("timestamp without time zone", false),
+        Some("chrono::DateTime<chrono::Utc>")
+    );
+    assert_eq!(
+        inspected_base_type("time without time zone", false),
+        Some("chrono::NaiveTime")
+    );
+    // Names containing "INT" that are not integers.
+    assert_eq!(inspected_base_type("interval", false), None);
+    assert_eq!(inspected_base_type("point", false), None);
+    assert_eq!(inspected_base_type("jsonb", false), None);
+    assert_eq!(inspected_base_type("bytea", false), None);
+    assert_eq!(inspected_base_type("integer[]", false), None);
+}
+
+#[test]
+fn test_rust_field_for_column_handles_reserved_and_invalid_names() {
+    assert_eq!(rust_field_for_column("title"), ("title".to_string(), None));
+    assert_eq!(rust_field_for_column("type"), ("r#type".to_string(), None));
+    assert_eq!(
+        rust_field_for_column("self"),
+        ("self_".to_string(), Some("column = \"self\"".to_string()))
+    );
+    assert_eq!(
+        rust_field_for_column("First Name"),
+        (
+            "first_name".to_string(),
+            Some("column = \"First Name\"".to_string())
+        )
+    );
+    assert_eq!(
+        rust_field_for_column("2fa"),
+        ("_2fa".to_string(), Some("column = \"2fa\"".to_string()))
+    );
+}
+
+#[tokio::test]
+async fn test_inspectdb_warns_on_unsupported_column_types() {
+    let config = djangors_db::config::DatabaseConfig::new("sqlite::memory:")
+        .max_connections(1)
+        .min_connections(1);
+    let db = Database::connect(&config).await.unwrap();
+    db.conn()
+        .execute(
+            "CREATE TABLE files (id INTEGER PRIMARY KEY, data BLOB NOT NULL, \"self\" TEXT)",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    let (code, warnings) = inspect_database_models(&db, "app").await.unwrap();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("files.data"));
+    assert!(code.contains("#[djangors(column = \"self\")]"));
+    assert!(code.contains("pub self_: Option<String>,"));
+    assert!(!code.contains("TODO"));
+}

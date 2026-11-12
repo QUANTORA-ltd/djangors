@@ -166,3 +166,80 @@ fn test_migrate_rollback_and_plan_conflict() {
     let args = vec!["dj", "migrate", "--rollback", "--plan"];
     assert!(Cli::try_parse_from(args).is_err());
 }
+
+#[test]
+fn test_parse_openapi_typescript() {
+    let args = vec![
+        "dj",
+        "openapi",
+        "--typescript",
+        "--output",
+        "client.ts",
+        "--title",
+        "Blog API",
+    ];
+    let cli = Cli::try_parse_from(args).unwrap();
+    match cli.command {
+        Commands::Openapi {
+            typescript,
+            output,
+            title,
+            api_version,
+        } => {
+            assert!(typescript);
+            assert_eq!(output, Some(PathBuf::from("client.ts")));
+            assert_eq!(title, "Blog API");
+            assert_eq!(api_version, "0.1.0");
+        }
+        _ => panic!("Expected Commands::Openapi"),
+    }
+}
+
+#[test]
+fn test_parse_generate_resource() {
+    let args = vec![
+        "dj",
+        "generate",
+        "resource",
+        "Post",
+        "title:string",
+        "body:text",
+        "published:bool",
+    ];
+    let cli = Cli::try_parse_from(args).unwrap();
+    match cli.command {
+        Commands::Generate {
+            target: GenerateCommands::Resource { name, fields, app },
+        } => {
+            assert_eq!(name, "Post");
+            assert_eq!(fields, vec!["title:string", "body:text", "published:bool"]);
+            assert!(app.is_none());
+        }
+        _ => panic!("Expected Commands::Generate(Resource)"),
+    }
+}
+
+#[test]
+fn test_parse_inspectdb() {
+    let args = vec![
+        "dj",
+        "inspectdb",
+        "--database-url",
+        "sqlite::memory:",
+        "--app",
+        "legacy",
+    ];
+    let cli = Cli::try_parse_from(args).unwrap();
+    match cli.command {
+        Commands::Inspectdb {
+            database_url,
+            output,
+            app,
+        } => {
+            assert_eq!(database_url.as_deref(), Some("sqlite::memory:"));
+            assert!(output.is_none());
+            assert_eq!(app, "legacy");
+        }
+        _ => panic!("Expected Commands::Inspectdb"),
+    }
+}

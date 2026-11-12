@@ -51,6 +51,39 @@ pub enum AuthError {
     Mail(String),
 }
 
+impl From<AuthError> for djangors_core::DjangorsError {
+    fn from(err: AuthError) -> Self {
+        use djangors_core::StatusCode;
+        match err {
+            AuthError::RateLimited => djangors_core::DjangorsError::api(
+                StatusCode::TOO_MANY_REQUESTS,
+                "rate_limited",
+                err.to_string(),
+            ),
+            AuthError::AccountLocked { retry_after_secs } => djangors_core::DjangorsError::api(
+                StatusCode::TOO_MANY_REQUESTS,
+                "account_locked",
+                err.to_string(),
+            )
+            .with_details(serde_json::json!({ "retry_after_secs": retry_after_secs })),
+            AuthError::InvalidToken => djangors_core::DjangorsError::api(
+                StatusCode::UNAUTHORIZED,
+                "invalid_token",
+                err.to_string(),
+            ),
+            AuthError::Hashing(msg) => {
+                djangors_core::DjangorsError::Internal(format!("password hashing error: {msg}"))
+            }
+            AuthError::Database(db_err) => {
+                djangors_core::DjangorsError::Internal(db_err.to_string())
+            }
+            AuthError::Mail(msg) => {
+                djangors_core::DjangorsError::Internal(format!("mail sending error: {msg}"))
+            }
+        }
+    }
+}
+
 const DUMMY_HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$c29tZXNhbHQ$dGVzdHBhc3N3b3Jk";
 
 /// Payload for the [`LOGIN_SUCCEEDED`] signal.
@@ -154,10 +187,14 @@ impl AuthBackend for ModelBackend {
 }
 
 /// A single-process, in-memory sliding-window login rate limiter around an
-/// inner [`AuthBackend`]. State lives only in this process's memory, so it
-/// does not coordinate across multiple app instances/processes — a
-/// distributed (e.g. cache-backed) limiter is future work once a shared
-/// cache crate exists, not this v1.
+/// inner [`AuthBackend`].
+///
+/// State lives in this process's memory. For multi-process deployments that
+/// need shared lockout state across instances, wrap your backend in
+/// [`PersistentLockoutBackend`] (which stores failed-attempt counters and
+/// lockout timestamps in the database) or pair endpoints with
+/// `djangors_core::ratelimit::RateLimiter` (backed by `djangors-cache`,
+/// including `RedisCache` and `DatabaseCache`).
 pub struct RateLimitedBackend<B: AuthBackend> {
     inner: B,
     limiter: Mutex<HashMap<String, Vec<Instant>>>,

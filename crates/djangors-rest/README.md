@@ -6,10 +6,10 @@ Part of [Djangors](https://github.com/Chidi09/djangors), a batteries-included we
 
 ```toml
 [dependencies]
-djangors-rest = "0.6"
+djangors-rest = "0.9"
 ```
 
-Provides a REST framework for Djangors including serializers, ViewSets, permissions, pagination, and router mounting. ViewSet routes default to requiring authenticated users, with explicit `AllowAny` opt-ins for public routes.
+Provides a REST framework for Djangors including serializers, compile-time direct JSON streaming (`serialize_to_vec`, `serialize_many_to_vec`), ViewSets (`ScopedViewSet`), token/JWT authentication, permissions, cursor pagination, OpenAPI 3.1 schema generation, and router mounting. ViewSet routes default to requiring authenticated users, with explicit `AllowAny` opt-ins for public routes.
 
 - Documentation: https://docs.rs/djangors-rest
 - Guides: https://djangors.vercel.app/docs/

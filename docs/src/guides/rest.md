@@ -75,11 +75,9 @@ let public = viewset_routes_with_permission::<Question, _>(
 );
 
 // Same default auth, but with a custom config (filtering + ordering allowlists).
-let config = ViewSetConfig {
-    filterable_fields: &["pub_date"],
-    orderable_fields: &["pub_date"],
-    ..Default::default()
-};
+let config = ViewSetConfig::new()
+    .with_filterable_fields(&["pub_date"])
+    .with_orderable_fields(&["pub_date"]);
 let filtered = viewset_routes_with_config::<Question>(Router::new(), "/questions/filtered", config);
 
 // Both.
@@ -424,6 +422,8 @@ fields* — it cannot compute, fuse, or rename a field. For that, implement the
 | `validate(&self, &[(&str, Value)], &mut ValidationErrors)` | object-level rules, run after field parsing | no-op |
 | `to_representation_nested(&self, &M, &RelatedObjects) -> Value` | embed preloaded relations in place of FK ids | merges the base representation |
 | `to_representation_many(&self, &[M]) -> Vec<Value>` | render a collection | maps `to_representation` |
+| `write_json(&self, &M, &mut Vec<u8>)` | write one row directly as UTF-8 JSON bytes | serializes `to_representation` (`ModelSerializer` overrides with `Model::write_json`) |
+| `write_json_many(&self, &[M], &mut Vec<u8>)` | write a collection directly as a UTF-8 JSON array | serializes `to_representation_many` (`ModelSerializer` overrides to stream `write_json`) |
 | `parse(&self, &Value, partial) -> Result<FieldValues, ValidationErrors>` | `to_internal_value` then `validate` | ViewSets call this |
 
 ViewSets call `parse`, never `to_internal_value` directly, so a `validate`

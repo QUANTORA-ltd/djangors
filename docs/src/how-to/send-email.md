@@ -4,7 +4,7 @@
 You want to send plain-text or HTML emails in your Djangors application using SMTP, or write outgoing messages to local disk during development.
 
 ## Solution
-Use `djangors_mail::Message` and configure a backend implementing the `MailBackend` trait, such as `SmtpBackend`, `FileBackend`, or `ConsoleBackend`.
+Use `djangors_mail::Message` and configure a backend implementing the `MailBackend` trait, such as `SmtpBackend` (powered by `lettre` with `rustls` TLS — zero OpenSSL or `native-tls` C dependencies), `FileBackend`, `ConsoleBackend`, or `InMemoryBackend`. Note that `Message` is `#[non_exhaustive]`; construct it via `Message::new(to, from, subject, text_body)` and attach optional HTML bodies with `.html_body(...)`.
 
 ## Code Example
 

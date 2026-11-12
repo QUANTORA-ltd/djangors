@@ -6,7 +6,7 @@ Part of [Djangors](https://github.com/Chidi09/djangors), a batteries-included we
 
 ```toml
 [dependencies]
-djangors-forms = "0.6"
+djangors-forms = "0.9"
 ```
 
 Provides forms and validation for Djangors applications. It defines core traits, field types, and error structures to parse, validate, and sanitize user-submitted web form data.

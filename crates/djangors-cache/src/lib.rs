@@ -339,17 +339,7 @@ impl CacheLayer {
         Self { cache, ttl }
     }
 }
-impl<S> Layer<S> for CacheLayer
-where
-    S: Service<
-            Request<Full<bytes::Bytes>>,
-            Response = Response<Full<bytes::Bytes>>,
-            Error = Infallible,
-        > + Clone
-        + Send
-        + 'static,
-    S::Future: Send + 'static,
-{
+impl<S> Layer<S> for CacheLayer {
     type Service = CacheService<S>;
     fn layer(&self, inner: S) -> Self::Service {
         CacheService {
@@ -370,16 +360,14 @@ pub struct CacheService<S> {
     // Expiration duration applied to newly cached responses.
     ttl: Option<Duration>,
 }
-impl<S> Service<Request<Full<bytes::Bytes>>> for CacheService<S>
+impl<S, ReqBody> Service<Request<ReqBody>> for CacheService<S>
 where
-    S: Service<
-            Request<Full<bytes::Bytes>>,
-            Response = Response<Full<bytes::Bytes>>,
-            Error = Infallible,
-        > + Clone
+    S: Service<Request<ReqBody>, Response = Response<Full<bytes::Bytes>>, Error = Infallible>
+        + Clone
         + Send
         + 'static,
     S::Future: Send + 'static,
+    ReqBody: Send + 'static,
 {
     type Response = Response<Full<bytes::Bytes>>;
     type Error = Infallible;
@@ -391,7 +379,7 @@ where
     ) -> std::task::Poll<Result<(), Self::Error>> {
         self.inner.poll_ready(cx)
     }
-    fn call(&mut self, req: Request<Full<bytes::Bytes>>) -> Self::Future {
+    fn call(&mut self, req: Request<ReqBody>) -> Self::Future {
         let mut inner = self.inner.clone();
         let cache = self.cache.clone();
         let ttl = self.ttl;

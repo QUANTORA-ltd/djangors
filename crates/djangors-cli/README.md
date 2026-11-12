@@ -6,7 +6,7 @@ Part of [Djangors](https://github.com/Chidi09/djangors), a batteries-included we
 
 ```toml
 [dependencies]
-djangors-cli = "0.6"
+djangors-cli = "0.9"
 ```
 
 Provides the `dj` command-line tool for the Djangors web framework. It supports project management, dev server launching, code scaffolding, and deployment execution for Djangors applications.

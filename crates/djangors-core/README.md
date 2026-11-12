@@ -6,7 +6,7 @@ Part of [Djangors](https://github.com/Chidi09/djangors), a batteries-included we
 
 ```toml
 [dependencies]
-djangors-core = "0.6"
+djangors-core = "0.9"
 ```
 
 Provides the core HTTP kernel for Djangors, including `Request`, `Response`, `Router`, and `Handler` types. It includes CSRF protection middleware for unsafe HTTP requests (POST, PUT, PATCH, DELETE) using a double-submit cookie pattern.

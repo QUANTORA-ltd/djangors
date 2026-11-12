@@ -6,7 +6,7 @@ Part of [Djangors](https://github.com/Chidi09/djangors), a batteries-included we
 
 ```toml
 [dependencies]
-djangors-migrations = "0.6"
+djangors-migrations = "0.9"
 ```
 
 Provides schema migration planning, autodetection, execution, and SQL DDL generation for Djangors. It uses runtime enum dispatch across database backends for connection management, topological sorting for migration execution, and ORM type mapping to SQL column types.

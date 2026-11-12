@@ -272,6 +272,7 @@ async fn serve_connection(
 
     hyper::server::conn::http1::Builder::new()
         .serve_connection(io, svc)
+        .with_upgrades()
         .await
         .map_err(|e| DjangorsError::Internal(format!("Connection error: {e}")))?;
 
@@ -305,6 +306,7 @@ where
 
     hyper::server::conn::http1::Builder::new()
         .serve_connection(io, svc)
+        .with_upgrades()
         .await
         .map_err(|e| DjangorsError::Internal(format!("Connection error: {e}")))?;
 
