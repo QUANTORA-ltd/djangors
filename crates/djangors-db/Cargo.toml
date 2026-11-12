@@ -19,8 +19,9 @@ sqlite = ["sqlx/sqlite"]
 
 [dependencies]
 sqlx = { version = "0.9.0", features = ["runtime-tokio", "tls-rustls", "chrono", "uuid", "rust_decimal", "json"] }
-tokio = { version = "1.53.0", features = ["rt", "macros"] }
+tokio = { version = "1.53.0", features = ["rt", "macros", "sync"] }
 chrono = { version = "0.4", features = ["std"] }
 thiserror = "2.0.18"
 tracing = "0.1.44"
+sha2 = "0.10.9"
 

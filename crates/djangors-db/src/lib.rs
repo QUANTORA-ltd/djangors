@@ -21,6 +21,9 @@ pub mod error;
 /// Query execution targets: run against the pool or inside a transaction.
 #[cfg(any(feature = "postgres", feature = "sqlite"))]
 pub mod executor;
+/// Distributed (and process-local SQLite) transaction-scoped advisory locks.
+#[cfg(any(feature = "postgres", feature = "sqlite"))]
+pub mod locks;
 /// Task-local SQL query recording and N+1 duplicate query detection.
 pub mod query_log;
 /// Backend-agnostic row abstraction.
@@ -38,6 +41,8 @@ pub use dialect::{DatePart, Dialect};
 pub use error::DbError;
 #[cfg(any(feature = "postgres", feature = "sqlite"))]
 pub use executor::{Conn, DbExecutor};
+#[cfg(any(feature = "postgres", feature = "sqlite"))]
+pub use locks::{with_lock, with_lock_wait};
 pub use query_log::{with_query_log, DuplicateQueryWarning, QueryStats, RecordedQuery};
 #[cfg(any(feature = "postgres", feature = "sqlite"))]
 pub use row::DbRow;
