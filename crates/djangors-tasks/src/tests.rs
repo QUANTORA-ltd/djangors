@@ -593,3 +593,77 @@ async fn test_recurring_task_end_to_end_enqueue_and_execute(
 
     Ok(())
 }
+
+#[tokio::test]
+async fn transactional_outbox_rolls_back_and_commits_atomically(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let config = djangors_db::DatabaseConfig::new("sqlite::memory:")
+        .max_connections(1)
+        .min_connections(1);
+    let db = djangors_db::Database::connect(&config).await?;
+    create_task_table(&db).await?;
+    db.conn()
+        .execute(
+            "CREATE TABLE outbox_orders (id INTEGER PRIMARY KEY, item TEXT NOT NULL)",
+            &[],
+        )
+        .await?;
+
+    // 1. Transaction returns an error -> neither order nor task exists.
+    let rollback_res: Result<(), djangors_db::DbError> = db
+        .transaction_conn(|conn| {
+            Box::pin(async move {
+                let p1 = conn.dialect().placeholder(1);
+                let sql = format!("INSERT INTO outbox_orders (id, item) VALUES (1, {p1})");
+                conn.execute(&sql, &[djangors_db::BindValue::Text("book".to_string())])
+                    .await
+                    .map_err(djangors_db::DbError::QueryFailed)?;
+                enqueue_in(conn, "sample_task_fn", &serde_json::json!({"order": 1}))
+                    .await
+                    .map_err(|e| djangors_db::DbError::TransactionFailed(e.to_string()))?;
+                Err(djangors_db::DbError::TransactionFailed("abort".to_string()))
+            })
+        })
+        .await;
+    assert!(rollback_res.is_err());
+
+    let order_count = db
+        .conn()
+        .fetch_one("SELECT COUNT(*) FROM outbox_orders", &[])
+        .await?
+        .try_i64(0)?
+        .unwrap_or_default();
+    assert_eq!(order_count, 0);
+    assert!(claim_next_task(&db).await?.is_none());
+
+    // 2. Transaction succeeds -> both order and task exist, and claim_next_task picks it up.
+    let task_id = db
+        .transaction_conn(|conn| {
+            Box::pin(async move {
+                let p1 = conn.dialect().placeholder(1);
+                let sql = format!("INSERT INTO outbox_orders (id, item) VALUES (2, {p1})");
+                conn.execute(&sql, &[djangors_db::BindValue::Text("pen".to_string())])
+                    .await
+                    .map_err(djangors_db::DbError::QueryFailed)?;
+                let id = enqueue_in(conn, "sample_task_fn", &serde_json::json!({"order": 2}))
+                    .await
+                    .map_err(|e| djangors_db::DbError::TransactionFailed(e.to_string()))?;
+                Ok::<_, djangors_db::DbError>(id)
+            })
+        })
+        .await?;
+
+    let order_count_after = db
+        .conn()
+        .fetch_one("SELECT COUNT(*) FROM outbox_orders", &[])
+        .await?
+        .try_i64(0)?
+        .unwrap_or_default();
+    assert_eq!(order_count_after, 1);
+
+    let claimed = claim_next_task(&db).await?.expect("task should be claimed");
+    assert_eq!(claimed.id, task_id);
+    assert_eq!(claimed.task_name, "sample_task_fn");
+
+    Ok(())
+}

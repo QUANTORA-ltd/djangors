@@ -300,16 +300,14 @@ pub async fn enqueue(
     enqueue_scheduled(db, task_name, payload, chrono::Utc::now()).await
 }
 
-/// Enqueues a task with a specific scheduled_at time.
-pub async fn enqueue_scheduled(
-    db: &djangors_db::Database,
+fn build_queued_task(
     task_name: &str,
     payload: &impl serde::Serialize,
     scheduled_at: chrono::DateTime<chrono::Utc>,
-) -> Result<i64, TaskError> {
+) -> Result<QueuedTask, TaskError> {
     let payload_str =
         serde_json::to_string(payload).map_err(|e| TaskError::Serialization(e.to_string()))?;
-    let task = QueuedTask {
+    Ok(QueuedTask {
         id: 0,
         task_name: task_name.to_string(),
         payload: payload_str,
@@ -319,9 +317,68 @@ pub async fn enqueue_scheduled(
         created_at: chrono::Utc::now(),
         scheduled_at,
         error_message: None,
-    };
+    })
+}
+
+/// Enqueues a task with a specific scheduled_at time.
+pub async fn enqueue_scheduled(
+    db: &djangors_db::Database,
+    task_name: &str,
+    payload: &impl serde::Serialize,
+    scheduled_at: chrono::DateTime<chrono::Utc>,
+) -> Result<i64, TaskError> {
+    let task = build_queued_task(task_name, payload, scheduled_at)?;
     let saved = task.save(db).await?;
     Ok(saved.id)
+}
+
+/// Enqueues a task immediately inside an existing database transaction or connection.
+pub async fn enqueue_in(
+    conn: &mut djangors_db::Conn<'_>,
+    task_name: &str,
+    payload: &impl serde::Serialize,
+) -> Result<i64, TaskError> {
+    enqueue_scheduled_in(conn, task_name, payload, chrono::Utc::now()).await
+}
+
+/// Enqueues a task with a specific `scheduled_at` time inside an existing
+/// database transaction or connection (`RETURNING id` on both Postgres and SQLite).
+pub async fn enqueue_scheduled_in(
+    conn: &mut djangors_db::Conn<'_>,
+    task_name: &str,
+    payload: &impl serde::Serialize,
+    scheduled_at: chrono::DateTime<chrono::Utc>,
+) -> Result<i64, TaskError> {
+    let task = build_queued_task(task_name, payload, scheduled_at)?;
+    let dialect = conn.dialect();
+    let placeholders: Vec<String> = (1..=8).map(|i| dialect.placeholder(i)).collect();
+    let sql = format!(
+        "INSERT INTO djangors_task_queue \
+         (task_name, payload, status, attempts, max_attempts, created_at, scheduled_at, error_message) \
+         VALUES ({}) RETURNING id",
+        placeholders.join(", ")
+    );
+    let params = [
+        djangors_db::BindValue::Text(task.task_name),
+        djangors_db::BindValue::Text(task.payload),
+        djangors_db::BindValue::Text(task.status),
+        djangors_db::BindValue::I64(task.attempts as i64),
+        djangors_db::BindValue::I64(task.max_attempts as i64),
+        djangors_db::BindValue::DateTime(task.created_at),
+        djangors_db::BindValue::DateTime(task.scheduled_at),
+        djangors_db::BindValue::Null(djangors_db::NullKind::Text),
+    ];
+    let row = conn
+        .fetch_one(&sql, &params)
+        .await
+        .map_err(djangors_db::DbError::QueryFailed)?;
+    let id = row
+        .try_i64(0)
+        .map_err(djangors_db::DbError::QueryFailed)?
+        .ok_or_else(|| {
+            djangors_db::DbError::QueryFailed(sqlx::Error::ColumnNotFound("id".to_string()))
+        })?;
+    Ok(id)
 }
 
 /// Atomically claims the next pending, due task using `SELECT ... FOR UPDATE SKIP LOCKED`
