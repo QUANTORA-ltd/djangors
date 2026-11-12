@@ -13,11 +13,12 @@ license.workspace = true
 authors.workspace = true
 
 [features]
-default = ["postgres", "sqlite"]
+default = ["postgres", "sqlite", "password-strength"]
 postgres = ["djangors-orm/postgres", "djangors-core/postgres", "djangors-db/postgres", "djangors-sessions/postgres"]
 sqlite = ["djangors-orm/sqlite", "djangors-core/sqlite", "djangors-db/sqlite", "djangors-sessions/sqlite"]
 # Passkeys (WebAuthn) with pure-Rust ES256 and Ed25519 verification; no OpenSSL.
 passkeys = ["dep:p256", "dep:ed25519-dalek", "dep:serde"]
+password-strength = ["dep:zxcvbn"]
 
 [dependencies]
 djangors-orm = { path = "../djangors-orm", version = "0.11.0", default-features = false }
@@ -38,6 +39,7 @@ serde_json = "1.0.150"
 p256 = { version = "0.13.2", default-features = false, features = ["ecdsa", "pkcs8", "std"], optional = true }
 ed25519-dalek = { version = "2.2.0", optional = true }
 serde = { version = "1.0.228", features = ["derive"], optional = true }
+zxcvbn = { version = "3.1.1", default-features = false, optional = true }
 
 [dev-dependencies]
 djangors-test = { path = "../djangors-test" }

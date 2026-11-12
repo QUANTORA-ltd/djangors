@@ -20,11 +20,21 @@ use thiserror::Error;
 
 #[cfg(feature = "passkeys")]
 pub mod passkeys;
+/// Password complexity validators (`MinimumLength`, `NumericPassword`, etc.).
+pub mod password_validation;
+
+#[cfg(feature = "password-strength")]
+pub use password_validation::StrengthValidator;
+pub use password_validation::{
+    default_validators, validate_password, MinimumLength, NumericPassword, PasswordValidator,
+    UserAttributeSimilarity, UserAttributes,
+};
 
 type HmacSha256 = Hmac<Sha256>;
 
 /// Error type for authentication and user operations.
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum AuthError {
     /// Password hashing or verification failed.
     #[error("password hashing error: {0}")]
@@ -52,6 +62,9 @@ pub enum AuthError {
     /// Mail sending failed during password reset workflow.
     #[error("mail sending error: {0}")]
     Mail(String),
+    /// The supplied password did not satisfy password complexity validators.
+    #[error("weak password: {}", .0.join("; "))]
+    WeakPassword(Vec<String>),
 }
 
 impl From<AuthError> for djangors_core::DjangorsError {
@@ -83,6 +96,12 @@ impl From<AuthError> for djangors_core::DjangorsError {
             AuthError::Mail(msg) => {
                 djangors_core::DjangorsError::Internal(format!("mail sending error: {msg}"))
             }
+            AuthError::WeakPassword(errors) => djangors_core::DjangorsError::api(
+                StatusCode::BAD_REQUEST,
+                "weak_password",
+                "Password does not meet complexity requirements",
+            )
+            .with_details(serde_json::json!({ "errors": errors })),
         }
     }
 }
@@ -934,6 +953,11 @@ pub async fn confirm_password_reset<U: AuthUser>(
 
     if !verify_password_reset_token(&user, token, secret) {
         return Err(AuthError::InvalidToken);
+    }
+
+    let attrs = UserAttributes::new(user.username(), "");
+    if let Err(errors) = validate_password(new_password, Some(&attrs), &default_validators()) {
+        return Err(AuthError::WeakPassword(errors));
     }
 
     let hashed = hash_password(new_password)?;
