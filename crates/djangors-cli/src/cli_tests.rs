@@ -271,3 +271,21 @@ fn test_parse_inspectdb() {
         _ => panic!("Expected Commands::Inspectdb"),
     }
 }
+
+#[test]
+fn test_parse_seed() {
+    let cli = Cli::try_parse_from(["dj", "seed"]).unwrap();
+    match cli.command {
+        Commands::Seed { force } => assert!(!force),
+        _ => panic!("Expected Commands::Seed"),
+    }
+}
+
+#[test]
+fn test_parse_seed_force() {
+    let cli = Cli::try_parse_from(["dj", "seed", "--force"]).unwrap();
+    match cli.command {
+        Commands::Seed { force } => assert!(force),
+        _ => panic!("Expected Commands::Seed"),
+    }
+}

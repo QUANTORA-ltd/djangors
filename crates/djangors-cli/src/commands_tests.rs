@@ -199,12 +199,23 @@ fn test_new_generates_expected_files() {
     let views_content = std::fs::read_to_string(project_path.join("src/views.rs")).unwrap();
     assert!(views_content.contains("pub async fn healthz"));
 
+    let seed_content = std::fs::read_to_string(project_path.join("src/bin/seed.rs")).unwrap();
+    assert!(seed_content.contains("DATABASE_URL"));
+    assert!(seed_content.contains("Nothing to seed yet"));
+
     let main_content = std::fs::read_to_string(project_path.join("src/main.rs")).unwrap();
     assert!(main_content.contains("/healthz"));
+    // App code is in the library crate so the seed binary can use it.
+    assert!(main_content.contains("use my_test_proj::views;"));
+    let lib_content = std::fs::read_to_string(project_path.join("src/lib.rs")).unwrap();
+    assert!(lib_content.contains("pub mod views;"));
+    assert!(seed_content.contains("use my_test_proj::"));
 
     let cargo_toml_content = std::fs::read_to_string(project_path.join("Cargo.toml")).unwrap();
     assert!(cargo_toml_content.contains("name = \"my_test_proj\""));
+    assert!(cargo_toml_content.contains("default-run = \"my_test_proj\""));
     assert!(cargo_toml_content.contains("djangors-core = { path = "));
+    assert!(cargo_toml_content.contains("djangors-db = { path = "));
     assert!(cargo_toml_content.contains("[profile.release]"));
     assert!(cargo_toml_content.contains("lto = \"thin\""));
     assert!(cargo_toml_content.contains("strip = \"symbols\""));
@@ -258,6 +269,72 @@ fn test_new_invalid_project_name() {
     assert!(new("123invalid").is_err());
     assert!(new("invalid name!").is_err());
     assert!(new("").is_err());
+}
+
+#[test]
+fn test_new_rejects_seed_as_project_name() {
+    // Checked before anything is written, so no directory is created.
+    let err = new("seed").unwrap_err();
+    assert!(err.contains("reserved"), "Error message: {err}");
+}
+
+#[test]
+fn test_seed_blocked_by_debug_env_values() {
+    assert!(seed_blocked_by_debug_env(Some("false")));
+    assert!(seed_blocked_by_debug_env(Some("FALSE")));
+    assert!(seed_blocked_by_debug_env(Some("0")));
+    assert!(!seed_blocked_by_debug_env(Some("true")));
+    assert!(!seed_blocked_by_debug_env(Some("1")));
+    assert!(!seed_blocked_by_debug_env(None));
+}
+
+#[test]
+fn test_seed_requires_seed_script() {
+    let _guard = FS_MUTEX.lock().unwrap();
+    let root = std::env::temp_dir().join(format!("dj_test_seed_missing_{}", std::process::id()));
+    let project = root.join("project");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    new(project.to_str().unwrap()).unwrap();
+    std::fs::remove_file(project.join("src/bin/seed.rs")).unwrap();
+    let old = std::env::current_dir().unwrap();
+    std::env::set_current_dir(&project).unwrap();
+
+    let res = seed(false);
+
+    std::env::set_current_dir(old).unwrap();
+    let _ = std::fs::remove_dir_all(root);
+
+    let err = res.unwrap_err();
+    assert!(err.contains("src/bin/seed.rs"), "Error message: {err}");
+}
+
+#[test]
+fn test_seed_refused_when_debug_is_false() {
+    let _guard = FS_MUTEX.lock().unwrap();
+    let root = std::env::temp_dir().join(format!("dj_test_seed_debug_{}", std::process::id()));
+    let project = root.join("project");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    new(project.to_str().unwrap()).unwrap();
+    let old = std::env::current_dir().unwrap();
+    std::env::set_current_dir(&project).unwrap();
+
+    let old_debug = std::env::var("DJANGORS_DEBUG").ok();
+    std::env::set_var("DJANGORS_DEBUG", "false");
+
+    let res = seed(false);
+
+    match old_debug {
+        Some(value) => std::env::set_var("DJANGORS_DEBUG", value),
+        None => std::env::remove_var("DJANGORS_DEBUG"),
+    }
+    std::env::set_current_dir(old).unwrap();
+    let _ = std::fs::remove_dir_all(root);
+
+    let err = res.unwrap_err();
+    assert!(err.contains("DJANGORS_DEBUG"), "Error message: {err}");
+    assert!(err.contains("--force"), "Error message: {err}");
 }
 
 /// Slow because it builds a generated standalone project; run with `--ignored`.

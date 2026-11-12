@@ -20,6 +20,7 @@ fn builtin_command_names() -> std::collections::HashSet<&'static str> {
         "createpermissions",
         "shell",
         "test",
+        "seed",
         "collectstatic",
         "openapi",
         "generate",
@@ -146,6 +147,12 @@ async fn main() {
         Commands::Test => {
             if let Err(e) = commands::test() {
                 eprintln!("[dj test] error: {e}");
+                std::process::exit(1);
+            }
+        }
+        Commands::Seed { force } => {
+            if let Err(e) = commands::seed(force) {
+                eprintln!("[dj seed] error: {e}");
                 std::process::exit(1);
             }
         }

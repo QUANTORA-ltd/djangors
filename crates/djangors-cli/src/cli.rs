@@ -113,6 +113,13 @@ pub enum Commands {
     /// Run the test suite.
     #[command(name = "test")]
     Test,
+    /// Fill the development database by running the project's seed script (src/bin/seed.rs).
+    #[command(name = "seed")]
+    Seed {
+        /// Seed even when DJANGORS_DEBUG is false (for example, a production database).
+        #[arg(long)]
+        force: bool,
+    },
     /// Collect static files from source directories into one output directory.
     #[command(name = "collectstatic")]
     Collectstatic {
