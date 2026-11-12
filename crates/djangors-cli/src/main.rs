@@ -25,6 +25,7 @@ fn builtin_command_names() -> std::collections::HashSet<&'static str> {
         "openapi",
         "generate",
         "inspectdb",
+        "clearsessions",
     ]
     .into_iter()
     .collect()
@@ -199,6 +200,15 @@ async fn main() {
             if let Err(e) = commands::inspectdb(database_url, output, &app).await {
                 eprintln!("[dj inspectdb] error: {e}");
                 std::process::exit(1);
+            }
+        }
+        Commands::Clearsessions { database_url } => {
+            match commands::clearsessions(database_url.as_deref()).await {
+                Ok(removed) => println!("[dj clearsessions] removed {removed} expired session(s)"),
+                Err(e) => {
+                    eprintln!("[dj clearsessions] error: {e}");
+                    std::process::exit(1);
+                }
             }
         }
     }

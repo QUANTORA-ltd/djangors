@@ -5,6 +5,40 @@ All notable changes to Djangors are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **Server-side sessions** (`djangors_sessions`): a `SessionStore` trait with `DatabaseStore`
+  (`djangors_session` table) and `RedisStore` (`redis` feature). Only a SHA-256 hash of the
+  session key is stored. `SessionLayer` takes any store; `dj clearsessions` deletes expired rows.
+- **Remember me and session management** (`djangors_auth`): `login_with(LoginOptions { remember })`
+  sets a persistent or browser-session cookie; `list_sessions`, `revoke_session`,
+  `logout_other_sessions` and `change_password`. A per-user session generation lets
+  "log out everywhere" work with signed-cookie sessions too; password resets bump it.
+- **Email verification**: `EmailAddress`, signed time-limited links (`send_verification_email`,
+  `verify_email`), the `HasVerifiedEmail` extractor and the `require_verified_email_for_login`
+  setting.
+- **Invitations**: `Invitation` with hashed single-use tokens, `invite`, `resend_invitation`,
+  `revoke_invitation`, `accept_invitation`, and `invitation_router()`.
+- **GDPR tooling** (`djangors_auth::gdpr`): ZIP export of a user's data through a
+  `UserDataRegistry`, signed download links, scheduled account deletion with a grace period,
+  and `AnonymizeHook`.
+- **Organizations and teams** (`djangors-contrib-orgs`, facade feature `orgs`): organizations,
+  memberships, teams, role permissions, the `CurrentOrg` extractor, and a last-owner guard.
+- **CAPTCHA** (feature `captcha`): Turnstile, hCaptcha and reCAPTCHA v2/v3 verifiers,
+  `CaptchaField`, and the `VerifiedCaptcha` extractor (`djangors_core::captcha`). Fails closed.
+- **Bot mitigation** (`djangors_forms::honeypot`): `HoneypotField`, `MinSubmitTime`, user-agent
+  checks, and `BotGuard` to show a CAPTCHA only for suspicious submissions.
+- **Security headers**: `SecurityHeadersLayer` now also sends `Cross-Origin-Opener-Policy` and
+  `Cross-Origin-Resource-Policy`; `SecurityHeadersBuilder` and `PermissionsPolicyBuilder`
+  configure them. `CspBuilder::with_nonce()` adds a per-request nonce (`CspNonce`), exposed to
+  templates as `csp_nonce()`. `dj check --deploy` warns when security headers are missing.
+
+### Changed
+
+- Session keys are now 256-bit (were 128-bit).
+- `DjangorsSettings` gained `session_remember_age` and `require_verified_email_for_login`;
+  struct literals need `..Default::default()`.
+
 ## [0.12.0]
 
 New: API keys, CORS, API versioning, health checks, password validation, retries and circuit

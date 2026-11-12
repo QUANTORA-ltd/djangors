@@ -1,0 +1,48 @@
+[package]
+name = "djangors-contrib-orgs"
+description = "Organizations, teams, roles, and memberships for Djangors"
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["django", "web-framework", "organizations", "teams", "rbac"]
+categories = ["web-programming"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[features]
+default = ["postgres", "sqlite"]
+postgres = [
+    "djangors-orm/postgres",
+    "djangors-core/postgres",
+    "djangors-db/postgres",
+    "djangors-auth/postgres",
+    "djangors-sessions/postgres",
+]
+sqlite = [
+    "djangors-orm/sqlite",
+    "djangors-core/sqlite",
+    "djangors-db/sqlite",
+    "djangors-auth/sqlite",
+    "djangors-sessions/sqlite",
+]
+admin = ["dep:djangors-admin"]
+
+[dependencies]
+async-trait = "0.1.86"
+chrono = { version = "0.4.45", features = ["std", "serde"] }
+djangors-admin = { path = "../djangors-admin", version = "0.12.0", optional = true }
+djangors-auth = { path = "../djangors-auth", version = "0.12.0", default-features = false }
+djangors-core = { path = "../djangors-core", version = "0.12.0", default-features = false }
+djangors-db = { path = "../djangors-db", version = "0.12.0", default-features = false }
+djangors-macros = { path = "../djangors-macros", version = "0.12.0" }
+djangors-mail = { path = "../djangors-mail", version = "0.12.0" }
+djangors-orm = { path = "../djangors-orm", version = "0.12.0", default-features = false }
+djangors-sessions = { path = "../djangors-sessions", version = "0.12.0", default-features = false }
+thiserror = "2.0.18"
+
+[dev-dependencies]
+hyper = "1.10.1"
+tokio = { version = "1.53.0", features = ["macros", "rt-multi-thread"] }

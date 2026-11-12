@@ -581,3 +581,108 @@ fn test_cors_config_from_settings_uses_configured_origins() {
         vec!["https://app.example.com".to_string()]
     );
 }
+
+#[tokio::test]
+async fn test_security_headers_coop_corp_coep_and_permissions_policy() {
+    use tower::{service_fn, Service, ServiceBuilder};
+
+    let policy = PermissionsPolicyBuilder::new()
+        .feature("camera", &[])
+        .feature("geolocation", &["self"]);
+    assert_eq!(policy.build(), "camera=(), geolocation=(self)");
+
+    let layer = SecurityHeadersBuilder::new()
+        .permissions_policy(policy)
+        .coep(Some("require-corp"))
+        .build();
+
+    let svc_fn = service_fn(|_req: hyper::Request<Full<Bytes>>| async {
+        Ok::<_, std::convert::Infallible>(hyper::Response::new(Full::new(Bytes::from("ok"))))
+    });
+    let mut svc = ServiceBuilder::new().layer(layer).service(svc_fn);
+
+    let req = hyper::Request::builder()
+        .uri("/")
+        .body(Full::new(Bytes::new()))
+        .unwrap();
+    let resp = svc.ready().await.unwrap().call(req).await.unwrap();
+    assert_eq!(
+        resp.headers().get("cross-origin-opener-policy").unwrap(),
+        "same-origin"
+    );
+    assert_eq!(
+        resp.headers().get("cross-origin-resource-policy").unwrap(),
+        "same-origin"
+    );
+    assert_eq!(
+        resp.headers().get("cross-origin-embedder-policy").unwrap(),
+        "require-corp"
+    );
+    assert_eq!(
+        resp.headers().get("permissions-policy").unwrap(),
+        "camera=(), geolocation=(self)"
+    );
+}
+
+#[tokio::test]
+async fn test_csp_layer_with_nonce_per_request_and_livereload() {
+    use http_body_util::BodyExt;
+    use tower::{service_fn, Service, ServiceBuilder};
+
+    let csp = CspBuilder::new()
+        .default_src(&["'self'"])
+        .script_src(&["'self'"])
+        .style_src(&["'self'"])
+        .with_nonce()
+        .build();
+
+    let svc_fn = service_fn(|req: hyper::Request<Full<Bytes>>| async move {
+        let nonce = req
+            .extensions()
+            .get::<CspNonce>()
+            .map(|n| n.0.clone())
+            .unwrap_or_default();
+        let body = format!(
+            "<html><script nonce=\"{nonce}\"></script><script id=\"__djangors_livereload\"></script></html>"
+        );
+        let resp = hyper::Response::builder()
+            .header("content-type", "text/html; charset=utf-8")
+            .body(Full::new(Bytes::from(body)))
+            .unwrap();
+        Ok::<_, std::convert::Infallible>(resp)
+    });
+    let mut svc = ServiceBuilder::new().layer(csp).service(svc_fn);
+
+    let req1 = hyper::Request::builder()
+        .uri("/")
+        .body(Full::new(Bytes::new()))
+        .unwrap();
+    let resp1 = svc.ready().await.unwrap().call(req1).await.unwrap();
+    let csp1 = resp1
+        .headers()
+        .get("content-security-policy")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(csp1.contains("'nonce-"));
+    let body1_bytes = resp1.into_body().collect().await.unwrap().to_bytes();
+    let body1 = std::str::from_utf8(&body1_bytes).unwrap();
+    assert!(body1.contains("<script nonce=\""));
+    assert!(body1.contains("id=\"__djangors_livereload\""));
+    assert!(!body1.contains("<script id=\"__djangors_livereload\">"));
+
+    let req2 = hyper::Request::builder()
+        .uri("/")
+        .body(Full::new(Bytes::new()))
+        .unwrap();
+    let resp2 = svc.ready().await.unwrap().call(req2).await.unwrap();
+    let csp2 = resp2
+        .headers()
+        .get("content-security-policy")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert_ne!(csp1, csp2);
+}

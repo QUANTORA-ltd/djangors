@@ -18,16 +18,44 @@ use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 use thiserror::Error;
 
+/// Email verification workflow (`EmailAddress`, signed tokens, `HasVerifiedEmail`).
+pub mod email_verification;
+/// GDPR user data export and scheduled account deletion / anonymization.
+pub mod gdpr;
+/// User invitation workflow (`Invitation`, `invite`, `accept_invitation`, `revoke_invitation`).
+pub mod invitations;
 #[cfg(feature = "passkeys")]
 pub mod passkeys;
 /// Password complexity validators (`MinimumLength`, `NumericPassword`, etc.).
 pub mod password_validation;
+/// Session management helpers ("remember me", session listing, revocation, generation invalidation).
+pub mod session_mgmt;
 
+pub use email_verification::{
+    create_email_address_table, ensure_verified_for_login, generate_email_verification_token,
+    has_verified_email, parse_email_verification_token, send_verification_email, verify_email,
+    EmailAddress, HasVerifiedEmail,
+};
+pub use gdpr::{
+    cancel_account_deletion, download_export_view, export_user_data, get_scheduled_deletion,
+    request_account_deletion, request_export_view, run_scheduled_deletions, AnonymizeHook,
+    UserDataRegistry,
+};
+pub use invitations::{
+    accept_invitation, accept_invitation_page, accept_invitation_submit, admin_invitations_list,
+    create_invitation_table, invitation_router, invite, resend_invitation, revoke_invitation,
+    Invitation,
+};
 #[cfg(feature = "password-strength")]
 pub use password_validation::StrengthValidator;
 pub use password_validation::{
     default_validators, validate_password, MinimumLength, NumericPassword, PasswordValidator,
     UserAttributeSimilarity, UserAttributes,
+};
+pub use session_mgmt::{
+    bump_session_generation, change_password, get_session_generation, list_sessions,
+    login_session_with, login_with, logout_other_sessions, revoke_session, LoginOptions,
+    SESSION_GENERATION_KEY,
 };
 
 type HmacSha256 = Hmac<Sha256>;
@@ -65,6 +93,18 @@ pub enum AuthError {
     /// The supplied password did not satisfy password complexity validators.
     #[error("weak password: {}", .0.join("; "))]
     WeakPassword(Vec<String>),
+    /// Session store or session state error.
+    #[error("session error: {0}")]
+    Session(String),
+    /// User's email address is not verified.
+    #[error("email address is not verified")]
+    EmailNotVerified,
+    /// Logged-in user's email does not match the invitation email.
+    #[error("invitation belongs to a different email address")]
+    InvitationEmailMismatch,
+    /// GDPR export or deletion error.
+    #[error("gdpr error: {0}")]
+    Gdpr(String),
 }
 
 impl From<AuthError> for djangors_core::DjangorsError {
@@ -102,6 +142,20 @@ impl From<AuthError> for djangors_core::DjangorsError {
                 "Password does not meet complexity requirements",
             )
             .with_details(serde_json::json!({ "errors": errors })),
+            AuthError::Session(msg) => {
+                djangors_core::DjangorsError::Unauthorized(format!("session error: {msg}"))
+            }
+            AuthError::EmailNotVerified => djangors_core::DjangorsError::api(
+                StatusCode::FORBIDDEN,
+                "email_not_verified",
+                err.to_string(),
+            ),
+            AuthError::InvitationEmailMismatch => djangors_core::DjangorsError::api(
+                StatusCode::FORBIDDEN,
+                "invitation_email_mismatch",
+                err.to_string(),
+            ),
+            AuthError::Gdpr(msg) => djangors_core::DjangorsError::Internal(msg),
         }
     }
 }
@@ -494,6 +548,18 @@ impl<U: AuthUser> djangors_core::extract::FromRequest for Auth<U> {
             return Err(djangors_core::error::DjangorsError::Unauthorized(
                 "account inactive".to_string(),
             ));
+        }
+
+        let current_gen = get_session_generation(db, user.id())
+            .await
+            .map_err(|e| djangors_core::error::DjangorsError::Internal(e.to_string()))?;
+        if current_gen > 0 {
+            let sess_gen = session.get::<i64>(SESSION_GENERATION_KEY).unwrap_or(0);
+            if sess_gen != current_gen {
+                return Err(djangors_core::error::DjangorsError::Unauthorized(
+                    "session invalidated".to_string(),
+                ));
+            }
         }
 
         Ok(Auth(user))
@@ -963,6 +1029,7 @@ pub async fn confirm_password_reset<U: AuthUser>(
     let hashed = hash_password(new_password)?;
     user.set_password_hash(hashed);
     user.update_user(db).await?;
+    bump_session_generation(db, user.id()).await?;
 
     Ok(())
 }

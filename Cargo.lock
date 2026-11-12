@@ -663,6 +663,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c74b8349d32d297c9134b8c88677813a227df8f779daa29bfc29c183fe3dca6"
 
 [[package]]
+name = "constant_time_eq"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9eb6feb175df65d0a3ccd3e73484e940d0ac664e8034f0519fd49a93db3071d9"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -713,9 +722,9 @@ checksum = "217698eaf96b4a3f0bc4f3662aaa55bdf913cd54d7204591faa790070c6d0853"
 
 [[package]]
 name = "crc32fast"
-version = "1.5.0"
+version = "1.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9481c1c90cbf2ac953f07c8d4a58aa3945c425b7185c9154d67a65e4230da511"
+checksum = "2b929dd2a135771f40afabd1073f85eed59c800b7c61901e5c254270497dad64"
 dependencies = [
  "cfg-if",
 ]
@@ -939,6 +948,7 @@ dependencies = [
  "djangors-auth",
  "djangors-cache",
  "djangors-contrib-history",
+ "djangors-contrib-orgs",
  "djangors-contrib-payments",
  "djangors-contrib-tenancy",
  "djangors-core",
@@ -1003,10 +1013,12 @@ dependencies = [
  "rand_core 0.6.4",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "sha2 0.10.9",
  "sqlx",
  "thiserror 2.0.18",
  "tokio",
+ "zip",
  "zxcvbn",
 ]
 
@@ -1047,6 +1059,7 @@ dependencies = [
  "djangors-migrations",
  "djangors-orm",
  "djangors-rest",
+ "djangors-sessions",
  "djangors-staticfiles",
  "djangors-tasks",
  "serde_json",
@@ -1118,6 +1131,25 @@ dependencies = [
  "djangors-sessions",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "djangors-contrib-orgs"
+version = "0.12.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "djangors-admin",
+ "djangors-auth",
+ "djangors-core",
+ "djangors-db",
+ "djangors-macros",
+ "djangors-mail",
+ "djangors-orm",
+ "djangors-sessions",
+ "hyper",
+ "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]
@@ -1214,6 +1246,7 @@ dependencies = [
  "bytes",
  "djangors-cache",
  "djangors-db",
+ "djangors-forms",
  "djangors-macros",
  "djangors-orm",
  "futures-util",
@@ -1274,8 +1307,16 @@ dependencies = [
 name = "djangors-forms"
 version = "0.12.0"
 dependencies = [
+ "async-trait",
+ "base64 0.22.1",
  "djangors-macros",
+ "hmac 0.12.1",
+ "reqwest 0.12.28",
+ "serde",
  "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]
@@ -1394,16 +1435,21 @@ dependencies = [
 name = "djangors-sessions"
 version = "0.12.0"
 dependencies = [
+ "async-trait",
  "base64 0.22.1",
  "bytes",
+ "chrono",
  "djangors-core",
+ "djangors-db",
  "hmac 0.12.1",
  "http-body-util",
  "hyper",
  "rand 0.8.7",
+ "redis",
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "thiserror 2.0.18",
  "tokio",
  "tower 0.5.3",
 ]
@@ -1738,6 +1784,7 @@ checksum = "843fba2746e448b37e26a819579957415c8cef339bf08564fe8b7ddbd959573c"
 dependencies = [
  "crc32fast",
  "miniz_oxide",
+ "zlib-rs",
 ]
 
 [[package]]
@@ -2634,9 +2681,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.33"
+version = "0.4.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
+checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
 
 [[package]]
 name = "lopdf"
@@ -5126,7 +5173,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "50e69a15e21b2ff22c415446983978bded3244195f17d59cb113551c1e806f91"
 dependencies = [
  "base32",
- "constant_time_eq",
+ "constant_time_eq 0.3.1",
  "hmac 0.12.1",
  "rand 0.9.5",
  "sha1 0.10.7",
@@ -5344,6 +5391,12 @@ checksum = "cb30dbbd9036155e74adad6812e9898d03ec374946234fbcebd5dfc7b9187b90"
 dependencies = [
  "rustc-hash",
 ]
+
+[[package]]
+name = "typed-path"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ce898823d8cd0f028662d2f349694b1af0a5cc9be83f1d213a00d3147445e1e"
 
 [[package]]
 name = "typenum"
@@ -6083,10 +6136,48 @@ dependencies = [
 ]
 
 [[package]]
+name = "zip"
+version = "9.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3476fd497ac8af5b1ec7b51acab7bef380f7e8dd8e0487595bafd839417a302"
+dependencies = [
+ "constant_time_eq 0.6.1",
+ "crc32fast",
+ "flate2",
+ "getrandom 0.4.3",
+ "indexmap",
+ "libc",
+ "memchr",
+ "nix",
+ "typed-path",
+ "windows-sys 0.61.2",
+ "zeroize",
+ "zopfli",
+]
+
+[[package]]
+name = "zlib-rs"
+version = "0.6.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b268e58e7c693d7c271f93ffc4ba3b380412554231c85bf61ca7af91042a4112"
+
+[[package]]
 name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
+
+[[package]]
+name = "zopfli"
+version = "0.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aaf7fc5d30c28483d93805c4a5e12b05bbb52407fa67c5f8bd552374cd01fb11"
+dependencies = [
+ "bumpalo",
+ "crc32fast",
+ "log",
+ "simd-adler32",
+]
 
 [[package]]
 name = "zstd"

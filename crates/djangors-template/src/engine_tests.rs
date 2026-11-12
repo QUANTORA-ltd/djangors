@@ -547,3 +547,19 @@ fn test_function_now() {
     assert_eq!(rendered.len(), 4);
     assert!(rendered.parse::<u32>().is_ok());
 }
+
+#[test]
+fn test_function_csp_nonce() {
+    let engine = TemplateEngine::from_embedded(&[(
+        "s.html",
+        "<script nonce=\"{{ csp_nonce() }}\"></script>",
+    )])
+    .unwrap();
+    let rendered = engine
+        .render("s.html", minijinja::context! { _csp_nonce => "abc123" })
+        .unwrap();
+    assert_eq!(rendered, "<script nonce=\"abc123\"></script>");
+
+    let empty = engine.render("s.html", ()).unwrap();
+    assert_eq!(empty, "<script nonce=\"\"></script>");
+}

@@ -27,6 +27,7 @@ djangors-contrib-contenttypes = { path = "../djangors-contrib-contenttypes", ver
 djangors-orm = { path = "../djangors-orm", version = "0.12.0" }
 djangors-core = { path = "../djangors-core", version = "0.12.0" }
 djangors-rest = { path = "../djangors-rest", version = "0.12.0" }
+djangors-sessions = { path = "../djangors-sessions", version = "0.12.0" }
 djangors-tasks = { path = "../djangors-tasks", version = "0.12.0" }
 chrono = { version = "0.4.45", features = ["std", "serde"] }
 toml = "0.8.20"

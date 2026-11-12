@@ -20,6 +20,7 @@ cache = ["dep:djangors-cache"]
 ws = []
 resilience = ["dep:backon"]
 debug-panel = []
+captcha = ["dep:djangors-forms", "djangors-forms/captcha"]
 sentry = ["dep:sentry", "dep:sentry-tracing"]
 otel = [
     "dep:opentelemetry",
@@ -82,6 +83,7 @@ base64 = "0.22.1"
 djangors-orm = { path = "../djangors-orm", version = "0.12.0", default-features = false }
 djangors-db = { path = "../djangors-db", version = "0.12.0", default-features = false }
 djangors-cache = { path = "../djangors-cache", version = "0.12.0", default-features = false, optional = true }
+djangors-forms = { path = "../djangors-forms", version = "0.12.0", optional = true }
 backon = { version = "1.6.0", default-features = false, features = ["std", "tokio-sleep"], optional = true }
 inventory = "0.3.24"
 

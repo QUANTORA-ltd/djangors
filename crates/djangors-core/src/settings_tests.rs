@@ -253,6 +253,7 @@ fn test_custom_debug_redacts_secret_key() {
         port: 8000,
         max_body_bytes: 1024,
         cors_allowed_origins: vec![],
+        ..Default::default()
     };
 
     let debug_str = format!("{:?}", settings);

@@ -293,6 +293,29 @@ Then visit http://127.0.0.1:8000/.
     std::fs::create_dir_all(target_dir.join("deploy"))
         .map_err(|e| format!("failed to create directory '{name}/deploy': {e}"))?;
 
+    std::fs::create_dir_all(target_dir.join("templates/auth"))
+        .map_err(|e| format!("failed to create directory '{name}/templates/auth': {e}"))?;
+
+    let check_inbox_html = r#"<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Check your inbox</title>
+</head>
+<body>
+  <main>
+    <h1>Check your inbox</h1>
+    <p>We sent a verification link to your email address. Please open the link to verify your account.</p>
+  </main>
+</body>
+</html>
+"#;
+    std::fs::write(
+        target_dir.join("templates/auth/check_inbox.html"),
+        check_inbox_html,
+    )
+    .map_err(|e| format!("failed to write '{name}/templates/auth/check_inbox.html': {e}"))?;
+
     std::fs::write(target_dir.join("Cargo.toml"), cargo_toml)
         .map_err(|e| format!("failed to write '{name}/Cargo.toml': {e}"))?;
 
@@ -670,6 +693,17 @@ pub fn check(deploy: bool) -> Result<Vec<String>, String> {
     }
     if !Path::new("src/main.rs").is_file() {
         issues.push("src/main.rs is missing".into());
+    } else if deploy {
+        if let Ok(main_rs) = std::fs::read_to_string("src/main.rs") {
+            if !main_rs.contains("security_headers")
+                && !main_rs.contains("SecurityHeaders")
+                && !main_rs.contains("CustomSecurityHeaders")
+            {
+                issues.push(
+                    "SecurityHeadersLayer / SecurityHeadersBuilder (COOP, CORP, Permissions-Policy) not detected in src/main.rs".into(),
+                );
+            }
+        }
     }
     Ok(issues)
 }
@@ -2404,6 +2438,24 @@ fn sanitize_rust_ident(name: &str) -> String {
     } else {
         name.to_string()
     }
+}
+
+/// Deletes expired server-side sessions from `djangors_session`.
+pub async fn clearsessions(database_url: Option<&str>) -> Result<u64, String> {
+    let url = match database_url {
+        Some(u) if !u.trim().is_empty() => u.to_string(),
+        _ => std::env::var("DATABASE_URL")
+            .map_err(|_| "DATABASE_URL environment variable is not set".to_string())?,
+    };
+    let config = djangors_db::config::DatabaseConfig::new(url);
+    let db = djangors_db::Database::connect(&config)
+        .await
+        .map_err(|e| format!("failed to connect to database: {e}"))?;
+    let store = djangors_sessions::DatabaseStore::new(db);
+    store
+        .clear_expired()
+        .await
+        .map_err(|e| format!("failed to clear expired sessions: {e}"))
 }
 
 #[cfg(test)]

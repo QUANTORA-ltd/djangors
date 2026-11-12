@@ -22,6 +22,9 @@ extern crate self as djangors_core;
 
 /// Application builder and launcher logic.
 pub mod app;
+/// `VerifiedCaptcha` extractor for JSON APIs (feature `captcha`).
+#[cfg(feature = "captcha")]
+pub mod captcha;
 /// Django-style HTML debug and error page rendering.
 pub mod debug_page;
 /// Dev-only request and SQL query inspection panel (`debug-panel` feature).

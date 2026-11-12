@@ -132,6 +132,15 @@ pub struct DjangorsSettings {
     /// default (CORS disabled). Set with `cors_allowed_origins` in `djangors.toml`
     /// or the comma-separated `DJANGORS_CORS_ALLOWED_ORIGINS` environment variable.
     pub cors_allowed_origins: Vec<String>,
+
+    /// Maximum age in seconds for "remember me" sessions (defaults to 30 days).
+    /// Set with `session_remember_age` in `djangors.toml` or `DJANGORS_SESSION_REMEMBER_AGE`.
+    pub session_remember_age: u64,
+
+    /// When `true`, users must have a verified email address to log in.
+    /// Defaults to `false`. Set with `require_verified_email_for_login` in `djangors.toml`
+    /// or `DJANGORS_REQUIRE_VERIFIED_EMAIL_FOR_LOGIN`.
+    pub require_verified_email_for_login: bool,
 }
 
 impl fmt::Debug for DjangorsSettings {
@@ -144,6 +153,11 @@ impl fmt::Debug for DjangorsSettings {
             .field("port", &self.port)
             .field("max_body_bytes", &self.max_body_bytes)
             .field("cors_allowed_origins", &self.cors_allowed_origins)
+            .field("session_remember_age", &self.session_remember_age)
+            .field(
+                "require_verified_email_for_login",
+                &self.require_verified_email_for_login,
+            )
             .finish()
     }
 }
@@ -158,6 +172,8 @@ impl Default for DjangorsSettings {
             port: 8000,
             max_body_bytes: DEFAULT_MAX_BODY_BYTES,
             cors_allowed_origins: Vec::new(),
+            session_remember_age: 30 * 24 * 60 * 60,
+            require_verified_email_for_login: false,
         }
     }
 }
@@ -215,6 +231,18 @@ impl DjangorsSettings {
         self.cors_allowed_origins = origins.into_iter().map(Into::into).collect();
         self
     }
+
+    /// Sets the maximum age in seconds for "remember me" sessions.
+    pub fn with_session_remember_age(mut self, secs: u64) -> Self {
+        self.session_remember_age = secs;
+        self
+    }
+
+    /// Sets whether a verified email is required for login.
+    pub fn with_require_verified_email_for_login(mut self, require: bool) -> Self {
+        self.require_verified_email_for_login = require;
+        self
+    }
 }
 
 #[derive(Deserialize)]
@@ -226,6 +254,8 @@ struct PartialSettings {
     port: Option<u16>,
     max_body_bytes: Option<usize>,
     cors_allowed_origins: Option<Vec<String>>,
+    session_remember_age: Option<u64>,
+    require_verified_email_for_login: Option<bool>,
 }
 
 impl DjangorsSettings {
@@ -285,6 +315,27 @@ impl DjangorsSettings {
                 .collect();
         }
 
+        if let Ok(val) = std::env::var("DJANGORS_SESSION_REMEMBER_AGE") {
+            match val.parse::<u64>() {
+                Ok(secs) => self.session_remember_age = secs,
+                Err(_) => warnings.push(format!(
+                    "Ignored invalid env var DJANGORS_SESSION_REMEMBER_AGE: '{}'",
+                    val
+                )),
+            }
+        }
+
+        if let Ok(val) = std::env::var("DJANGORS_REQUIRE_VERIFIED_EMAIL_FOR_LOGIN") {
+            match val.to_lowercase().as_str() {
+                "true" | "1" => self.require_verified_email_for_login = true,
+                "false" | "0" => self.require_verified_email_for_login = false,
+                _ => warnings.push(format!(
+                    "Ignored invalid env var DJANGORS_REQUIRE_VERIFIED_EMAIL_FOR_LOGIN: '{}'",
+                    val
+                )),
+            }
+        }
+
         warnings
     }
 
@@ -323,6 +374,12 @@ impl DjangorsSettings {
         }
         if let Some(cors_allowed_origins) = partial.cors_allowed_origins {
             settings.cors_allowed_origins = cors_allowed_origins;
+        }
+        if let Some(session_remember_age) = partial.session_remember_age {
+            settings.session_remember_age = session_remember_age;
+        }
+        if let Some(require_verified) = partial.require_verified_email_for_login {
+            settings.require_verified_email_for_login = require_verified;
         }
 
         Ok(settings)

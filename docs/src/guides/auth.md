@@ -313,3 +313,21 @@ if let Err(messages) = validate_password("1234", Some(&attrs), &validators) {
 ```
 
 `confirm_password_reset` runs `default_validators()` automatically before hashing and returns `AuthError::WeakPassword` if any rule fails. `dj createsuperuser` also validates the password unless `--skip-validation` is passed.
+
+## Email verification
+
+`djangors-auth` tracks verified email addresses via the `EmailAddress` model (`auth_email_address` table) and signed, time-limited HMAC-SHA256 tokens bound to `(user_id, email, expiry)`:
+
+```rust,illustrative
+use djangors::auth::{send_verification_email, verify_email, HasVerifiedEmail};
+
+# async fn example(db: &djangors::db::Database, mailer: &dyn djangors::mail::MailBackend, secret: &[u8]) -> Result<(), djangors::auth::AuthError> {
+send_verification_email(db, mailer, 1, "alice@example.com", "https://example.com", secret).await?;
+let verified = verify_email(db, "token-from-query", secret).await?;
+# Ok(())
+# }
+```
+
+- Use the `HasVerifiedEmail` extractor on routes that require a verified email (returns `403 Forbidden` otherwise).
+- Set `require_verified_email_for_login = true` in `djangors.toml` (or `DJANGORS_REQUIRE_VERIFIED_EMAIL_FOR_LOGIN=true`) and call `ensure_verified_for_login` during login.
+- New projects created with `dj new` include `templates/auth/check_inbox.html`.

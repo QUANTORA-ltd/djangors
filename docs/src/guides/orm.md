@@ -692,3 +692,20 @@ q.write_json(&mut buf);
 assert!(std::str::from_utf8(&buf).unwrap().contains("\"question_text\":\"Fast JSON?\""));
 # }
 ```
+
+## JSON Fields
+
+Use `serde_json::Value` (or `Option<serde_json::Value>`) on a `#[derive(Model)]` field to store structured JSON (`FieldKind::Json` -> `JSONB` on PostgreSQL, `TEXT` on SQLite):
+
+```rust,illustrative
+use djangors::macros::Model;
+use serde_json::Value;
+
+#[derive(Model, Debug, Clone)]
+#[djangors(app = "catalog", table_name = "catalog_product")]
+pub struct Product {
+    #[djangors(primary_key, auto)]
+    pub id: i64,
+    pub attributes: Value,
+}
+```

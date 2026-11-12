@@ -10,18 +10,49 @@
 //! - [`SignedCookieStore`]: Serializes, signs, deserializes, and verifies cookies.
 //! - [`SessionLayer`]: Tower middleware injecting [`Session`] into request extensions and writing updated cookies to response headers.
 
+use async_trait::async_trait;
 use base64::Engine;
 use hmac::{Hmac, Mac};
-use hyper::header::{HeaderMap, HeaderValue, COOKIE, SET_COOKIE};
+use hyper::header::{HeaderMap, HeaderValue, COOKIE, SET_COOKIE, USER_AGENT};
 use serde_json::Value;
 use sha2::Sha256;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use thiserror::Error;
 use tower::layer::Layer;
 use tower::Service;
 
+pub mod store;
+#[cfg(feature = "redis")]
+pub use store::RedisStore;
+pub use store::{hash_session_key, DatabaseStore, SessionContext, SessionRecord, SessionStore};
+
 type HmacSha256 = Hmac<Sha256>;
+
+/// Errors produced by session stores.
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum SessionError {
+    /// Underlying database or Redis backend error.
+    #[error("session backend error: {0}")]
+    Backend(String),
+    /// Session data serialization or deserialization error.
+    #[error("session serialization error: {0}")]
+    Serialization(String),
+}
+
+/// Controls the lifetime and cookie `Max-Age` behavior of a [`Session`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionExpiry {
+    /// Use the store's default `max_age` for both cookie `Max-Age` and server expiry.
+    Default,
+    /// Browser-session cookie (no `Max-Age` attribute on `Set-Cookie`),
+    /// while the server/signed payload still enforces the store's `max_age`.
+    BrowserSession,
+    /// Persistent cookie and server expiry with an explicit `Max-Age` duration.
+    MaxAge(Duration),
+}
 
 /// A per-request session handle. Cheaply `Clone` (wraps an `Arc<Mutex<..>>`)
 /// so the same handle can be inserted into the request's extensions (for
@@ -33,16 +64,37 @@ pub struct Session {
 }
 
 // Internal session state protected by a Mutex.
-struct SessionInner {
+pub(crate) struct SessionInner {
     // The key-value data map stored in the session.
-    data: HashMap<String, Value>,
+    pub(crate) data: HashMap<String, Value>,
     // Flag indicating if any session key-value data was changed or removed during the request.
-    modified: bool,
+    pub(crate) modified: bool,
     /// Set by `cycle_key`; on the next encode, forces a fresh session
     /// identity (not just re-signing the same data) to prevent session fixation attacks.
-    cycled: bool,
+    pub(crate) cycled: bool,
     // Flag indicating if this session was newly created during the current request.
-    new: bool,
+    pub(crate) new: bool,
+    // Per-session expiry configuration.
+    pub(crate) expiry: SessionExpiry,
+    // Raw key loaded from a server-side store, if any.
+    pub(crate) loaded_key: Option<String>,
+}
+
+const EXPIRY_BROWSER_ONLY_KEY: &str = "_session_browser_only";
+const EXPIRY_MAX_AGE_SECS_KEY: &str = "_session_max_age_secs";
+
+pub(crate) fn expiry_from_data(data: &HashMap<String, Value>) -> SessionExpiry {
+    if data
+        .get(EXPIRY_BROWSER_ONLY_KEY)
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        SessionExpiry::BrowserSession
+    } else if let Some(secs) = data.get(EXPIRY_MAX_AGE_SECS_KEY).and_then(|v| v.as_u64()) {
+        SessionExpiry::MaxAge(Duration::from_secs(secs))
+    } else {
+        SessionExpiry::Default
+    }
 }
 
 impl Session {
@@ -59,8 +111,56 @@ impl Session {
                 modified: false,
                 cycled: false,
                 new: true,
+                expiry: SessionExpiry::Default,
+                loaded_key: None,
             })),
         }
+    }
+
+    /// Returns the current session key.
+    pub fn session_key(&self) -> String {
+        if let Ok(inner) = self.inner.lock() {
+            if let Some(Value::String(key)) = inner.data.get("_session_key") {
+                return key.clone();
+            }
+        }
+        String::new()
+    }
+
+    /// Configures per-session expiration.
+    ///
+    /// - `Some(duration)` sets an explicit `Max-Age` on the cookie and server expiry.
+    /// - `None` configures a browser-session cookie (omits `Max-Age` so the browser
+    ///   drops it on close) while still enforcing the store's server-side expiry.
+    pub fn set_expiry(&self, max_age: Option<Duration>) {
+        if let Ok(mut inner) = self.inner.lock() {
+            match max_age {
+                Some(dur) => {
+                    inner.expiry = SessionExpiry::MaxAge(dur);
+                    inner.data.remove(EXPIRY_BROWSER_ONLY_KEY);
+                    inner.data.insert(
+                        EXPIRY_MAX_AGE_SECS_KEY.to_string(),
+                        Value::Number(serde_json::Number::from(dur.as_secs())),
+                    );
+                }
+                None => {
+                    inner.expiry = SessionExpiry::BrowserSession;
+                    inner.data.remove(EXPIRY_MAX_AGE_SECS_KEY);
+                    inner
+                        .data
+                        .insert(EXPIRY_BROWSER_ONLY_KEY.to_string(), Value::Bool(true));
+                }
+            }
+            inner.modified = true;
+        }
+    }
+
+    /// Returns the current [`SessionExpiry`] mode for this session.
+    pub fn expiry(&self) -> SessionExpiry {
+        self.inner
+            .lock()
+            .map(|i| i.expiry)
+            .unwrap_or(SessionExpiry::Default)
     }
 
     /// Gets a deserialized value for the specified key from the session.
@@ -97,6 +197,7 @@ impl Session {
                 "_session_key".to_string(),
                 Value::String(generate_session_key()),
             );
+            inner.expiry = SessionExpiry::Default;
             inner.modified = true;
         }
     }
@@ -104,7 +205,9 @@ impl Session {
     /// Returns `true` if the session contains no application data keys.
     pub fn is_empty(&self) -> bool {
         if let Ok(inner) = self.inner.lock() {
-            inner.data.keys().all(|k| k == "_session_key")
+            inner.data.keys().all(|k| {
+                k == "_session_key" || k == EXPIRY_BROWSER_ONLY_KEY || k == EXPIRY_MAX_AGE_SECS_KEY
+            })
         } else {
             true
         }
@@ -119,12 +222,12 @@ impl Session {
     }
 }
 
-// Generates a random 128-bit session key encoded as a hexadecimal string.
-fn generate_session_key() -> String {
+// Generates a random 256-bit (32-byte) session key encoded as a hexadecimal string.
+pub(crate) fn generate_session_key() -> String {
     use rand::RngCore;
-    let mut bytes = [0u8; 16];
+    let mut bytes = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut bytes);
-    let mut s = String::with_capacity(32);
+    let mut s = String::with_capacity(64);
     for b in bytes {
         use std::fmt::Write;
         write!(&mut s, "{:02x}", b).unwrap();
@@ -186,7 +289,11 @@ impl SignedCookieStore {
         let json_str = serde_json::to_string(&inner.data).unwrap();
         let b64_json = base64::engine::general_purpose::STANDARD.encode(json_str.as_bytes());
 
-        let expires_at_unix = (std::time::SystemTime::now() + self.max_age)
+        let effective_max_age = match inner.expiry {
+            SessionExpiry::MaxAge(d) => d,
+            SessionExpiry::Default | SessionExpiry::BrowserSession => self.max_age,
+        };
+        let expires_at_unix = (std::time::SystemTime::now() + effective_max_age)
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or(Duration::ZERO)
             .as_secs();
@@ -242,6 +349,7 @@ impl SignedCookieStore {
             .decode(b64_json)
             .ok()?;
         let data: HashMap<String, Value> = serde_json::from_slice(&json_bytes).ok()?;
+        let expiry_mode = expiry_from_data(&data);
 
         Some(Session {
             inner: Arc::new(Mutex::new(SessionInner {
@@ -249,8 +357,41 @@ impl SignedCookieStore {
                 modified: false,
                 cycled: false,
                 new: false,
+                expiry: expiry_mode,
+                loaded_key: None,
             })),
         })
+    }
+}
+
+#[async_trait]
+impl SessionStore for SignedCookieStore {
+    fn cookie_name(&self) -> &str {
+        &self.cookie_name
+    }
+
+    fn max_age(&self) -> Duration {
+        self.max_age
+    }
+
+    fn secure(&self) -> bool {
+        self.secure
+    }
+
+    async fn load(&self, cookie_value: &str) -> Result<Option<Session>, SessionError> {
+        Ok(self.decode(cookie_value))
+    }
+
+    async fn save(&self, session: &Session, _ctx: &SessionContext) -> Result<String, SessionError> {
+        Ok(self.encode(session))
+    }
+
+    async fn delete(&self, _key_or_hash: &str) -> Result<(), SessionError> {
+        Ok(())
+    }
+
+    async fn for_user(&self, _user_id: i64) -> Result<Vec<SessionRecord>, SessionError> {
+        Ok(Vec::new())
     }
 }
 
@@ -270,6 +411,27 @@ fn extract_session_cookie(headers: &HeaderMap, cookie_name: &str) -> Option<Stri
     None
 }
 
+fn extract_session_context(headers: &HeaderMap) -> SessionContext {
+    let ip = headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.split(',').next())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            headers
+                .get("x-real-ip")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+        });
+    let user_agent = headers
+        .get(USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    SessionContext { ip, user_agent }
+}
+
 /// The tower Layer/Service that does the actual per-request work: parses
 /// the `Cookie` request header, decodes+verifies the session cookie via
 /// the store, inserts the `Session` into the hyper request's `Extensions`
@@ -278,15 +440,20 @@ fn extract_session_cookie(headers: &HeaderMap, cookie_name: &str) -> Option<Stri
 /// reading the same `Arc`-shared handle it kept.
 #[derive(Clone)]
 pub struct SessionLayer {
-    store: Arc<SignedCookieStore>,
+    store: Arc<dyn SessionStore>,
 }
 
 impl SessionLayer {
-    /// Creates a new `SessionLayer` wrapping the specified store.
-    pub fn new(store: SignedCookieStore) -> Self {
+    /// Creates a new `SessionLayer` wrapping the specified [`SessionStore`].
+    pub fn new(store: impl SessionStore) -> Self {
         Self {
             store: Arc::new(store),
         }
+    }
+
+    /// Creates a new `SessionLayer` from an existing `Arc<dyn SessionStore>`.
+    pub fn from_arc(store: Arc<dyn SessionStore>) -> Self {
+        Self { store }
     }
 }
 
@@ -305,7 +472,7 @@ impl<S> Layer<S> for SessionLayer {
 #[derive(Clone)]
 pub struct SessionService<S> {
     inner: S,
-    store: Arc<SignedCookieStore>,
+    store: Arc<dyn SessionStore>,
 }
 
 impl<S, ReqBody, ResBody> Service<hyper::Request<ReqBody>> for SessionService<S>
@@ -334,39 +501,56 @@ where
     fn call(&mut self, mut req: hyper::Request<ReqBody>) -> Self::Future {
         let mut inner = self.inner.clone();
         let store = self.store.clone();
-
-        let session =
-            if let Some(cookie_val) = extract_session_cookie(req.headers(), &store.cookie_name) {
-                store.decode(&cookie_val).unwrap_or_else(Session::new_empty)
-            } else {
-                Session::new_empty()
-            };
-
-        req.extensions_mut().insert(session.clone());
+        let cookie_val = extract_session_cookie(req.headers(), store.cookie_name());
+        let ctx = extract_session_context(req.headers());
 
         Box::pin(async move {
+            let session = match cookie_val {
+                Some(val) => store
+                    .load(&val)
+                    .await
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(Session::new_empty),
+                None => Session::new_empty(),
+            };
+
+            req.extensions_mut().insert(session.clone());
+            req.extensions_mut().insert(store.clone());
+
             let mut resp = inner.call(req).await?;
 
             let should_save = {
-                if let Ok(inner) = session.inner.lock() {
-                    inner.modified || inner.new
+                if let Ok(guard) = session.inner.lock() {
+                    guard.modified || guard.new
                 } else {
                     false
                 }
             };
 
             if should_save {
-                let cookie_value = store.encode(&session);
-                let max_age_secs = store.max_age.as_secs();
-                let mut set_cookie_val = format!(
-                    "{}={}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}",
-                    store.cookie_name, cookie_value, max_age_secs
-                );
-                if store.secure {
-                    set_cookie_val.push_str("; Secure");
-                }
-                if let Ok(hdr_val) = HeaderValue::from_str(&set_cookie_val) {
-                    resp.headers_mut().append(SET_COOKIE, hdr_val);
+                if let Ok(cookie_value) = store.save(&session, &ctx).await {
+                    let mut set_cookie_val = format!(
+                        "{}={}; Path=/; HttpOnly; SameSite=Lax",
+                        store.cookie_name(),
+                        cookie_value
+                    );
+                    match session.expiry() {
+                        SessionExpiry::Default => {
+                            set_cookie_val
+                                .push_str(&format!("; Max-Age={}", store.max_age().as_secs()));
+                        }
+                        SessionExpiry::MaxAge(d) => {
+                            set_cookie_val.push_str(&format!("; Max-Age={}", d.as_secs()));
+                        }
+                        SessionExpiry::BrowserSession => {}
+                    }
+                    if store.secure() {
+                        set_cookie_val.push_str("; Secure");
+                    }
+                    if let Ok(hdr_val) = HeaderValue::from_str(&set_cookie_val) {
+                        resp.headers_mut().append(SET_COOKIE, hdr_val);
+                    }
                 }
             }
 

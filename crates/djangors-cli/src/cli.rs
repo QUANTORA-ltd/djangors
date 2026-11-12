@@ -177,6 +177,13 @@ pub enum Commands {
         #[arg(long, default_value = "app")]
         app: String,
     },
+    /// Delete expired server-side sessions from `djangors_session`.
+    #[command(name = "clearsessions")]
+    Clearsessions {
+        /// Optional database URL override (defaults to `DATABASE_URL` environment variable).
+        #[arg(long)]
+        database_url: Option<String>,
+    },
 }
 
 /// Subcommands for `dj generate`.

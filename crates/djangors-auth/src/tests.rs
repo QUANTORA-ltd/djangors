@@ -1362,3 +1362,237 @@ async fn test_permissions_and_groups() {
         let _ = db.conn().execute(&sql, &[]).await;
     }
 }
+
+async fn setup_sqlite_auth_db() -> djangors_db::Database {
+    let config = djangors_db::DatabaseConfig::new("sqlite::memory:")
+        .max_connections(1)
+        .min_connections(1);
+    let db = djangors_db::Database::connect(&config).await.unwrap();
+    let auto_pk = db.dialect().auto_pk_type();
+    let ts_type = db.dialect().timestamp_type();
+    let create_user_sql = format!(
+        "CREATE TABLE auth_user (
+            id {auto_pk},
+            username VARCHAR(150) NOT NULL UNIQUE,
+            email VARCHAR(254) NOT NULL,
+            password TEXT NOT NULL,
+            is_active BOOLEAN NOT NULL,
+            is_staff BOOLEAN NOT NULL,
+            is_superuser BOOLEAN NOT NULL,
+            date_joined {ts_type} NOT NULL,
+            last_login {ts_type}
+        )"
+    );
+    db.conn().execute(&create_user_sql, &[]).await.unwrap();
+    db
+}
+
+#[tokio::test]
+async fn test_email_verification_expiry_and_email_change() {
+    let db = setup_sqlite_auth_db().await;
+    let mailer = djangors_mail::InMemoryBackend::default();
+    let secret = b"test-secret-key-for-email-verification";
+
+    let user = User {
+        id: 0,
+        username: "alice".to_string(),
+        email: "alice@example.com".to_string(),
+        password: hash_password("StrongPass!987").unwrap(),
+        is_active: true,
+        is_staff: false,
+        is_superuser: false,
+        date_joined: chrono::Utc::now(),
+        last_login: None,
+    };
+    let mut user = user.save(&db).await.unwrap();
+
+    // 1. Expired token is rejected
+    let expired_token = generate_email_verification_token(
+        user.id,
+        &user.email,
+        secret,
+        std::time::Duration::from_secs(0),
+    );
+    assert!(verify_email(&db, &expired_token, secret).await.is_err());
+
+    // 2. Valid token for old email fails after user changes email
+    let old_token = send_verification_email(
+        &db,
+        &mailer,
+        user.id,
+        "alice@example.com",
+        "https://example.com",
+        secret,
+    )
+    .await
+    .unwrap();
+    user.email = "alice.new@example.com".to_string();
+    user.update(&db).await.unwrap();
+    assert!(verify_email(&db, &old_token, secret).await.is_err());
+    assert!(!has_verified_email(&db, user.id).await.unwrap());
+
+    // 3. Valid token for new email succeeds
+    let new_token = send_verification_email(
+        &db,
+        &mailer,
+        user.id,
+        "alice.new@example.com",
+        "https://example.com",
+        secret,
+    )
+    .await
+    .unwrap();
+    let verified = verify_email(&db, &new_token, secret).await.unwrap();
+    assert!(verified.verified);
+    assert!(has_verified_email(&db, user.id).await.unwrap());
+}
+
+#[tokio::test]
+async fn test_invitations_lifecycle() {
+    let db = setup_sqlite_auth_db().await;
+    let mailer = djangors_mail::InMemoryBackend::default();
+
+    let inviter = User {
+        id: 0,
+        username: "inviter".to_string(),
+        email: "inviter@example.com".to_string(),
+        password: hash_password("StrongPass!987").unwrap(),
+        is_active: true,
+        is_staff: true,
+        is_superuser: false,
+        date_joined: chrono::Utc::now(),
+        last_login: None,
+    };
+    let inviter = inviter.save(&db).await.unwrap();
+
+    // 1. Invite new user + resend rotates token
+    let (inv1, token1) = invite(
+        &db,
+        &mailer,
+        inviter.id,
+        "newbie@example.com",
+        Some(10),
+        "member",
+        "https://example.com",
+        std::time::Duration::from_secs(3600),
+    )
+    .await
+    .unwrap();
+
+    let (_, token2) = resend_invitation(
+        &db,
+        &mailer,
+        inv1.id,
+        "https://example.com",
+        std::time::Duration::from_secs(3600),
+    )
+    .await
+    .unwrap();
+    assert_ne!(token1, token2);
+    assert!(
+        accept_invitation(&db, &token1, Some("StrongPass!987"), None)
+            .await
+            .is_err()
+    );
+
+    let (created_user, accepted_inv) =
+        accept_invitation(&db, &token2, Some("StrongPass!987"), None)
+            .await
+            .unwrap();
+    assert_eq!(created_user.email, "newbie@example.com");
+    assert_eq!(accepted_inv.organization_id, Some(10));
+    assert!(accepted_inv.accepted_at.is_some());
+
+    // 2. Revoked invitation cannot be accepted
+    let (inv2, token3) = invite(
+        &db,
+        &mailer,
+        inviter.id,
+        "revoked@example.com",
+        None,
+        "viewer",
+        "https://example.com",
+        std::time::Duration::from_secs(3600),
+    )
+    .await
+    .unwrap();
+    revoke_invitation(&db, inv2.id).await.unwrap();
+    assert!(
+        accept_invitation(&db, &token3, Some("StrongPass!987"), None)
+            .await
+            .is_err()
+    );
+
+    // 3. Existing user must be logged in as the invited email
+    let (_, token4) = invite(
+        &db,
+        &mailer,
+        inviter.id,
+        "newbie@example.com",
+        Some(20),
+        "admin",
+        "https://example.com",
+        std::time::Duration::from_secs(3600),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        accept_invitation(&db, &token4, None, Some(&inviter)).await,
+        Err(AuthError::InvitationEmailMismatch)
+    ));
+    let (matched_user, _) = accept_invitation(&db, &token4, None, Some(&created_user))
+        .await
+        .unwrap();
+    assert_eq!(matched_user.id, created_user.id);
+}
+
+#[tokio::test]
+async fn test_gdpr_export_and_scheduled_deletion() {
+    let db = setup_sqlite_auth_db().await;
+    let user = User {
+        id: 0,
+        username: "gdpr_user".to_string(),
+        email: "gdpr@example.com".to_string(),
+        password: hash_password("StrongPass!987").unwrap(),
+        is_active: true,
+        is_staff: false,
+        is_superuser: false,
+        date_joined: chrono::Utc::now(),
+        last_login: None,
+    };
+    let user = user.save(&db).await.unwrap();
+
+    let registry = UserDataRegistry::with_builtins();
+    let zip_bytes = export_user_data(&db, &registry, user.id).await.unwrap();
+    assert!(zip_bytes.starts_with(b"PK"));
+
+    // Schedule and cancel
+    request_account_deletion(&db, user.id, Some(30))
+        .await
+        .unwrap();
+    assert!(get_scheduled_deletion(&db, user.id)
+        .await
+        .unwrap()
+        .is_some());
+    cancel_account_deletion(&db, user.id).await.unwrap();
+    assert!(get_scheduled_deletion(&db, user.id)
+        .await
+        .unwrap()
+        .is_none());
+
+    // Schedule with 0 grace days and process
+    request_account_deletion(&db, user.id, Some(0))
+        .await
+        .unwrap();
+    let processed = run_scheduled_deletions(&db, &[]).await.unwrap();
+    assert_eq!(processed, 1);
+
+    let reloaded = User::objects()
+        .filter(q!(id = user.id))
+        .unwrap()
+        .get(&db)
+        .await
+        .unwrap();
+    assert!(!reloaded.is_active);
+    assert!(reloaded.username.starts_with("deleted_user_"));
+}
