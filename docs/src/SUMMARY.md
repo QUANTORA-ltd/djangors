@@ -69,4 +69,6 @@
 - [How to Execute Background Tasks](how-to/background-tasks.md)
 - [How to Stream Server-Sent Events](how-to/stream-sse.md)
 - [How to Find Slow and N+1 Queries](how-to/debug-queries.md)
+- [How to Use htmx](how-to/htmx.md)
+- [How to Make Payments and Other POSTs Safe to Retry](how-to/idempotency.md)
 - [How to Internationalize Templates](how-to/i18n-templates.md)

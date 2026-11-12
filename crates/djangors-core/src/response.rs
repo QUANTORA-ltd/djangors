@@ -138,6 +138,27 @@ impl Response {
         self
     }
 
+    fn htmx_header(mut self, name: &'static str, value: &str) -> Self {
+        match HeaderValue::from_str(value) {
+            Ok(value) => { self.headers.insert(HeaderName::from_static(name), value); }
+            Err(_) => tracing::warn!(header = name, "skipping invalid htmx response header value"),
+        }
+        self
+    }
+
+    /// Adds the `HX-Trigger` response header.
+    pub fn hx_trigger(self, event: &str) -> Self { self.htmx_header("hx-trigger", event) }
+    /// Adds the `HX-Redirect` response header.
+    pub fn hx_redirect(self, url: &str) -> Self { self.htmx_header("hx-redirect", url) }
+    /// Adds `HX-Refresh: true`.
+    pub fn hx_refresh(self) -> Self { self.htmx_header("hx-refresh", "true") }
+    /// Adds the `HX-Push-Url` response header.
+    pub fn hx_push_url(self, url: &str) -> Self { self.htmx_header("hx-push-url", url) }
+    /// Adds the `HX-Retarget` response header.
+    pub fn hx_retarget(self, selector: &str) -> Self { self.htmx_header("hx-retarget", selector) }
+    /// Adds the `HX-Reswap` response header.
+    pub fn hx_reswap(self, strategy: &str) -> Self { self.htmx_header("hx-reswap", strategy) }
+
     /// Attach a typed extension to this response (builder pattern).
     ///
     /// Extensions are preserved when converting into a `hyper::Response` via
