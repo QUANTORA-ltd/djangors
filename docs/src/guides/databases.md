@@ -42,11 +42,11 @@ At compile time, `djangors-db` (and the `djangors` facade crate) gate each SQL d
 
 ```toml
 # PostgreSQL-only build (drops sqlx-sqlite and libsqlite3-sys)
-djangors = { version = "0.11", default-features = false, features = ["postgres", "rest"] }
+djangors = { version = "0.12", default-features = false, features = ["postgres", "rest"] }
 
 # Or when depending on djangors-db / djangors-orm directly:
-djangors-db = { version = "0.11", default-features = false, features = ["postgres"] }
-djangors-orm = { version = "0.11", default-features = false, features = ["postgres"] }
+djangors-db = { version = "0.12", default-features = false, features = ["postgres"] }
+djangors-orm = { version = "0.12", default-features = false, features = ["postgres"] }
 ```
 
 > [!NOTE]

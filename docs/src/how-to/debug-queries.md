@@ -29,7 +29,7 @@ The panel is behind the `debug-panel` Cargo feature, which is off by default:
 
 ```toml
 [dependencies]
-djangors = { version = "0.11", features = ["debug-panel"] }
+djangors = { version = "0.12", features = ["debug-panel"] }
 ```
 
 ### 2. Wrap your router with settings

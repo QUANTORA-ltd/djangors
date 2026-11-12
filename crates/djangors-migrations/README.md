@@ -6,7 +6,7 @@ Part of [Djangors](https://github.com/QUANTORA-ltd/djangors), a batteries-includ
 
 ```toml
 [dependencies]
-djangors-migrations = "0.11"
+djangors-migrations = "0.12"
 ```
 
 Provides schema migration planning, autodetection, execution, and SQL DDL generation for Djangors. It uses runtime enum dispatch across database backends for connection management, topological sorting for migration execution, and ORM type mapping to SQL column types.

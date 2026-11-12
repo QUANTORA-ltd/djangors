@@ -18,8 +18,8 @@ postgres = ["djangors-orm/postgres"]
 sqlite = ["djangors-orm/sqlite"]
 
 [dependencies]
-djangors-macros = { path = "../djangors-macros", version = "0.11.0" }
-djangors-orm = { path = "../djangors-orm", version = "0.11.0", default-features = false }
+djangors-macros = { path = "../djangors-macros", version = "0.12.0" }
+djangors-orm = { path = "../djangors-orm", version = "0.12.0", default-features = false }
 async-trait = "0.1.86"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1.0.228", features = ["derive"] }

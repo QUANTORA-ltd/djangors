@@ -79,9 +79,9 @@ serde_urlencoded = "0.7.1"
 multer = "3.1.0"
 rand = "0.8.7"
 base64 = "0.22.1"
-djangors-orm = { path = "../djangors-orm", version = "0.11.0", default-features = false }
-djangors-db = { path = "../djangors-db", version = "0.11.0", default-features = false }
-djangors-cache = { path = "../djangors-cache", version = "0.11.0", default-features = false, optional = true }
+djangors-orm = { path = "../djangors-orm", version = "0.12.0", default-features = false }
+djangors-db = { path = "../djangors-db", version = "0.12.0", default-features = false }
+djangors-cache = { path = "../djangors-cache", version = "0.12.0", default-features = false, optional = true }
 backon = { version = "1.6.0", default-features = false, features = ["std", "tokio-sleep"], optional = true }
 inventory = "0.3.24"
 

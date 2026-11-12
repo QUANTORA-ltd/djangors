@@ -18,18 +18,18 @@ postgres = ["djangors-orm/postgres", "djangors-core/postgres", "djangors-auth/po
 sqlite = ["djangors-orm/sqlite", "djangors-core/sqlite", "djangors-auth/sqlite", "djangors-db/sqlite", "djangors-template/sqlite"]
 
 [dependencies]
-djangors-orm = { path = "../djangors-orm", version = "0.11.0", default-features = false }
-djangors-core = { path = "../djangors-core", version = "0.11.0", default-features = false }
-djangors-auth = { path = "../djangors-auth", version = "0.11.0", default-features = false }
-djangors-db = { path = "../djangors-db", version = "0.11.0", default-features = false }
-djangors-template = { path = "../djangors-template", version = "0.11.0", default-features = false }
+djangors-orm = { path = "../djangors-orm", version = "0.12.0", default-features = false }
+djangors-core = { path = "../djangors-core", version = "0.12.0", default-features = false }
+djangors-auth = { path = "../djangors-auth", version = "0.12.0", default-features = false }
+djangors-db = { path = "../djangors-db", version = "0.12.0", default-features = false }
+djangors-template = { path = "../djangors-template", version = "0.12.0", default-features = false }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0"
 minijinja = { version = "2.21.0" }
 async-trait = "0.1.86"
 chrono = { version = "0.4.45", features = ["std", "serde"] }
 sqlx = { version = "0.9.0", default-features = false }
-djangors-macros = { path = "../djangors-macros", version = "0.11.0" }
+djangors-macros = { path = "../djangors-macros", version = "0.12.0" }
 percent-encoding = "2.3.2"
 
 [dev-dependencies]

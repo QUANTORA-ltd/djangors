@@ -6,7 +6,7 @@ Part of [Djangors](https://github.com/QUANTORA-ltd/djangors), a batteries-includ
 
 ```toml
 [dependencies]
-djangors-contrib-redirects = "0.11"
+djangors-contrib-redirects = "0.12"
 ```
 
 Provides database-backed URL redirects for Djangors applications. It exposes a lookup helper for explicit route mounting, keeping database redirect resolution predictable and easy to test within Djangors routing setups.

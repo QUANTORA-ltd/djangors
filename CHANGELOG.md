@@ -5,6 +5,11 @@ All notable changes to Djangors are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.12.0]
+
+New: API keys, CORS, API versioning, health checks, password validation, retries and circuit
+breakers, distributed locks, and a transactional outbox.
+
 ### Added
 
 - **API keys** (`djangors_rest::api_keys`): keys for machines, shaped `<prefix>.<secret>`.
