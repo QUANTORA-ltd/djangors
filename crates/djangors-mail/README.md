@@ -6,7 +6,7 @@ Part of [Djangors](https://github.com/QUANTORA-ltd/djangors), a batteries-includ
 
 ```toml
 [dependencies]
-djangors-mail = "0.9"
+djangors-mail = "0.11"
 ```
 
 Provides email messaging utilities (`#[non_exhaustive]` `Message` builder) and pluggable delivery backends (`SmtpBackend` over `rustls`, `FileBackend`, `ConsoleBackend`, and `InMemoryBackend`) for Djangors applications.

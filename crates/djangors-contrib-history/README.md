@@ -6,7 +6,7 @@ Part of [Djangors](https://github.com/QUANTORA-ltd/djangors), a batteries-includ
 
 ```toml
 [dependencies]
-djangors-contrib-history = "0.9"
+djangors-contrib-history = "0.11"
 ```
 
 Records the `saved` and `deleted` model signals of tracked models into a shared `djangors_model_history` table, with each row's field values stored as JSON. Read a row's timeline back with `history_for`.

@@ -6,7 +6,7 @@ Part of [Djangors](https://github.com/QUANTORA-ltd/djangors), a batteries-includ
 
 ```toml
 [dependencies]
-djangors-staticfiles = "0.9"
+djangors-staticfiles = "0.11"
 ```
 
 Provides static file collection, content-hash cache busting, and HTTP static file serving for Djangors applications.

@@ -6,7 +6,7 @@ Part of [Djangors](https://github.com/QUANTORA-ltd/djangors), a batteries-includ
 
 ```toml
 [dependencies]
-djangors-orm = "0.9"
+djangors-orm = "0.11"
 ```
 
 Provides a Django-style ORM with querysets and model metadata for Djangors. It defines runtime metadata structures (`ModelMeta`, `FieldMeta`) serving as the single source of truth for migrations, query building, serializers, and administrative interfaces.

@@ -499,9 +499,9 @@ checksum = "f079e83a288787bcd14a6aea84cee5c87a67c5a3e660c30f557a3d24761b3527"
 
 [[package]]
 name = "chacha20"
-version = "0.10.1"
+version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d524456ba66e72eb8b115ff89e01e497f8e6d11d78b70b1aa13c0fbd97540a81"
+checksum = "65c35e4b699c7e15ccbe7ee35c005e4fc0a278d22238a2857e6ce2dadeda1b06"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.3.0",
@@ -908,7 +908,7 @@ dependencies = [
 
 [[package]]
 name = "djangors"
-version = "0.9.0"
+version = "0.11.0"
 dependencies = [
  "djangors-admin",
  "djangors-auth",
@@ -933,7 +933,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-admin"
-version = "0.9.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -957,7 +957,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-auth"
-version = "0.9.0"
+version = "0.11.0"
 dependencies = [
  "argon2",
  "async-trait",
@@ -986,7 +986,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-cache"
-version = "0.9.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1009,7 +1009,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-cli"
-version = "0.9.0"
+version = "0.11.0"
 dependencies = [
  "chrono",
  "clap",
@@ -1030,7 +1030,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-contrib-contenttypes"
-version = "0.9.0"
+version = "0.11.0"
 dependencies = [
  "djangors-db",
  "djangors-macros",
@@ -1042,7 +1042,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-contrib-flatpages"
-version = "0.9.0"
+version = "0.11.0"
 dependencies = [
  "bytes",
  "djangors-admin",
@@ -1057,7 +1057,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-contrib-guardian"
-version = "0.9.0"
+version = "0.11.0"
 dependencies = [
  "chrono",
  "djangors-auth",
@@ -1073,7 +1073,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-contrib-history"
-version = "0.9.0"
+version = "0.11.0"
 dependencies = [
  "chrono",
  "djangors-db",
@@ -1086,7 +1086,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-contrib-messages"
-version = "0.9.0"
+version = "0.11.0"
 dependencies = [
  "djangors-sessions",
  "serde",
@@ -1095,7 +1095,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-contrib-otp"
-version = "0.9.0"
+version = "0.11.0"
 dependencies = [
  "djangors-auth",
  "djangors-macros",
@@ -1107,7 +1107,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-contrib-payments"
-version = "0.9.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1128,7 +1128,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-contrib-redirects"
-version = "0.9.0"
+version = "0.11.0"
 dependencies = [
  "bytes",
  "djangors-admin",
@@ -1143,7 +1143,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-contrib-sitemaps"
-version = "0.9.0"
+version = "0.11.0"
 dependencies = [
  "chrono",
  "djangors-core",
@@ -1151,7 +1151,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-contrib-syndication"
-version = "0.9.0"
+version = "0.11.0"
 dependencies = [
  "chrono",
  "djangors-core",
@@ -1159,7 +1159,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-contrib-tenancy"
-version = "0.9.0"
+version = "0.11.0"
 dependencies = [
  "bytes",
  "chrono",
@@ -1179,7 +1179,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-core"
-version = "0.9.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1220,7 +1220,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-db"
-version = "0.9.0"
+version = "0.11.0"
 dependencies = [
  "chrono",
  "sqlx",
@@ -1231,7 +1231,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-deploy"
-version = "0.9.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "reqwest 0.12.28",
@@ -1243,7 +1243,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-forms"
-version = "0.9.0"
+version = "0.11.0"
 dependencies = [
  "djangors-macros",
  "serde_json",
@@ -1251,7 +1251,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-i18n"
-version = "0.9.0"
+version = "0.11.0"
 dependencies = [
  "bytes",
  "chrono",
@@ -1269,7 +1269,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-macros"
-version = "0.9.0"
+version = "0.11.0"
 dependencies = [
  "chrono",
  "djangors-core",
@@ -1283,7 +1283,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-mail"
-version = "0.9.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "lettre",
@@ -1294,7 +1294,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-migrations"
-version = "0.9.0"
+version = "0.11.0"
 dependencies = [
  "djangors-db",
  "djangors-macros",
@@ -1308,7 +1308,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-orm"
-version = "0.9.0"
+version = "0.11.0"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
@@ -1326,7 +1326,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-pdf"
-version = "0.9.0"
+version = "0.11.0"
 dependencies = [
  "printpdf",
  "thiserror 2.0.18",
@@ -1334,7 +1334,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-rest"
-version = "0.9.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1359,7 +1359,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-sessions"
-version = "0.9.0"
+version = "0.11.0"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -1377,7 +1377,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-staticfiles"
-version = "0.9.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1394,7 +1394,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-tasks"
-version = "0.9.0"
+version = "0.11.0"
 dependencies = [
  "chrono",
  "cron",
@@ -1413,7 +1413,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-template"
-version = "0.9.0"
+version = "0.11.0"
 dependencies = [
  "chrono",
  "djangors-core",
@@ -1426,7 +1426,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-test"
-version = "0.9.0"
+version = "0.11.0"
 dependencies = [
  "bytes",
  "djangors-core",
@@ -1445,7 +1445,7 @@ dependencies = [
 
 [[package]]
 name = "djangors-views"
-version = "0.9.0"
+version = "0.11.0"
 dependencies = [
  "bytes",
  "djangors-core",
@@ -1463,7 +1463,7 @@ dependencies = [
 
 [[package]]
 name = "doc-code-check"
-version = "0.9.0"
+version = "0.11.0"
 dependencies = [
  "async-stream",
  "async-trait",

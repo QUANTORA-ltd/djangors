@@ -37,7 +37,7 @@ good enough.
 contrib batteries, a REST framework, WebSockets/SSE, background tasks, payments, multi-tenancy) is
 built and tested; see [`PLAN.md`](PLAN.md) for the full phase-by-phase roadmap and what's done vs.
 remaining. All 32 crates are published on
-[crates.io](https://crates.io/search?q=djangors) at `0.9.0`, including the full contrib battery:
+[crates.io](https://crates.io/search?q=djangors) at `0.11.0`, including the full contrib battery:
 PDF generation, deployment, payments, multi-tenancy, sitemaps, RSS/Atom syndication, flat pages,
 redirects, flash messages, object-level permissions, TOTP/2FA, and content types / generic FKs.
 

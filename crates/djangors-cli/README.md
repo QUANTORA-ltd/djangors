@@ -6,7 +6,7 @@ Part of [Djangors](https://github.com/QUANTORA-ltd/djangors), a batteries-includ
 
 ```toml
 [dependencies]
-djangors-cli = "0.9"
+djangors-cli = "0.11"
 ```
 
 Provides the `dj` command-line tool for the Djangors web framework. It supports project management, dev server launching, code scaffolding, and deployment execution for Djangors applications.

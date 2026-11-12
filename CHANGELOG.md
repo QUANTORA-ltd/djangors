@@ -5,6 +5,12 @@ All notable changes to Djangors are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.11.0]
+
+There is no 0.10.0 release: its features ship here together with 0.11. New: idempotency keys,
+htmx helpers, passkeys, soft deletes, encrypted fields, model history, Postgres-backed groups,
+`dj seed`, OpenTelemetry export, and a request body limit.
+
 ### Added
 
 - **Idempotency keys** (`djangors_cache::IdempotencyLayer`): a `POST`/`PUT`/`PATCH`/`DELETE`

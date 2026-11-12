@@ -22,7 +22,7 @@ redis = ["dep:redis"]
 async-trait = "0.1.86"
 bytes = "1.12.1"
 chrono = { version = "0.4.45", features = ["serde"] }
-djangors-db = { path = "../djangors-db", version = "0.9.0", default-features = false }
+djangors-db = { path = "../djangors-db", version = "0.11.0", default-features = false }
 http-body-util = "0.1.4"
 moka = { version = "0.12.15", features = ["future"] }
 serde = { version = "1.0.228", features = ["derive"] }
