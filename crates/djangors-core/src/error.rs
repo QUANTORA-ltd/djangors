@@ -273,6 +273,9 @@ impl DjangorsError {
     ///
     /// Handlers do not call this — the router does, on every error path.
     pub fn render(&self, req: &Request, debug: bool) -> Response {
+        if self.is_internal() {
+            tracing::error!(method = %req.method(), path = %req.path(), error = %self.message(), "internal server error");
+        }
         if let Some(resp) = self.try_custom_render(req) {
             return resp;
         }

@@ -443,8 +443,8 @@ to write the body into your own buffer.
 **Internal errors stay private.** `DjangorsError::Internal` and panics are always rendered
 as `"Internal Server Error"` by `ProblemDetailsRenderer`, and by the JSON and problem+json
 output of the default renderer whenever `debug` is off, so the real message, which might
-contain SQL or file paths, never reaches the client. The router doesn't log that message
-for you; record it with `tracing::error!` where you create the error if you need it later.
+contain SQL or file paths, never reaches the client. The router logs the original message
+once at `error` level via `tracing` before rendering the response.
 
 ## Paginator and cursor primitives
 

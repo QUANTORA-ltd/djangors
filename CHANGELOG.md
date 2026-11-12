@@ -5,6 +5,21 @@ All notable changes to Djangors are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- htmx request metadata and response header helpers.
+- `IdempotencyLayer` and atomic cache `add` support for retry-safe unsafe requests.
+- `dj openapi --api-prefix` and repeatable `--model` selection.
+
+### Changed
+
+- Debug panel layers can follow `DjangorsSettings::debug`; unsafe production activation logs a warning.
+- Model factories now require explicit relation IDs before database creation.
+
+### Fixed
+
+- Internal errors are logged at error level before their details are redacted from responses.
+
 ## [0.9.0]
 
 New convenience features: resource generators, a TypeScript client, model factories,
