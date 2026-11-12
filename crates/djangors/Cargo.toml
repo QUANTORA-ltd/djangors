@@ -34,6 +34,8 @@ default = [
     "tenancy",
     "history",
     "ws",
+    "password-strength",
+    "resilience",
 ]
 postgres = [
     "djangors-db/postgres",
@@ -73,9 +75,10 @@ sqlite = [
 ]
 migrations = ["dep:djangors-migrations"]
 rest = ["dep:djangors-rest"]
-admin = ["dep:djangors-admin"]
+admin = ["dep:djangors-admin", "djangors-rest?/admin"]
 auth = ["dep:djangors-auth"]
 passkeys = ["auth", "djangors-auth/passkeys"]
+password-strength = ["auth", "djangors-auth/password-strength"]
 forms = ["dep:djangors-forms"]
 sessions = ["dep:djangors-sessions"]
 template = ["dep:djangors-template"]
@@ -92,6 +95,7 @@ history = ["dep:djangors-contrib-history"]
 ws = ["djangors-core/ws"]
 debug-panel = ["djangors-core/debug-panel"]
 otel = ["djangors-core/otel"]
+resilience = ["djangors-core/resilience"]
 
 [dependencies]
 djangors-core = { path = "../djangors-core", version = "0.11.0", default-features = false }

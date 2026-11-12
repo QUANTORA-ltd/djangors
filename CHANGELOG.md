@@ -5,6 +5,48 @@ All notable changes to Djangors are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **API keys** (`djangors_rest::api_keys`): keys for machines, shaped `<prefix>.<secret>`.
+  Only a SHA-256 hash of the secret is stored, and the full key is shown once.
+  `ApiKeyAuth` reads `X-Api-Key` or `Authorization: Api-Key <key>` and compares in constant
+  time; every failure returns the same 401. Scopes, expiry, `revoke_api_key`,
+  `HasApiKey` / `HasApiKeyScope` permissions, an admin page (the facade's `admin` feature),
+  and `OpenApiBuilder::api_key_security`. See
+  [How to Authenticate Machines with API Keys](docs/src/how-to/api-keys.md).
+- **CORS**: `CorsConfig` and `cors_layer` over `tower-http`'s CORS layer, with
+  `CorsConfig::from_settings`. Origins come from `cors_allowed_origins` in `djangors.toml`
+  or `DJANGORS_CORS_ALLOWED_ORIGINS`. `"*"` with credentials and origins with a path are
+  rejected, and `dj check --deploy` warns about `"*"` in production.
+- **API versioning** (`djangors_core::versioning`): read the version from the URL prefix
+  (`/v2/...`), a header, or an `Accept` parameter with the `ApiVersion` extractor;
+  unsupported versions get a 400 problem response. `DeprecationLayer` adds `Deprecation`
+  and `Sunset` headers. `OpenApiBuilder::version`.
+- **Health checks**: `Router::health(HealthChecks::new().with(DatabaseCheck::new(db)))`
+  adds `/healthz` (liveness) and `/readyz` (runs checks concurrently with a timeout,
+  503 on failure). `CacheCheck` for cache backends. New projects from `dj new` use it.
+- **Password validation** (`djangors_auth::password_validation`): minimum length,
+  all-digits, similarity to the username or email, and zxcvbn strength scoring
+  (`password-strength` feature, on by default). Used by `confirm_password_reset` and
+  `dj createsuperuser` (`--skip-validation` to bypass).
+- **Resilience** (`djangors_core::resilience`): `retry` with exponential backoff and
+  jitter (`resilience` feature, on by default), `with_timeout`, and a `CircuitBreaker`.
+- **Distributed locks**: `djangors_db::locks::with_lock` / `with_lock_wait` hold a
+  Postgres advisory lock for the length of a transaction, so it can never leak onto a
+  pooled connection (a per-process lock on SQLite). `RedisLock` (cache `redis` feature)
+  releases only while it still owns the key.
+- **Transactional outbox**: `djangors_tasks::enqueue_in` / `enqueue_scheduled_in` queue a
+  task inside the caller's transaction, so the task exists only if the data change
+  commits.
+
+### Changed
+
+- `AuthError` is now `#[non_exhaustive]` and has a new `WeakPassword(Vec<String>)`
+  variant. Code that matches every `AuthError` variant needs a wildcard arm.
+- `confirm_password_reset` rejects weak passwords with `AuthError::WeakPassword`.
+- `dj new` projects serve `/healthz` and `/readyz` through `Router::health` instead of a
+  hand-written `healthz` view.
+
 ## [0.11.0]
 
 There is no 0.10.0 release: its features ship here together with 0.11. New: idempotency keys,
