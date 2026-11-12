@@ -23,11 +23,42 @@ All notable changes to Djangors are documented here. Format loosely follows
   the path pattern it assumes.
 - `DebugPanelLayer::for_settings(&settings)`, which turns the panel off entirely when
   `debug` is false.
+- **Passkeys** (`passkeys` feature, `djangors_auth::passkeys`): WebAuthn registration and
+  sign-in with ES256 and Ed25519, implemented in pure Rust (no OpenSSL). User verification
+  is required, the signature counter detects cloned authenticators, and `PasskeyStore`
+  keeps passkeys in `djangors_auth_passkey` on PostgreSQL and SQLite. See
+  [Passkeys](docs/src/guides/passkeys.md).
+- **Soft deletes**: `#[djangors(soft_delete)]` on a model with a nullable `deleted_at`
+  field. Deleting sets `deleted_at`, and queries hide deleted rows. Adds
+  `QuerySet::with_deleted`, `only_deleted`, `force_delete`, and instance `restore` and
+  `force_delete`. See the [ORM guide](docs/src/guides/orm.md#soft-deletes).
+- **Encrypted fields**: `#[djangors(encrypted)]` on `String` and `Option<String>` fields
+  encrypts values with AES-256-GCM on write and decrypts them on load. The key comes from
+  `DJANGORS_FIELD_ENCRYPTION_KEY`; `DJANGORS_FIELD_ENCRYPTION_OLD_KEYS` allows rotation.
+  Filtering and ordering on encrypted fields return an error. See
+  [Encrypted Fields](docs/src/guides/encrypted-fields.md).
+- **Model history** (`djangors-contrib-history`, `history` feature, on by default):
+  `track::<M>()` records every create, update and delete of a model as a JSON snapshot;
+  `history_for` reads it back. See [Model History](docs/src/guides/model-history.md).
+- **`PgGroups`**: broadcasts WebSocket and SSE group messages across processes with
+  PostgreSQL `LISTEN`/`NOTIFY`, so several servers behind a load balancer share groups.
+- **`dj seed`** runs the project's `src/bin/seed.rs`. It refuses to run when `DJANGORS_DEBUG` is
+  false unless `--force` is given. `dj new` scaffolds the seed script.
+- **OpenTelemetry** (`otel` feature): `logging::init_otel_logging(service_name)` exports
+  tracing spans over OTLP/HTTP. The router emits a `request` span (method, path) and
+  `Conn` emits `sql` spans with the statement text, never bound values. See
+  [How to Export Traces with OpenTelemetry](docs/src/how-to/opentelemetry.md).
+- **Request body limit**: requests larger than `DjangorsSettings::max_body_bytes`
+  (10 MiB by default; `max_body_bytes` in `djangors.toml` or `DJANGORS_MAX_BODY_BYTES`) get `413 Payload Too Large` before the
+  handler runs. `Router::max_body_bytes` overrides it per router.
+  `IdempotencyLayer::max_body_bytes` limits the bodies that layer buffers (also 10 MiB).
 
 ### Changed
 
 - `RouterService` accepts any request body type, so body-buffering middleware such as
   `IdempotencyLayer` can wrap it.
+- `QuerySet::delete` and instance `delete` on soft-delete models set `deleted_at` instead
+  of removing rows. Other models are unchanged.
 - **Breaking for tests:** `#[derive(Factory)]` `create()` / `create_many()` return
   `OrmError::InvalidQuery` when a `ForeignKey` / `OneToOne` field was not set with
   `.with_<field>_id(..)`, instead of saving a reference to id 1. `build()` is unchanged.

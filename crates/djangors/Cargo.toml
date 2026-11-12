@@ -32,6 +32,7 @@ default = [
     "pdf",
     "payments",
     "tenancy",
+    "history",
     "ws",
 ]
 postgres = [
@@ -50,6 +51,7 @@ postgres = [
     "djangors-tasks?/postgres",
     "djangors-contrib-payments?/postgres",
     "djangors-contrib-tenancy?/postgres",
+    "djangors-contrib-history?/postgres",
 ]
 sqlite = [
     "djangors-db/sqlite",
@@ -67,11 +69,13 @@ sqlite = [
     "djangors-tasks?/sqlite",
     "djangors-contrib-payments?/sqlite",
     "djangors-contrib-tenancy?/sqlite",
+    "djangors-contrib-history?/sqlite",
 ]
 migrations = ["dep:djangors-migrations"]
 rest = ["dep:djangors-rest"]
 admin = ["dep:djangors-admin"]
 auth = ["dep:djangors-auth"]
+passkeys = ["auth", "djangors-auth/passkeys"]
 forms = ["dep:djangors-forms"]
 sessions = ["dep:djangors-sessions"]
 template = ["dep:djangors-template"]
@@ -84,8 +88,10 @@ tasks = ["dep:djangors-tasks"]
 pdf = ["dep:djangors-pdf"]
 payments = ["dep:djangors-contrib-payments"]
 tenancy = ["dep:djangors-contrib-tenancy"]
+history = ["dep:djangors-contrib-history"]
 ws = ["djangors-core/ws"]
 debug-panel = ["djangors-core/debug-panel"]
+otel = ["djangors-core/otel"]
 
 [dependencies]
 djangors-core = { path = "../djangors-core", version = "0.9.0", default-features = false }
@@ -106,3 +112,4 @@ djangors-tasks = { path = "../djangors-tasks", version = "0.9.0", default-featur
 djangors-pdf = { path = "../djangors-pdf", version = "0.9.0", optional = true }
 djangors-contrib-payments = { path = "../djangors-contrib-payments", version = "0.9.0", default-features = false, optional = true }
 djangors-contrib-tenancy = { path = "../djangors-contrib-tenancy", version = "0.9.0", default-features = false, optional = true }
+djangors-contrib-history = { path = "../djangors-contrib-history", version = "0.9.0", default-features = false, optional = true }

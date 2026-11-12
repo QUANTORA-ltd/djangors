@@ -14,6 +14,9 @@ pub use djangors_auth as auth;
 /// In-memory, database, and Redis cache backends.
 #[cfg(feature = "cache")]
 pub use djangors_cache as cache;
+/// Model history: records every create, update, and delete of chosen models.
+#[cfg(feature = "history")]
+pub use djangors_contrib_history as history;
 /// Payment provider integration (Paystack, Bachs) with idempotent transaction recording.
 #[cfg(feature = "payments")]
 pub use djangors_contrib_payments as payments;
