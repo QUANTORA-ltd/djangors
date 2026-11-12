@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-ff027cc3.js";
+            window.path_to_searchindex_js = "../searchindex-f93ad6b2.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-fcdb45cd.js"></script>
+        <script src="../toc-ae7952e6.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -287,6 +287,27 @@ field’s declared type (e.g. <code>MYAPP_TIMEOUT_SECS=not-a-number</code>).</li
 <p>Call <code>load()</code> once at process startup (in <code>main()</code>, before the server starts accepting
 connections) and treat any <code>Err</code> as a hard failure to boot. This is the same “fail fast on bad
 config” principle <code>dj check --deploy</code> already applies to the framework’s own settings.</p>
+<h2 id="framework-settings-djangorssettings"><a class="header" href="#framework-settings-djangorssettings">Framework settings (<code>DjangorsSettings</code>)</a></h2>
+<p><code>DjangorsSettings</code> holds the framework’s own settings. Each one can be overridden with an
+environment variable when the settings are loaded with <code>DjangorsSettings::from_env()</code> or
+<code>DjangorsSettings::load()</code>. A malformed value is reported as a warning and the default is kept.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Setting</th><th>Environment variable</th><th>Default</th></tr>
+</thead>
+<tbody>
+<tr><td><code>debug</code></td><td><code>DJANGORS_DEBUG</code></td><td><code>true</code></td></tr>
+<tr><td><code>allowed_hosts</code></td><td><code>DJANGORS_ALLOWED_HOSTS</code></td><td><code>127.0.0.1,localhost</code></td></tr>
+<tr><td><code>secret_key</code></td><td><code>DJANGORS_SECRET_KEY</code></td><td>empty</td></tr>
+<tr><td><code>host</code></td><td><code>DJANGORS_HOST</code></td><td><code>127.0.0.1</code></td></tr>
+<tr><td><code>port</code></td><td><code>DJANGORS_PORT</code></td><td><code>8000</code></td></tr>
+<tr><td><code>max_body_bytes</code></td><td><code>DJANGORS_MAX_BODY_BYTES</code></td><td><code>10485760</code> (10 MiB)</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>max_body_bytes</code> is the largest request body the router will read. See
+<a href="http-and-middleware.html#request-size-limit">Request size limit</a>.</p>
 
                     </main>
 

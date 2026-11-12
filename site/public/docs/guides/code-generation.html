@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-ff027cc3.js";
+            window.path_to_searchindex_js = "../searchindex-f93ad6b2.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-fcdb45cd.js"></script>
+        <script src="../toc-ae7952e6.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -308,8 +308,10 @@ try {
 </code></pre>
 <p><code>ClientOptions.fetch</code> lets you pass your own <code>fetch</code> implementation, for example in
 tests or older runtimes.</p>
-<p><strong>Check the paths.</strong> The generator assumes each model is served at
-<code>/api/&lt;plural&gt;/</code>, the layout <code>dj generate resource</code> produces. If you mount a ViewSet
+<p><strong>Check the paths.</strong> By default, the generator assumes each model is served at
+<code>/api/&lt;plural&gt;/</code>, the layout <code>dj generate resource</code> produces. Set <code>--api-prefix &lt;PREFIX&gt;</code>
+to change the prefix and repeat <code>--model &lt;NAME&gt;</code> to include only matching Rust struct names.
+If you mount a ViewSet
 somewhere else, or don’t expose a model over REST at all, edit the generated paths or
 delete those methods. Regenerate the client whenever your models change; the file
 starts with a “do not edit” header for that reason.</p>

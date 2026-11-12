@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-ff027cc3.js";
+            window.path_to_searchindex_js = "../searchindex-f93ad6b2.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-fcdb45cd.js"></script>
+        <script src="../toc-ae7952e6.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -222,6 +222,7 @@ pub struct Choice {
 <li><strong><code>unique_together = [["field1", "field2"]]</code></strong> <em>(optional)</em>: Defines composite unique constraints.</li>
 <li><strong><code>indexes = ["index_name", ("index_name", ["field1", "field2"])]</code></strong> <em>(optional)</em>: Defines custom or composite database indexes. Can be a simple index name or a tuple of <code>(name, [fields])</code>.</li>
 <li><strong><code>manager = "ManagerStruct"</code></strong> <em>(optional)</em>: Overrides the default model manager with a custom manager struct.</li>
+<li><strong><code>soft_delete</code></strong> <em>(optional)</em>: Makes deletes soft: rows get a <code>deleted_at</code> timestamp instead of being removed, and normal queries hide them. The struct must have a <code>deleted_at: Option&lt;DateTime&lt;Utc&gt;&gt;</code> field. See <a href="#soft-deletes">Soft deletes</a>.</li>
 </ul>
 <h4 id="field-level-attributes"><a class="header" href="#field-level-attributes">Field-Level Attributes</a></h4>
 <ul>
@@ -334,8 +335,8 @@ as <code>OrmError::FieldNotFound</code> rather than silently becoming an equalit
 <li><strong><code>.count(db).await</code></strong>: Returns <code>Result&lt;i64, OrmError&gt;</code> count (<code>SELECT COUNT(*) ...</code>).</li>
 <li><strong><code>.aggregate(db, vec![AggExpr::...]).await</code></strong>: Evaluates aggregate functions: <code>AggExpr::Count</code>, <code>AggExpr::Sum</code>, <code>AggExpr::Avg</code>, <code>AggExpr::Min</code>, <code>AggExpr::Max</code>.</li>
 <li><strong><code>.update(db, set!(...)).await</code></strong>: Performs bulk updates. Returns <code>Result&lt;u64, OrmError&gt;</code> (rows affected count).</li>
-<li><strong><code>.delete(db).await</code></strong>: Deletes all rows matching the queryset’s filters. Returns <code>Result&lt;u64, OrmError&gt;</code> (rows affected count). <strong>Warning</strong>: calling <code>.delete()</code> on an unfiltered queryset (e.g. <code>Model::objects().delete(db)</code>) will delete every row in the table.</li>
-<li><strong><code>QuerySet::&lt;T&gt;::delete_by_pk(db, pk).await</code></strong>: Static helper deleting a row by its primary key.</li>
+<li><strong><code>.delete(db).await</code></strong>: Deletes all rows matching the queryset’s filters. Returns <code>Result&lt;u64, OrmError&gt;</code> (rows affected count). On a soft-delete model it sets <code>deleted_at</code> instead (see <a href="#soft-deletes">Soft deletes</a>). <strong>Warning</strong>: calling <code>.delete()</code> on an unfiltered queryset (e.g. <code>Model::objects().delete(db)</code>) will delete every row in the table.</li>
+<li><strong><code>QuerySet::&lt;T&gt;::delete_by_pk(db, pk).await</code></strong>: Static helper deleting a row by its primary key. On a soft-delete model it sets <code>deleted_at</code>; <code>force_delete_by_pk</code> always removes the row.</li>
 </ul>
 <h3 id="eager-loading-relations-select_related-and-prefetch_related"><a class="header" href="#eager-loading-relations-select_related-and-prefetch_related">Eager-loading relations: <code>select_related</code> and <code>prefetch_related</code></a></h3>
 <p><code>select_related</code> loads a forward foreign key in <strong>two queries total</strong> (batch the
@@ -415,6 +416,92 @@ on both backends). <code>nowait</code>, <code>skip_locked</code>, and <code>lock
 SQLite rejects them with <code>UnsupportedOnDialect</code>.</p>
 </blockquote>
 <hr>
+<h2 id="soft-deletes"><a class="header" href="#soft-deletes">Soft deletes</a></h2>
+<p>Add <code>soft_delete</code> to a model to keep deleted rows in the table. Deleting sets
+<code>deleted_at</code> to the current time; normal queries then skip those rows. The
+model needs a nullable timestamp field with that name:</p>
+<pre class="playground"><code class="language-rust compile"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span><span class="boring">use djangors_orm::Model;
+</span>use chrono::{DateTime, Utc};
+use djangors_macros::Model;
+use djangors_orm::q;
+
+#[derive(Model, Debug, Clone)]
+#[djangors(app = "shop", table_name = "shop_product", soft_delete)]
+pub struct Product {
+    #[djangors(primary_key, auto)]
+    pub id: i64,
+
+    pub name: String,
+
+    pub deleted_at: Option&lt;DateTime&lt;Utc&gt;&gt;,
+}
+
+<span class="boring">async fn run(db: &amp;djangors_db::Database, product: Product) -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+</span>// Sets deleted_at; the row stays in the table.
+product.delete(db).await?;
+
+// Hidden from count, all, first, get, exists and aggregates.
+let _ = Product::objects().count(db).await?;
+let _ = Product::objects().filter(q!(name = "Widget"))?.first(db).await?;
+
+// Include deleted rows, or select only them.
+let _ = Product::objects().with_deleted().count(db).await?;
+let _ = Product::objects().only_deleted().all(db).await?;
+
+// Clear deleted_at again.
+product.restore(db).await?;
+
+// Soft-delete again, then remove the row for real.
+product.delete(db).await?;
+product.force_delete(db).await?;
+
+// Querysets work the same way: delete() soft-deletes every matching live row.
+let _ = Product::objects().filter(q!(name = "Old"))?.delete(db).await?;
+
+// with_deleted().delete() and force_delete() are real DELETE statements.
+let _ = Product::objects().only_deleted().force_delete(db).await?;
+<span class="boring">Ok(())
+</span><span class="boring">}
+</span><span class="boring">}</span></code></pre>
+<p>The methods on a soft-delete model are:</p>
+<ul>
+<li>
+<p><strong><code>instance.delete(db)</code></strong>: sets <code>deleted_at</code> by primary key. Returns <code>OrmError::NotFound</code> if no live row matches, so deleting an already deleted row is an error. The delete signals still fire.</p>
+</li>
+<li>
+<p><strong><code>instance.restore(db)</code></strong>: sets <code>deleted_at</code> back to <code>NULL</code>. Returns <code>OrmError::NotFound</code> if the row is not soft-deleted.</p>
+</li>
+<li>
+<p><strong><code>instance.force_delete(db)</code></strong>: removes the row from the table.</p>
+</li>
+<li>
+<p><strong><code>QuerySet::delete(db)</code></strong>: soft-deletes the matching live rows and returns how many it changed. Rows that are already deleted are not touched.</p>
+</li>
+<li>
+<p><strong><code>QuerySet::force_delete(db)</code></strong>: removes the matching live rows from the table.</p>
+</li>
+<li>
+<p><strong><code>with_deleted()</code></strong>: includes deleted rows in the queryset. Calling <code>delete(db)</code> on it is a real <code>DELETE</code>.</p>
+</li>
+<li>
+<p><strong><code>only_deleted()</code></strong>: restricts the queryset to deleted rows. On a model without <code>soft_delete</code> it matches nothing.</p>
+</li>
+<li>
+<p><strong><code>QuerySet::&lt;T&gt;::delete_by_pk(db, pk)</code></strong>: soft-deletes by primary key, so the admin, REST viewsets and generic delete views soft-delete too. <strong><code>force_delete_by_pk</code></strong> removes the row.</p>
+</li>
+</ul>
+<p>Soft-deleted rows are hidden everywhere rows are loaded: <code>EXISTS</code> / <code>NOT EXISTS</code>
+subqueries, <code>select_related</code> (a deleted related row comes back as <code>None</code>),
+<code>prefetch_related</code>, and <code>m2m_related</code>. Raw SQL is not filtered.</p>
+<blockquote class="blockquote-tag blockquote-tag-note">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
+<p>Unique constraints still apply to soft-deleted rows. A deleted row keeps its
+values, so inserting a new row with the same value in a <code>unique</code> column fails
+until the old row is removed with <code>force_delete</code>.</p>
+</blockquote>
+<p>Models without <code>soft_delete</code> are unchanged: <code>delete</code> removes the row.</p>
 <h2 id="expressions--macros"><a class="header" href="#expressions--macros">Expressions &amp; Macros</a></h2>
 <h3 id="q-macro"><a class="header" href="#q-macro"><code>q!</code> Macro</a></h3>
 <p>Constructs lookup filter expressions:</p>
@@ -745,7 +832,7 @@ assert!(std::str::from_utf8(&amp;buf).unwrap().contains("\"question_text\":\"Fas
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="../guides/class-based-views.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../guides/encrypted-fields.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -759,7 +846,7 @@ assert!(std::str::from_utf8(&amp;buf).unwrap().contains("\"question_text\":\"Fas
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="../guides/class-based-views.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../guides/encrypted-fields.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

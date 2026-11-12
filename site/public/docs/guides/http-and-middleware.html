@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-ff027cc3.js";
+            window.path_to_searchindex_js = "../searchindex-f93ad6b2.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-fcdb45cd.js"></script>
+        <script src="../toc-ae7952e6.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -462,6 +462,36 @@ in production — see <a href="security.html#csrf-protection-csrflayer">Security
 Serve the stack with <code>Djangors::serve_service(listener, service)</code>; the plain <code>serve()</code>/<code>run()</code>
 loops do not apply middleware layers.</p>
 </blockquote>
+<h2 id="request-size-limit"><a class="header" href="#request-size-limit">Request size limit</a></h2>
+<p>The router reads each request body into memory before the handler runs, so it caps how
+large a body it will read. The default limit is 10 MiB.</p>
+<p>A request whose body is larger than the limit gets <code>413 Payload Too Large</code>, and its handler
+is not called. When the client sends a <code>Content-Length</code> header that is already larger than
+the limit, the router refuses the request without reading the body. Without that header
+(for example a chunked upload), the router reads until the body passes the limit and then
+refuses it. WebSocket upgrade requests carry no body, so they are not affected.</p>
+<p>The limit comes from <code>DJANGORS_MAX_BODY_BYTES</code>, or from
+<code>DjangorsSettings::with_max_body_bytes</code>, when the application is built with
+<code>Djangors::new</code>. A limit set on the router with <code>Router::max_body_bytes</code> takes precedence
+over the settings value.</p>
+<pre class="playground"><code class="language-rust compile">use djangors_core::{Djangors, DjangorsSettings, Router};
+
+fn main() {
+    // Application-wide limit: 1 MiB for every route.
+    let settings = DjangorsSettings::new().with_max_body_bytes(1024 * 1024);
+
+    // This router keeps its own, smaller limit: 64 KiB.
+    let router = Router::new().max_body_bytes(64 * 1024);
+
+    let _app = Djangors::new(settings, router);
+}</code></pre>
+<blockquote class="blockquote-tag blockquote-tag-important">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v9.5A1.75 1.75 0 0 1 14.25 13H8.06l-2.573 2.573A1.458 1.458 0 0 1 3 14.543V13H1.75A1.75 1.75 0 0 1 0 11.25Zm1.75-.25a.25.25 0 0 0-.25.25v9.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h6.5a.25.25 0 0 0 .25-.25v-9.5a.25.25 0 0 0-.25-.25Zm7 2.25v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 9a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"></path></svg>Important</p>
+<p>The limit applies only to the body the router reads. Layers that buffer the body before
+the router sees it, such as <code>djangors_cache::IdempotencyLayer</code>, read the whole body first
+and are not covered. Set a body size limit at your reverse proxy as well, which protects
+those layers too.</p>
+</blockquote>
 <h2 id="djangorserror"><a class="header" href="#djangorserror">DjangorsError</a></h2>
 <p><a href="https://docs.rs/djangors_core/latest/djangors_core/error/index.html"><code>DjangorsError</code></a> is the single error
 type handlers return. Built-in variants map 1:1 to HTTP statuses, plus the application-defined
@@ -606,8 +636,8 @@ to write the body into your own buffer.</p>
 <p><strong>Internal errors stay private.</strong> <code>DjangorsError::Internal</code> and panics are always rendered
 as <code>"Internal Server Error"</code> by <code>ProblemDetailsRenderer</code>, and by the JSON and problem+json
 output of the default renderer whenever <code>debug</code> is off, so the real message, which might
-contain SQL or file paths, never reaches the client. The router doesn’t log that message
-for you; record it with <code>tracing::error!</code> where you create the error if you need it later.</p>
+contain SQL or file paths, never reaches the client. The router logs the original message
+once at <code>error</code> level via <code>tracing</code> before rendering the response.</p>
 <h2 id="paginator-and-cursor-primitives"><a class="header" href="#paginator-and-cursor-primitives">Paginator and cursor primitives</a></h2>
 <p><a href="https://docs.rs/djangors_core/latest/djangors_core/pagination/index.html"><code>Paginator</code></a> does the offset
 math. <code>total_items</code> is clamped to ≥ 0 and <code>page_size</code> must be &gt; 0; per the admin convention, 0 items

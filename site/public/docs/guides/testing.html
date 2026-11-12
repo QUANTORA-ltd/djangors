@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-ff027cc3.js";
+            window.path_to_searchindex_js = "../searchindex-f93ad6b2.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-fcdb45cd.js"></script>
+        <script src="../toc-ae7952e6.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -439,15 +439,52 @@ async fn example(db: &amp;Database) -&gt; Result&lt;(), djangors_orm::OrmError&g
 </div>
 <p>The sequence number <code>n</code> is shared by all factories of a model and increases with every
 <code>build</code>, so unique columns don’t collide.</p>
-<p>Relation fields default to ID <code>1</code> because the factory doesn’t create related rows.
-Unless that row exists, <code>create</code> fails with a foreign-key error, so create the parent
-first and pass its ID with <code>.with_&lt;field&gt;_id(id)</code>:</p>
+<p><code>build</code> still uses ID <code>1</code> for relation fields. <code>create</code> and <code>create_many</code> require each
+<code>ForeignKey</code> or <code>OneToOne</code> to be set explicitly; otherwise they return an <code>InvalidQuery</code>
+that names the missing <code>.with_&lt;field&gt;_id(..)</code> call. Create the parent first and pass its ID:</p>
 <pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>let author = Author::factory().create(&amp;db).await?;
 let book = Book::factory().with_author_id(author.id).create(&amp;db).await?;
 <span class="boring">}</span></code></pre>
 <p><code>Factory</code> is also re-exported as <code>djangors_test::Factory</code>.</p>
+<h3 id="seeding-a-development-database"><a class="header" href="#seeding-a-development-database">Seeding a development database</a></h3>
+<p><code>dj seed</code> fills a development database in one command, like <code>rails db:seed</code> or a Laravel
+seeder. There is no special seed format. The seed script is an ordinary binary at
+<code>src/bin/seed.rs</code>, which <code>dj new</code> creates for you. It connects with <code>DATABASE_URL</code>, so run
+<code>dj seed</code> with the same environment your app uses:</p>
+<pre class="playground"><code class="language-rust illustrative">// src/bin/seed.rs
+use djangors_db::config::DatabaseConfig;
+use djangors_db::Database;
+use my_project::blog::Article;
+use my_project::blog::Author;
+
+#[tokio::main]
+async fn main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+    let url = std::env::var("DATABASE_URL")?;
+    let db = Database::connect(&amp;DatabaseConfig::new(url)).await?;
+
+    // Every field has a `with_&lt;field&gt;` setter; `Author` has an `email` field here.
+    let author = Author::factory().with_email("ada@example.com").create(&amp;db).await?;
+    Article::factory()
+        .with_author_id(author.id)
+        .create_many(&amp;db, 20)
+        .await?;
+
+    println!("Seeded 1 author and 20 articles");
+    Ok(())
+}</code></pre>
+<p>The seed binary is a separate crate, so it can only use code in the project’s library target.
+<code>dj new</code> sets that up: app modules are declared in <code>src/lib.rs</code> (<code>pub mod blog;</code>), and both
+<code>src/main.rs</code> and <code>src/bin/seed.rs</code> import them with <code>use my_project::...</code>. <code>dj new-app</code> and
+<code>dj generate resource</code> tell you to add <code>pub mod &lt;app&gt;;</code> to <code>src/lib.rs</code> when it exists.</p>
+<p>A project created before 0.11 declares its modules in <code>src/main.rs</code>, where the seed binary
+can’t reach them. Move those <code>mod</code> lines to a new <code>src/lib.rs</code> as <code>pub mod</code>, and replace them
+in <code>main.rs</code> with <code>use my_project::...</code>.</p>
+<p><code>dj seed</code> runs <code>cargo run --bin seed</code> and exits with its status. It refuses to run when
+<code>DJANGORS_DEBUG=false</code>, so development data doesn’t reach a production database by accident.
+Pass <code>dj seed --force</code> to override that check on purpose. Seed scripts should be safe to run
+more than once: check for existing rows, or truncate tables you own, before inserting.</p>
 <hr>
 <h2 id="2-real-socket-integration-testing"><a class="header" href="#2-real-socket-integration-testing">2. Real-Socket Integration Testing</a></h2>
 <p>For full-stack integration testing (including Tower middleware layers, real HTTP headers, cookie handling, and graceful shutdown), test suites bind a local TCP socket on port <code>0</code>.</p>

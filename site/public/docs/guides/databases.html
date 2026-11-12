@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-ff027cc3.js";
+            window.path_to_searchindex_js = "../searchindex-f93ad6b2.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-fcdb45cd.js"></script>
+        <script src="../toc-ae7952e6.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -207,11 +207,11 @@ let db = djangors_db::Database::connect(&amp;config).await?;
 <h3 id="cargo-feature-flags-postgres-and-sqlite"><a class="header" href="#cargo-feature-flags-postgres-and-sqlite">Cargo Feature Flags (<code>postgres</code> and <code>sqlite</code>)</a></h3>
 <p>At compile time, <code>djangors-db</code> (and the <code>djangors</code> facade crate) gate each SQL driver behind its own Cargo feature flag (<code>postgres</code> and <code>sqlite</code>, both enabled by default). If your production deployment targets only one database engine, disable default features and enable only the backend you need to drop the unused driver (such as bundled <code>libsqlite3-sys</code> or <code>sqlx-postgres</code>) from your dependency graph and release binary:</p>
 <pre><code class="language-toml"># PostgreSQL-only build (drops sqlx-sqlite and libsqlite3-sys)
-djangors = { version = "0.9", default-features = false, features = ["postgres", "rest"] }
+djangors = { version = "0.11", default-features = false, features = ["postgres", "rest"] }
 
 # Or when depending on djangors-db / djangors-orm directly:
-djangors-db = { version = "0.9", default-features = false, features = ["postgres"] }
-djangors-orm = { version = "0.9", default-features = false, features = ["postgres"] }
+djangors-db = { version = "0.11", default-features = false, features = ["postgres"] }
+djangors-orm = { version = "0.11", default-features = false, features = ["postgres"] }
 </code></pre>
 <blockquote class="blockquote-tag blockquote-tag-note">
 <p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>

@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-ff027cc3.js";
+            window.path_to_searchindex_js = "../searchindex-f93ad6b2.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-fcdb45cd.js"></script>
+        <script src="../toc-ae7952e6.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -208,35 +208,31 @@ its timing and a warning for each repeated one.</p>
 <h3 id="1-enable-the-feature"><a class="header" href="#1-enable-the-feature">1. Enable the feature</a></h3>
 <p>The panel is behind the <code>debug-panel</code> Cargo feature, which is off by default:</p>
 <pre><code class="language-toml">[dependencies]
-djangors = { version = "0.9", features = ["debug-panel"] }
+djangors = { version = "0.11", features = ["debug-panel"] }
 </code></pre>
-<h3 id="2-wrap-your-router-in-development-only"><a class="header" href="#2-wrap-your-router-in-development-only">2. Wrap your router, in development only</a></h3>
-<p><code>debug_panel_layer()</code> is a Tower layer. Wrap your <code>RouterService</code> with it and serve
-the result with <code>serve_service</code>:</p>
+<h3 id="2-wrap-your-router-with-settings"><a class="header" href="#2-wrap-your-router-with-settings">2. Wrap your router with settings</a></h3>
+<p><code>DebugPanelLayer::for_settings(&amp;settings)</code> enables the panel only when <code>settings.debug</code>
+is true. Wrap your <code>RouterService</code> with it and serve the result with <code>serve_service</code>:</p>
 <pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>use djangors_core::{debug_panel_layer, Djangors, DjangorsSettings, Router};
+</span>use djangors_core::{DebugPanelLayer, Djangors, DjangorsSettings, Router};
 use djangors_core::router::RouterService;
 use tower::Layer;
 
 async fn serve(settings: DjangorsSettings, router: Router) -&gt; Result&lt;(), djangors_core::DjangorsError&gt; {
-    let debug = settings.debug;
-    let service = RouterService::new(router.clone(), debug);
+    let panel = DebugPanelLayer::for_settings(&amp;settings);
+    let service = RouterService::new(router.clone(), settings.debug);
     let app = Djangors::new(settings, router);
     let listener = app.bind().await?;
-
-    if debug {
-        app.serve_service(listener, debug_panel_layer().layer(service)).await
-    } else {
-        app.serve_service(listener, service).await
-    }
+    app.serve_service(listener, panel.layer(service)).await
 }
 <span class="boring">}</span></code></pre>
 <blockquote>
 <p><strong>Never enable the panel in production.</strong> It shows the SQL text of every query to
-whoever loads the page. The layer doesn’t check the <code>debug</code> setting itself, so gate
-it on <code>settings.debug</code> as above, or only enable the <code>debug-panel</code> feature in
-development builds.</p>
+whoever loads the page. <code>for_settings</code> turns the panel off completely (no headers, no
+toolbar, no query recording) when <code>debug</code> is false. A panel built with
+<code>debug_panel_layer()</code> or <code>DebugPanelLayer::new()</code> doesn’t know your settings, so it logs
+a warning at startup unless <code>DJANGORS_DEBUG</code> is <code>true</code> or <code>1</code>.</p>
 </blockquote>
 <p>For JSON APIs you can keep the headers and skip the HTML toolbar with
 <code>DebugPanelLayer::new().with_html_injection(false)</code>.</p>
@@ -279,7 +275,7 @@ almost nothing: one task-local lookup per query.</p>
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="../how-to/i18n-templates.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../how-to/htmx.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -293,7 +289,7 @@ almost nothing: one task-local lookup per query.</p>
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="../how-to/i18n-templates.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../how-to/htmx.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

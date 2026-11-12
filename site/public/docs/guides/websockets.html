@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-ff027cc3.js";
+            window.path_to_searchindex_js = "../searchindex-f93ad6b2.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-fcdb45cd.js"></script>
+        <script src="../toc-ae7952e6.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -259,8 +259,27 @@ pub fn routes(groups: Groups) -&gt; Router {
 }
 <span class="boring">}</span></code></pre>
 <p><code>Groups</code> lives in one process. If you run several instances behind a load balancer,
-each one only reaches its own clients; send the message to every instance (for example
-through Postgres <code>LISTEN/NOTIFY</code> or Redis) and let each one broadcast locally.</p>
+each one only reaches its own clients unless you connect them with <code>PgGroups</code>. It sends
+every message through Postgres <code>NOTIFY</code> and each instance delivers what it hears to its
+local <code>Groups</code>:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_core::{DjangorsError, Groups, PgGroups};
+use djangors_orm::djangors_db::Database;
+
+async fn start_groups(db: &amp;Database) -&gt; Result&lt;PgGroups, DjangorsError&gt; {
+    // Every instance listens on the same channel with its own local `Groups`.
+    let groups = Groups::new();
+    PgGroups::start(db, groups, "app_events").await
+}
+
+// Any instance, including the one that sends:
+// pg_groups.send("notifications", "new order").await?;
+<span class="boring">}</span></code></pre>
+<p>The sending instance also receives its own message through <code>LISTEN</code>, so call sites use only
+<code>send</code>. <code>PgGroups</code> needs a PostgreSQL database; it returns an error on SQLite. Each started
+<code>PgGroups</code> holds one connection from the pool for its <code>LISTEN</code>. Payloads must be under 8000
+bytes, and larger messages return an error instead of being truncated.</p>
 <h2 id="cross-origin-protection"><a class="header" href="#cross-origin-protection">Cross-origin protection</a></h2>
 <p>Browsers attach the user’s cookies to a WebSocket handshake even when another website
 opens it, and CSRF protection doesn’t run on the <code>GET</code> that starts a WebSocket. A

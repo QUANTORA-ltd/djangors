@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-ff027cc3.js";
+            window.path_to_searchindex_js = "../searchindex-f93ad6b2.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-fcdb45cd.js"></script>
+        <script src="../toc-ae7952e6.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -288,6 +288,22 @@ let router = djangors_core::Router::new()
     .sse("/events/live", events_live)
     .post("/events", publish_event);
 <span class="boring">}</span></code></pre>
+<h3 id="across-several-servers-postgresql"><a class="header" href="#across-several-servers-postgresql">Across several servers (PostgreSQL)</a></h3>
+<p><code>Groups</code> only reaches subscribers in the same process. When you run several instances,
+use <code>PgGroups</code> (the <code>postgres</code> feature) so that a <code>send</code> on one instance reaches the SSE
+clients connected to every instance. Each instance starts a <code>PgGroups</code> on the same channel
+name; <code>send</code> publishes through Postgres <code>LISTEN</code>/<code>NOTIFY</code>:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_core::{DjangorsError, Groups, PgGroups};
+
+async fn publish_event(pg_groups: &amp;PgGroups, body: String) -&gt; Result&lt;(), DjangorsError&gt; {
+    // Reaches `live-events` subscribers on every instance, this one included.
+    pg_groups.send("live-events", &amp;body).await
+}
+<span class="boring">}</span></code></pre>
+<p>The message is delivered back to the sender through <code>LISTEN</code>, so do not also call
+<code>Groups::send</code> for the same message. Messages larger than 8000 bytes are rejected.</p>
 <h3 id="semantics-to-keep-in-mind"><a class="header" href="#semantics-to-keep-in-mind">Semantics to keep in mind</a></h3>
 <ul>
 <li><strong>Fixed buffer</strong>: each channel buffers up to its capacity. A slow subscriber that falls behind

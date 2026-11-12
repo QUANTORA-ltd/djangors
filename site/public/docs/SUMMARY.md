@@ -31,6 +31,8 @@
 # Topic Guides
 
 - [Object-Relational Mapping (ORM)](guides/orm.md)
+- [Encrypted Fields](guides/encrypted-fields.md)
+- [Model History](guides/model-history.md)
 - [Class-Based Views](guides/class-based-views.md)
 - [Templates](guides/templates.md)
 - [Forms](guides/forms.md)
@@ -38,6 +40,7 @@
 - [Flat Pages and Redirects](guides/flatpages-and-redirects.md)
 - [HTTP Core and Middleware](guides/http-and-middleware.md)
 - [Authentication and Permissions](guides/auth.md)
+- [Passkeys (WebAuthn)](guides/passkeys.md)
 - [REST Framework](guides/rest.md)
 - [Admin Site](guides/admin.md)
 - [Testing](guides/testing.md)
@@ -69,4 +72,7 @@
 - [How to Execute Background Tasks](how-to/background-tasks.md)
 - [How to Stream Server-Sent Events](how-to/stream-sse.md)
 - [How to Find Slow and N+1 Queries](how-to/debug-queries.md)
+- [How to Use htmx](how-to/htmx.md)
+- [How to Make Payments and Other POSTs Safe to Retry](how-to/idempotency.md)
+- [How to Export Traces with OpenTelemetry](how-to/opentelemetry.md)
 - [How to Internationalize Templates](how-to/i18n-templates.md)

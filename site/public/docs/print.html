@@ -37,10 +37,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-ff027cc3.js";
+            window.path_to_searchindex_js = "searchindex-f93ad6b2.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-fcdb45cd.js"></script>
+        <script src="toc-ae7952e6.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -1484,6 +1484,7 @@ port = 8000
 export DJANGORS_ALLOWED_HOSTS="localhost,127.0.0.1"
 export DJANGORS_SECRET_KEY="supersecret"
 export DJANGORS_PORT=8000
+export DJANGORS_MAX_BODY_BYTES=10485760
 </code></pre>
 <p>Loading in Rust:</p>
 <pre class="playground"><code class="language-rust compile"><span class="boring">fn main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
@@ -3310,6 +3311,7 @@ pub struct Choice {
 <li><strong><code>unique_together = [["field1", "field2"]]</code></strong> <em>(optional)</em>: Defines composite unique constraints.</li>
 <li><strong><code>indexes = ["index_name", ("index_name", ["field1", "field2"])]</code></strong> <em>(optional)</em>: Defines custom or composite database indexes. Can be a simple index name or a tuple of <code>(name, [fields])</code>.</li>
 <li><strong><code>manager = "ManagerStruct"</code></strong> <em>(optional)</em>: Overrides the default model manager with a custom manager struct.</li>
+<li><strong><code>soft_delete</code></strong> <em>(optional)</em>: Makes deletes soft: rows get a <code>deleted_at</code> timestamp instead of being removed, and normal queries hide them. The struct must have a <code>deleted_at: Option&lt;DateTime&lt;Utc&gt;&gt;</code> field. See <a href="#soft-deletes">Soft deletes</a>.</li>
 </ul>
 <h4 id="field-level-attributes"><a class="header" href="#field-level-attributes">Field-Level Attributes</a></h4>
 <ul>
@@ -3422,8 +3424,8 @@ as <code>OrmError::FieldNotFound</code> rather than silently becoming an equalit
 <li><strong><code>.count(db).await</code></strong>: Returns <code>Result&lt;i64, OrmError&gt;</code> count (<code>SELECT COUNT(*) ...</code>).</li>
 <li><strong><code>.aggregate(db, vec![AggExpr::...]).await</code></strong>: Evaluates aggregate functions: <code>AggExpr::Count</code>, <code>AggExpr::Sum</code>, <code>AggExpr::Avg</code>, <code>AggExpr::Min</code>, <code>AggExpr::Max</code>.</li>
 <li><strong><code>.update(db, set!(...)).await</code></strong>: Performs bulk updates. Returns <code>Result&lt;u64, OrmError&gt;</code> (rows affected count).</li>
-<li><strong><code>.delete(db).await</code></strong>: Deletes all rows matching the queryset’s filters. Returns <code>Result&lt;u64, OrmError&gt;</code> (rows affected count). <strong>Warning</strong>: calling <code>.delete()</code> on an unfiltered queryset (e.g. <code>Model::objects().delete(db)</code>) will delete every row in the table.</li>
-<li><strong><code>QuerySet::&lt;T&gt;::delete_by_pk(db, pk).await</code></strong>: Static helper deleting a row by its primary key.</li>
+<li><strong><code>.delete(db).await</code></strong>: Deletes all rows matching the queryset’s filters. Returns <code>Result&lt;u64, OrmError&gt;</code> (rows affected count). On a soft-delete model it sets <code>deleted_at</code> instead (see <a href="#soft-deletes">Soft deletes</a>). <strong>Warning</strong>: calling <code>.delete()</code> on an unfiltered queryset (e.g. <code>Model::objects().delete(db)</code>) will delete every row in the table.</li>
+<li><strong><code>QuerySet::&lt;T&gt;::delete_by_pk(db, pk).await</code></strong>: Static helper deleting a row by its primary key. On a soft-delete model it sets <code>deleted_at</code>; <code>force_delete_by_pk</code> always removes the row.</li>
 </ul>
 <h3 id="eager-loading-relations-select_related-and-prefetch_related"><a class="header" href="#eager-loading-relations-select_related-and-prefetch_related">Eager-loading relations: <code>select_related</code> and <code>prefetch_related</code></a></h3>
 <p><code>select_related</code> loads a forward foreign key in <strong>two queries total</strong> (batch the
@@ -3503,6 +3505,92 @@ on both backends). <code>nowait</code>, <code>skip_locked</code>, and <code>lock
 SQLite rejects them with <code>UnsupportedOnDialect</code>.</p>
 </blockquote>
 <hr>
+<h2 id="soft-deletes"><a class="header" href="#soft-deletes">Soft deletes</a></h2>
+<p>Add <code>soft_delete</code> to a model to keep deleted rows in the table. Deleting sets
+<code>deleted_at</code> to the current time; normal queries then skip those rows. The
+model needs a nullable timestamp field with that name:</p>
+<pre class="playground"><code class="language-rust compile"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span><span class="boring">use djangors_orm::Model;
+</span>use chrono::{DateTime, Utc};
+use djangors_macros::Model;
+use djangors_orm::q;
+
+#[derive(Model, Debug, Clone)]
+#[djangors(app = "shop", table_name = "shop_product", soft_delete)]
+pub struct Product {
+    #[djangors(primary_key, auto)]
+    pub id: i64,
+
+    pub name: String,
+
+    pub deleted_at: Option&lt;DateTime&lt;Utc&gt;&gt;,
+}
+
+<span class="boring">async fn run(db: &amp;djangors_db::Database, product: Product) -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+</span>// Sets deleted_at; the row stays in the table.
+product.delete(db).await?;
+
+// Hidden from count, all, first, get, exists and aggregates.
+let _ = Product::objects().count(db).await?;
+let _ = Product::objects().filter(q!(name = "Widget"))?.first(db).await?;
+
+// Include deleted rows, or select only them.
+let _ = Product::objects().with_deleted().count(db).await?;
+let _ = Product::objects().only_deleted().all(db).await?;
+
+// Clear deleted_at again.
+product.restore(db).await?;
+
+// Soft-delete again, then remove the row for real.
+product.delete(db).await?;
+product.force_delete(db).await?;
+
+// Querysets work the same way: delete() soft-deletes every matching live row.
+let _ = Product::objects().filter(q!(name = "Old"))?.delete(db).await?;
+
+// with_deleted().delete() and force_delete() are real DELETE statements.
+let _ = Product::objects().only_deleted().force_delete(db).await?;
+<span class="boring">Ok(())
+</span><span class="boring">}
+</span><span class="boring">}</span></code></pre>
+<p>The methods on a soft-delete model are:</p>
+<ul>
+<li>
+<p><strong><code>instance.delete(db)</code></strong>: sets <code>deleted_at</code> by primary key. Returns <code>OrmError::NotFound</code> if no live row matches, so deleting an already deleted row is an error. The delete signals still fire.</p>
+</li>
+<li>
+<p><strong><code>instance.restore(db)</code></strong>: sets <code>deleted_at</code> back to <code>NULL</code>. Returns <code>OrmError::NotFound</code> if the row is not soft-deleted.</p>
+</li>
+<li>
+<p><strong><code>instance.force_delete(db)</code></strong>: removes the row from the table.</p>
+</li>
+<li>
+<p><strong><code>QuerySet::delete(db)</code></strong>: soft-deletes the matching live rows and returns how many it changed. Rows that are already deleted are not touched.</p>
+</li>
+<li>
+<p><strong><code>QuerySet::force_delete(db)</code></strong>: removes the matching live rows from the table.</p>
+</li>
+<li>
+<p><strong><code>with_deleted()</code></strong>: includes deleted rows in the queryset. Calling <code>delete(db)</code> on it is a real <code>DELETE</code>.</p>
+</li>
+<li>
+<p><strong><code>only_deleted()</code></strong>: restricts the queryset to deleted rows. On a model without <code>soft_delete</code> it matches nothing.</p>
+</li>
+<li>
+<p><strong><code>QuerySet::&lt;T&gt;::delete_by_pk(db, pk)</code></strong>: soft-deletes by primary key, so the admin, REST viewsets and generic delete views soft-delete too. <strong><code>force_delete_by_pk</code></strong> removes the row.</p>
+</li>
+</ul>
+<p>Soft-deleted rows are hidden everywhere rows are loaded: <code>EXISTS</code> / <code>NOT EXISTS</code>
+subqueries, <code>select_related</code> (a deleted related row comes back as <code>None</code>),
+<code>prefetch_related</code>, and <code>m2m_related</code>. Raw SQL is not filtered.</p>
+<blockquote class="blockquote-tag blockquote-tag-note">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
+<p>Unique constraints still apply to soft-deleted rows. A deleted row keeps its
+values, so inserting a new row with the same value in a <code>unique</code> column fails
+until the old row is removed with <code>force_delete</code>.</p>
+</blockquote>
+<p>Models without <code>soft_delete</code> are unchanged: <code>delete</code> removes the row.</p>
 <h2 id="expressions--macros"><a class="header" href="#expressions--macros">Expressions &amp; Macros</a></h2>
 <h3 id="q-macro"><a class="header" href="#q-macro"><code>q!</code> Macro</a></h3>
 <p>Constructs lookup filter expressions:</p>
@@ -3824,6 +3912,180 @@ let mut buf = Vec::with_capacity(128);
 q.write_json(&amp;mut buf);
 assert!(std::str::from_utf8(&amp;buf).unwrap().contains("\"question_text\":\"Fast JSON?\""));
 <span class="boring">}</span></code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="encrypted-fields"><a class="header" href="#encrypted-fields">Encrypted Fields</a></h1>
+<p>Some text columns hold data that should not be readable in a database dump, such as API tokens, personal identifiers or notes. Mark those fields with <code>#[djangors(encrypted)]</code>. The ORM encrypts them with AES-256-GCM on every write and decrypts them when a row is loaded, so application code keeps working with plain <code>String</code> values.</p>
+<p>Encryption is opt-in per field and works like Rails’ <code>encrypts</code>.</p>
+<h2 id="setup"><a class="header" href="#setup">Setup</a></h2>
+<p>Mark a <code>String</code> or <code>Option&lt;String&gt;</code> field:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_macros::Model;
+
+#[derive(Model, Debug, Clone)]
+#[djangors(app = "accounts", table_name = "accounts_integration")]
+pub struct Integration {
+    #[djangors(primary_key, auto)]
+    pub id: i64,
+
+    pub name: String,
+
+    #[djangors(encrypted, max_length = 512)]
+    pub api_token: String,
+
+    #[djangors(encrypted)]
+    pub webhook_secret: Option&lt;String&gt;,
+}
+<span class="boring">}</span></code></pre>
+<p>Any other field type is a compile error. <code>encrypted</code> also cannot be combined with a relation.</p>
+<p>Set the key in the environment before the first query that touches an encrypted field:</p>
+<pre><code class="language-text">DJANGORS_FIELD_ENCRYPTION_KEY=&lt;base64 of exactly 32 bytes&gt;
+</code></pre>
+<p>The key is read once, on first use. If it is missing or does not decode to 32 bytes, the operation returns <code>OrmError::InvalidQuery</code> with a message that names the variable but never prints the key.</p>
+<h2 id="generating-a-key"><a class="header" href="#generating-a-key">Generating a key</a></h2>
+<p>Either of these produces a suitable key:</p>
+<pre><code class="language-bash">openssl rand -base64 32
+head -c 32 /dev/urandom | base64
+</code></pre>
+<p>Store the key in your secret manager or deployment environment. Do not commit it to the repository.</p>
+<h2 id="storage-format"><a class="header" href="#storage-format">Storage format</a></h2>
+<p>An encrypted value is stored in the ordinary text column as:</p>
+<pre><code class="language-text">enc:v1:&lt;base64 of 12-byte random nonce || AES-256-GCM ciphertext&gt;
+</code></pre>
+<p>Each save uses a fresh random nonce, so saving the same text twice produces different stored values. Because of this, the column must be wide enough for the ciphertext. Ciphertext is about 1.4 times the length of the plaintext plus 40 bytes, so a <code>max_length</code> of 100 needs a column of about 180 characters. The column type stays <code>TEXT</code> or <code>VARCHAR</code>; no special migration is needed to add the attribute to a new column.</p>
+<p>Rows written before a field was marked <code>encrypted</code> contain plaintext. Those values are returned unchanged when loaded, so you can add the attribute first and re-save rows later to encrypt them.</p>
+<h2 id="key-rotation"><a class="header" href="#key-rotation">Key rotation</a></h2>
+<p>To rotate, move the current key into <code>DJANGORS_FIELD_ENCRYPTION_OLD_KEYS</code> and set a new key:</p>
+<pre><code class="language-text">DJANGORS_FIELD_ENCRYPTION_KEY=&lt;new key&gt;
+DJANGORS_FIELD_ENCRYPTION_OLD_KEYS=&lt;previous key&gt;[,&lt;older key&gt;...]
+</code></pre>
+<p>Reads try the current key first and then each old key. Writes always use the current key. Rows written under an old key are re-encrypted when they are next saved or updated. To re-encrypt everything at once, load each row and call <code>save</code> or <code>update</code> on it. Once no rows depend on an old key, remove it from the list.</p>
+<p>Keep the old keys in the list for as long as any row may still hold a value encrypted with them.</p>
+<h2 id="what-you-cannot-do"><a class="header" href="#what-you-cannot-do">What you cannot do</a></h2>
+<p>Encryption uses random nonces, so the same plaintext never produces the same stored value. This has consequences:</p>
+<ul>
+<li><strong>Filtering is rejected.</strong> <code>filter</code>, <code>exclude</code>, <code>filter_or_icontains</code>, <code>filter_datetime_range</code>, <code>after</code> and <code>search</code> on an encrypted field return <code>OrmError::InvalidQuery("cannot filter on encrypted field &lt;name&gt;")</code>.</li>
+<li><strong>Ordering is rejected.</strong> <code>order_by</code> on an encrypted field returns the same error.</li>
+<li><strong>Lookups by value are impossible.</strong> Use a separate, non-secret column, such as a keyed hash computed in your application, if you need to find a row by an encrypted value.</li>
+<li><strong>Uniqueness cannot be enforced on the plaintext.</strong> A <code>unique</code> constraint on an encrypted column does not stop two rows from holding the same value.</li>
+<li><strong>Arithmetic updates are rejected.</strong> <code>QuerySet::update</code> with an arithmetic <code>F</code> expression on an encrypted field returns an error.</li>
+<li><strong>Grouping and value aggregates are rejected.</strong> <code>annotate</code> and <code>annotate_funcs</code> grouped by an encrypted field, <code>MIN</code>/<code>MAX</code>/<code>SUM</code>/<code>AVG</code> over one, and SQL functions such as <code>Lower</code>, <code>Upper</code>, <code>Concat</code>, <code>Length</code> and <code>Coalesce</code> on one return <code>OrmError::InvalidQuery</code>. <code>Count</code> still works, because it only checks for <code>NULL</code>.</li>
+</ul>
+<p><code>values()</code> and <code>values_list()</code> return encrypted fields decrypted, like a loaded model. Raw SQL is the exception: it returns the stored value (<code>enc:v1:...</code>), and <code>djangors_orm::encryption::decrypt_str</code> decrypts it.</p>
+<p>Reads through <code>field_values</code>, the admin, JSON output and <code>write_json</code> use the decrypted value, so anything that serializes a model will expose the plaintext. Check your views before sending encrypted fields to clients.</p>
+<h2 id="backups-and-recovery"><a class="header" href="#backups-and-recovery">Backups and recovery</a></h2>
+<p>A database backup of encrypted columns is only useful together with the key that wrote it. Back up <code>DJANGORS_FIELD_ENCRYPTION_KEY</code> and every key in <code>DJANGORS_FIELD_ENCRYPTION_OLD_KEYS</code> alongside the database, in a store separate from the backups. Losing the key makes the encrypted values permanently unreadable. Restoring a backup without the key that was current when it was taken produces <code>OrmError::InvalidQuery</code> errors on load.</p>
+<p>Test restores by loading an encrypted row with the restored environment.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="model-history"><a class="header" href="#model-history">Model History</a></h1>
+<p><code>djangors-contrib-history</code> records every create, update, and delete of the models you choose,
+the same idea as django-simple-history or PaperTrail. Each change is stored as a row with the
+object’s field values as JSON, so you can show who-changed-what-when for an object.</p>
+<p>It is built on the model signals that <code>#[derive(Model)]</code> already generates, so your models need
+no extra attributes.</p>
+<h2 id="setup-1"><a class="header" href="#setup-1">Setup</a></h2>
+<p>Create the history table once at startup. It is safe to call on every start.</p>
+<pre class="playground"><code class="language-rust compile"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors::db::Database;
+use djangors::history::ensure_history_table;
+use djangors::orm::OrmError;
+
+async fn setup(db: &amp;Database) -&gt; Result&lt;(), OrmError&gt; {
+    ensure_history_table(db).await
+}
+<span class="boring">}</span></code></pre>
+<p>The table is <code>djangors_model_history</code>. It holds the model’s table name, the primary key as text,
+the action, the JSON data, and a timestamp. A single table serves every tracked model.</p>
+<h2 id="tracking-a-model"><a class="header" href="#tracking-a-model">Tracking a model</a></h2>
+<p>Call <code>track</code> for each model you want to record. Pass the database and the model’s two generated
+signals:</p>
+<pre class="playground"><code class="language-rust compile"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors::db::Database;
+use djangors::history::{ensure_history_table, history_for, track};
+use djangors::orm::OrmError;
+use djangors_macros::Model;
+
+#[derive(Model, Debug, Clone)]
+#[djangors(app = "shop", table_name = "shop_product")]
+struct Product {
+    #[djangors(primary_key, auto)]
+    id: i64,
+    #[djangors(max_length = 200)]
+    name: String,
+    price_cents: i64,
+}
+
+async fn wire_up(db: Database) -&gt; Result&lt;(), OrmError&gt; {
+    ensure_history_table(&amp;db).await?;
+    track::&lt;Product&gt;(
+        db.clone(),
+        Product::post_save_signal(),
+        Product::post_delete_signal(),
+    );
+
+    let mug = Product {
+        id: 0,
+        name: "Mug".to_string(),
+        price_cents: 1200,
+    }
+    .save(&amp;db)
+    .await?;
+
+    let mut repriced = mug.clone();
+    repriced.price_cents = 1000;
+    repriced.update(&amp;db).await?;
+
+    let entries = history_for::&lt;Product&gt;(&amp;db, mug.id).await?;
+    println!("{} changes recorded", entries.len());
+    Ok(())
+}
+<span class="boring">}</span></code></pre>
+<p>Call <code>track</code> once per model, during startup, before the first write. Calling it twice for the
+same model records each change twice.</p>
+<p>Each change is recorded with one of two actions:</p>
+<ul>
+<li><code>"saved"</code>: a <code>save()</code> (create) or an <code>update()</code> on an instance.</li>
+<li><code>"deleted"</code>: a <code>delete()</code> on an instance.</li>
+</ul>
+<p>The entry holds the object’s field values at that moment, so a <code>"deleted"</code> entry shows the
+object as it was just before it was removed.</p>
+<p>The history row is written inside the model signal, before <code>save</code>, <code>update</code>, or <code>delete</code> returns.
+If the history insert fails, the error is logged with <code>tracing</code> and the model operation still
+succeeds. A failed history write never blocks or rolls back a change.</p>
+<h2 id="reading-history"><a class="header" href="#reading-history">Reading history</a></h2>
+<p><code>history_for</code> returns the entries for one object, oldest first:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>let entries = djangors::history::history_for::&lt;Product&gt;(&amp;db, 42).await?;
+for entry in entries {
+    println!("{} at {}: {}", entry.action, entry.changed_at, entry.data);
+}
+<span class="boring">}</span></code></pre>
+<p>Each <code>HistoryEntry</code> has:</p>
+<ul>
+<li><code>action</code>: <code>"saved"</code> or <code>"deleted"</code>.</li>
+<li><code>data</code>: a <code>serde_json::Value</code> object mapping each field name to its value at that moment.</li>
+<li><code>changed_at</code>: the time the change was recorded, in UTC.</li>
+</ul>
+<p>The key you pass is the primary key as text, so <code>42</code> and <code>"42"</code> find the same object.</p>
+<h2 id="encrypted-fields-1"><a class="header" href="#encrypted-fields-1">Encrypted fields</a></h2>
+<p>Fields marked <a href="#encrypted-fields"><code>#[djangors(encrypted)]</code></a> are encrypted in the history
+table too, with the same key, so a history row never holds their plaintext. <code>history_for</code>
+decrypts them, so <code>data</code> shows the plain value. If encrypting fails (for example, the key is
+not set), the entry is skipped and an error is logged; the plaintext is never written instead.</p>
+<h2 id="what-is-not-recorded"><a class="header" href="#what-is-not-recorded">What is not recorded</a></h2>
+<p>Only changes made through a model instance are recorded. <code>update()</code> and <code>delete()</code> called on a
+whole <code>QuerySet</code> (for example <code>Product::objects().filter(...).delete()</code>) do not send per-row
+signals, so bulk changes are <strong>not</strong> recorded. If you need history for a bulk change, load the
+rows and call <code>save</code>, <code>update</code>, or <code>delete</code> on each one.</p>
+<p>Raw SQL that writes to a tracked table also bypasses the signals.</p>
+<h2 id="storage-and-size"><a class="header" href="#storage-and-size">Storage and size</a></h2>
+<p>Every change stores a full copy of the object’s fields, not a diff. For large rows or models
+that change often, the table grows quickly. Plan a retention policy, for example a scheduled
+<code>DELETE</code> of entries older than a set date, and index the table by <code>(table_name, object_pk)</code> as
+<code>ensure_history_table</code> already does.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="class-based-views-djangors-views"><a class="header" href="#class-based-views-djangors-views">Class-Based Views (<code>djangors-views</code>)</a></h1>
 <p><code>djangors-views</code> provides server-rendered generic class-based views — Django’s
@@ -4924,6 +5186,36 @@ in production — see <a href="#csrf-protection-csrflayer">Security</a>.
 Serve the stack with <code>Djangors::serve_service(listener, service)</code>; the plain <code>serve()</code>/<code>run()</code>
 loops do not apply middleware layers.</p>
 </blockquote>
+<h2 id="request-size-limit"><a class="header" href="#request-size-limit">Request size limit</a></h2>
+<p>The router reads each request body into memory before the handler runs, so it caps how
+large a body it will read. The default limit is 10 MiB.</p>
+<p>A request whose body is larger than the limit gets <code>413 Payload Too Large</code>, and its handler
+is not called. When the client sends a <code>Content-Length</code> header that is already larger than
+the limit, the router refuses the request without reading the body. Without that header
+(for example a chunked upload), the router reads until the body passes the limit and then
+refuses it. WebSocket upgrade requests carry no body, so they are not affected.</p>
+<p>The limit comes from <code>DJANGORS_MAX_BODY_BYTES</code>, or from
+<code>DjangorsSettings::with_max_body_bytes</code>, when the application is built with
+<code>Djangors::new</code>. A limit set on the router with <code>Router::max_body_bytes</code> takes precedence
+over the settings value.</p>
+<pre class="playground"><code class="language-rust compile">use djangors_core::{Djangors, DjangorsSettings, Router};
+
+fn main() {
+    // Application-wide limit: 1 MiB for every route.
+    let settings = DjangorsSettings::new().with_max_body_bytes(1024 * 1024);
+
+    // This router keeps its own, smaller limit: 64 KiB.
+    let router = Router::new().max_body_bytes(64 * 1024);
+
+    let _app = Djangors::new(settings, router);
+}</code></pre>
+<blockquote class="blockquote-tag blockquote-tag-important">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v9.5A1.75 1.75 0 0 1 14.25 13H8.06l-2.573 2.573A1.458 1.458 0 0 1 3 14.543V13H1.75A1.75 1.75 0 0 1 0 11.25Zm1.75-.25a.25.25 0 0 0-.25.25v9.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h6.5a.25.25 0 0 0 .25-.25v-9.5a.25.25 0 0 0-.25-.25Zm7 2.25v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 9a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"></path></svg>Important</p>
+<p>The limit applies only to the body the router reads. Layers that buffer the body before
+the router sees it, such as <code>djangors_cache::IdempotencyLayer</code>, read the whole body first
+and are not covered. Set a body size limit at your reverse proxy as well, which protects
+those layers too.</p>
+</blockquote>
 <h2 id="djangorserror"><a class="header" href="#djangorserror">DjangorsError</a></h2>
 <p><a href="https://docs.rs/djangors_core/latest/djangors_core/error/index.html"><code>DjangorsError</code></a> is the single error
 type handlers return. Built-in variants map 1:1 to HTTP statuses, plus the application-defined
@@ -5068,8 +5360,8 @@ to write the body into your own buffer.</p>
 <p><strong>Internal errors stay private.</strong> <code>DjangorsError::Internal</code> and panics are always rendered
 as <code>"Internal Server Error"</code> by <code>ProblemDetailsRenderer</code>, and by the JSON and problem+json
 output of the default renderer whenever <code>debug</code> is off, so the real message, which might
-contain SQL or file paths, never reaches the client. The router doesn’t log that message
-for you; record it with <code>tracing::error!</code> where you create the error if you need it later.</p>
+contain SQL or file paths, never reaches the client. The router logs the original message
+once at <code>error</code> level via <code>tracing</code> before rendering the response.</p>
 <h2 id="paginator-and-cursor-primitives"><a class="header" href="#paginator-and-cursor-primitives">Paginator and cursor primitives</a></h2>
 <p><a href="https://docs.rs/djangors_core/latest/djangors_core/pagination/index.html"><code>Paginator</code></a> does the offset
 math. <code>total_items</code> is clamped to ≥ 0 and <code>page_size</code> must be &gt; 0; per the admin convention, 0 items
@@ -5455,6 +5747,190 @@ the cause rather than string-matching:</p>
 </tbody>
 </table>
 </div>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="passkeys-webauthn"><a class="header" href="#passkeys-webauthn">Passkeys (WebAuthn)</a></h1>
+<p>Passkeys let users sign in with a fingerprint, face, device PIN or security key instead
+of a password. The private key never leaves the user’s device. The server stores only a
+public key, so there is nothing to phish and nothing useful to leak.</p>
+<p>Djangors implements the server side of WebAuthn (the <em>relying party</em>) in pure Rust,
+without OpenSSL. Enable it with the <code>passkeys</code> feature:</p>
+<pre><code class="language-toml">djangors = { version = "0.11", features = ["passkeys"] }
+</code></pre>
+<h2 id="what-is-supported"><a class="header" href="#what-is-supported">What is supported</a></h2>
+<ul>
+<li><strong>Algorithms</strong>: ES256 (P-256) and EdDSA (Ed25519). Every current platform authenticator
+(Apple, Google Password Manager, Windows Hello, Android) and most security keys use one
+of these.</li>
+<li><strong>User verification is always required.</strong> A passkey sign-in proves the user unlocked
+the device, not just that someone touched it.</li>
+<li><strong>Discoverable credentials</strong> (<code>residentKey: "required"</code>), so users can sign in without
+typing a username.</li>
+<li><strong>Attestation <code>"none"</code></strong>: Djangors does not restrict which authenticator models are
+allowed, so it does not verify attestation statements.</li>
+<li><strong>Clone detection</strong>: if an authenticator’s signature counter stops increasing, sign-in
+is rejected with <code>CounterRegression</code>.</li>
+</ul>
+<p>Every check WebAuthn requires is enforced: the challenge, the origin, the relying party
+ID hash, the user-present and user-verified flags, the credential ID and user handle,
+and the signature. Malformed input returns an error and never panics.</p>
+<h2 id="the-relying-party"><a class="header" href="#the-relying-party">The relying party</a></h2>
+<pre class="playground"><code class="language-rust compile"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_auth::passkeys::RelyingParty;
+
+<span class="boring">fn example() {
+</span>// id: the domain passkeys are bound to. origin: the exact page origin.
+let rp = RelyingParty::new("example.com", "Example", "https://example.com")
+    .with_origin("https://app.example.com");
+<span class="boring">let _ = rp;
+</span><span class="boring">}
+</span><span class="boring">}</span></code></pre>
+<p>The ID must be the page’s domain or a parent of it. Passkeys created for <code>example.com</code>
+work on <code>app.example.com</code> only if that origin is listed with <code>with_origin</code>. For local
+development, use <code>RelyingParty::new("localhost", "Dev", "http://localhost:8000")</code>.
+Browsers allow WebAuthn on <code>localhost</code> without HTTPS.</p>
+<h2 id="registering-a-passkey"><a class="header" href="#registering-a-passkey">Registering a passkey</a></h2>
+<p>Registration takes two requests. Keep the state from the first request in the session
+and remove it when the second request uses it:</p>
+<pre class="playground"><code class="language-rust compile"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_auth::passkeys::{
+    finish_registration, start_registration, user_handle_for, PasskeyStore,
+    RegistrationResponse, RegistrationState, RelyingParty,
+};
+
+async fn begin(
+    rp: &amp;RelyingParty,
+    store: &amp;PasskeyStore,
+    session: &amp;djangors_sessions::Session,
+    user_id: i64,
+    username: &amp;str,
+) -&gt; Result&lt;serde_json::Value, djangors_core::DjangorsError&gt; {
+    let existing = store.for_user(user_id).await?;
+    let (options, state) =
+        start_registration(rp, &amp;user_handle_for(user_id), username, username, &amp;existing);
+    session.set("passkey_registration", state);
+    Ok(options) // send to the browser as JSON
+}
+
+async fn finish(
+    rp: &amp;RelyingParty,
+    store: &amp;PasskeyStore,
+    session: &amp;djangors_sessions::Session,
+    user_id: i64,
+    response: RegistrationResponse, // the browser's credential.toJSON()
+) -&gt; Result&lt;(), djangors_core::DjangorsError&gt; {
+    let state: RegistrationState = session
+        .get("passkey_registration")
+        .ok_or_else(|| djangors_core::DjangorsError::BadRequest("no registration in progress".into()))?;
+    session.remove("passkey_registration");
+    let passkey = finish_registration(rp, &amp;state, &amp;response)?;
+    store.add(user_id, &amp;passkey, "My device").await?;
+    Ok(())
+}
+<span class="boring">}</span></code></pre>
+<p><code>user_handle_for(user_id)</code> turns a numeric user ID into the opaque user handle that
+WebAuthn stores on the device. Passing the user’s existing passkeys in <code>exclude</code> stops
+the browser from registering the same authenticator twice.</p>
+<h2 id="signing-in"><a class="header" href="#signing-in">Signing in</a></h2>
+<pre class="playground"><code class="language-rust compile"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_auth::passkeys::{
+    finish_authentication, start_authentication, AuthenticationResponse,
+    AuthenticationState, PasskeyStore, RelyingParty,
+};
+
+async fn begin(
+    rp: &amp;RelyingParty,
+    session: &amp;djangors_sessions::Session,
+) -&gt; serde_json::Value {
+    // An empty list lets the browser offer any passkey for this site.
+    let (options, state) = start_authentication(rp, &amp;[]);
+    session.set("passkey_authentication", state);
+    options
+}
+
+/// Returns the signed-in user's ID.
+async fn finish(
+    rp: &amp;RelyingParty,
+    store: &amp;PasskeyStore,
+    session: &amp;djangors_sessions::Session,
+    response: AuthenticationResponse,
+) -&gt; Result&lt;i64, djangors_core::DjangorsError&gt; {
+    let state: AuthenticationState = session
+        .get("passkey_authentication")
+        .ok_or_else(|| djangors_core::DjangorsError::BadRequest("no sign-in in progress".into()))?;
+    session.remove("passkey_authentication");
+    let (user_id, passkey) = store
+        .find(&amp;response.credential_id()?)
+        .await?
+        .ok_or_else(|| djangors_core::DjangorsError::BadRequest("unknown passkey".into()))?;
+    let count = finish_authentication(rp, &amp;state, &amp;response, &amp;passkey)?;
+    store.update_sign_count(&amp;passkey.credential_id, count).await?;
+    Ok(user_id)
+}
+<span class="boring">}</span></code></pre>
+<p>After <code>finish</code> returns, load the user and call <code>djangors_auth::login(&amp;session, &amp;user)</code>,
+as with a password sign-in. <code>login</code> rotates the session key.</p>
+<p><code>PasskeyError</code> converts into <code>DjangorsError</code>, so <code>?</code> works in handlers. Verification
+failures become <code>400</code> with the code <code>passkey_invalid</code>. Storage failures become <code>500</code>.</p>
+<h2 id="storage"><a class="header" href="#storage">Storage</a></h2>
+<p><code>PasskeyStore</code> keeps passkeys in the <code>djangors_auth_passkey</code> table and creates the table
+on first use. It works on PostgreSQL and SQLite. Each row holds the owning user, the
+credential ID, the public key, the signature counter, a display name, and the creation
+and last-use times.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Method</th><th>What it does</th></tr>
+</thead>
+<tbody>
+<tr><td><code>add(user_id, &amp;passkey, name)</code></td><td>Saves a new passkey. A credential ID can be registered once.</td></tr>
+<tr><td><code>find(credential_id)</code></td><td>Returns the owning user ID and the passkey.</td></tr>
+<tr><td><code>for_user(user_id)</code></td><td>All of a user’s passkeys, for a settings page or for <code>exclude</code>.</td></tr>
+<tr><td><code>update_sign_count(credential_id, count)</code></td><td>Records a sign-in.</td></tr>
+<tr><td><code>remove(user_id, credential_id)</code></td><td>Deletes a passkey only if it belongs to that user.</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="the-browser-side"><a class="header" href="#the-browser-side">The browser side</a></h2>
+<p>Modern browsers convert between WebAuthn objects and JSON for you:</p>
+<pre><code class="language-javascript">// Registration
+const options = await (await fetch("/passkeys/register/begin", { method: "POST" })).json();
+const credential = await navigator.credentials.create({
+  publicKey: PublicKeyCredential.parseCreationOptionsFromJSON(options.publicKey),
+});
+await fetch("/passkeys/register/finish", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(credential.toJSON()),
+});
+
+// Sign-in
+const request = await (await fetch("/passkeys/login/begin", { method: "POST" })).json();
+const assertion = await navigator.credentials.get({
+  publicKey: PublicKeyCredential.parseRequestOptionsFromJSON(request.publicKey),
+});
+await fetch("/passkeys/login/finish", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(assertion.toJSON()),
+});
+</code></pre>
+<p><code>RegistrationResponse</code> and <code>AuthenticationResponse</code> deserialize the output of
+<code>toJSON()</code> directly. For older browsers without <code>parseCreationOptionsFromJSON</code>, decode
+the base64url <code>challenge</code>, <code>user.id</code> and credential <code>id</code> fields to <code>ArrayBuffer</code>s
+yourself.</p>
+<h2 id="security-notes"><a class="header" href="#security-notes">Security notes</a></h2>
+<ul>
+<li>Serve the site over HTTPS. Browsers refuse WebAuthn on plain HTTP except on
+<code>localhost</code>.</li>
+<li>Use each challenge once. Remove the state from the session before verifying, as in
+the examples, so a failed attempt can’t be retried with the same challenge.</li>
+<li>Protect the begin and finish endpoints with CSRF protection like any other POST.</li>
+<li>Passkeys can replace passwords or sit alongside them. Let users register more than
+one passkey, so losing a device doesn’t lock them out.</li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="rest-framework"><a class="header" href="#rest-framework">REST Framework</a></h1>
 <p><code>djangors-rest</code> is the API layer: ViewSets that turn a model into CRUD routes,
@@ -6822,15 +7298,52 @@ async fn example(db: &amp;Database) -&gt; Result&lt;(), djangors_orm::OrmError&g
 </div>
 <p>The sequence number <code>n</code> is shared by all factories of a model and increases with every
 <code>build</code>, so unique columns don’t collide.</p>
-<p>Relation fields default to ID <code>1</code> because the factory doesn’t create related rows.
-Unless that row exists, <code>create</code> fails with a foreign-key error, so create the parent
-first and pass its ID with <code>.with_&lt;field&gt;_id(id)</code>:</p>
+<p><code>build</code> still uses ID <code>1</code> for relation fields. <code>create</code> and <code>create_many</code> require each
+<code>ForeignKey</code> or <code>OneToOne</code> to be set explicitly; otherwise they return an <code>InvalidQuery</code>
+that names the missing <code>.with_&lt;field&gt;_id(..)</code> call. Create the parent first and pass its ID:</p>
 <pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>let author = Author::factory().create(&amp;db).await?;
 let book = Book::factory().with_author_id(author.id).create(&amp;db).await?;
 <span class="boring">}</span></code></pre>
 <p><code>Factory</code> is also re-exported as <code>djangors_test::Factory</code>.</p>
+<h3 id="seeding-a-development-database"><a class="header" href="#seeding-a-development-database">Seeding a development database</a></h3>
+<p><code>dj seed</code> fills a development database in one command, like <code>rails db:seed</code> or a Laravel
+seeder. There is no special seed format. The seed script is an ordinary binary at
+<code>src/bin/seed.rs</code>, which <code>dj new</code> creates for you. It connects with <code>DATABASE_URL</code>, so run
+<code>dj seed</code> with the same environment your app uses:</p>
+<pre class="playground"><code class="language-rust illustrative">// src/bin/seed.rs
+use djangors_db::config::DatabaseConfig;
+use djangors_db::Database;
+use my_project::blog::Article;
+use my_project::blog::Author;
+
+#[tokio::main]
+async fn main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+    let url = std::env::var("DATABASE_URL")?;
+    let db = Database::connect(&amp;DatabaseConfig::new(url)).await?;
+
+    // Every field has a `with_&lt;field&gt;` setter; `Author` has an `email` field here.
+    let author = Author::factory().with_email("ada@example.com").create(&amp;db).await?;
+    Article::factory()
+        .with_author_id(author.id)
+        .create_many(&amp;db, 20)
+        .await?;
+
+    println!("Seeded 1 author and 20 articles");
+    Ok(())
+}</code></pre>
+<p>The seed binary is a separate crate, so it can only use code in the project’s library target.
+<code>dj new</code> sets that up: app modules are declared in <code>src/lib.rs</code> (<code>pub mod blog;</code>), and both
+<code>src/main.rs</code> and <code>src/bin/seed.rs</code> import them with <code>use my_project::...</code>. <code>dj new-app</code> and
+<code>dj generate resource</code> tell you to add <code>pub mod &lt;app&gt;;</code> to <code>src/lib.rs</code> when it exists.</p>
+<p>A project created before 0.11 declares its modules in <code>src/main.rs</code>, where the seed binary
+can’t reach them. Move those <code>mod</code> lines to a new <code>src/lib.rs</code> as <code>pub mod</code>, and replace them
+in <code>main.rs</code> with <code>use my_project::...</code>.</p>
+<p><code>dj seed</code> runs <code>cargo run --bin seed</code> and exits with its status. It refuses to run when
+<code>DJANGORS_DEBUG=false</code>, so development data doesn’t reach a production database by accident.
+Pass <code>dj seed --force</code> to override that check on purpose. Seed scripts should be safe to run
+more than once: check for existing rows, or truncate tables you own, before inserting.</p>
 <hr>
 <h2 id="2-real-socket-integration-testing"><a class="header" href="#2-real-socket-integration-testing">2. Real-Socket Integration Testing</a></h2>
 <p>For full-stack integration testing (including Tower middleware layers, real HTTP headers, cookie handling, and graceful shutdown), test suites bind a local TCP socket on port <code>0</code>.</p>
@@ -7041,6 +7554,15 @@ CMD ["/app/server"]
 }
 <span class="boring">}</span></code></pre>
 <hr>
+<h2 id="request-body-limits"><a class="header" href="#request-body-limits">Request Body Limits</a></h2>
+<p>The router refuses request bodies larger than 10 MiB with <code>413 Payload Too Large</code>. Change the
+limit with the <code>DJANGORS_MAX_BODY_BYTES</code> environment variable (a byte count, for example
+<code>DJANGORS_MAX_BODY_BYTES=2097152</code> for 2 MiB), or on the router itself with
+<code>Router::max_body_bytes</code>. See <a href="#request-size-limit">Request size limit</a>.</p>
+<p>Also set a body limit at the reverse proxy in front of the application (for example nginx’s
+<code>client_max_body_size</code>). The router’s limit does not cover layers that buffer the body before
+the router runs.</p>
+<hr>
 <h2 id="binary-size--cargo-feature-flags"><a class="header" href="#binary-size--cargo-feature-flags">Binary Size &amp; Cargo Feature Flags</a></h2>
 <p>Projects generated by <code>dj new</code> include a production-tuned <code>[profile.release]</code> in <code>Cargo.toml</code>:</p>
 <pre><code class="language-toml">[profile.release]
@@ -7050,7 +7572,7 @@ codegen-units = 1
 </code></pre>
 <p>When depending on the <code>djangors</code> facade crate, all subsystems and both database backends (<code>postgres</code> and <code>sqlite</code>) are enabled by default. To minimize compile times and binary size in production, disable default features and opt into only the database backend and subsystems your application uses:</p>
 <pre><code class="language-toml">[dependencies]
-djangors = { version = "0.9", default-features = false, features = [
+djangors = { version = "0.11", default-features = false, features = [
     "postgres",   # or "sqlite" — drops libsqlite3-sys when only "postgres" is enabled
     "migrations",
     "rest",
@@ -7549,6 +8071,27 @@ field’s declared type (e.g. <code>MYAPP_TIMEOUT_SECS=not-a-number</code>).</li
 <p>Call <code>load()</code> once at process startup (in <code>main()</code>, before the server starts accepting
 connections) and treat any <code>Err</code> as a hard failure to boot. This is the same “fail fast on bad
 config” principle <code>dj check --deploy</code> already applies to the framework’s own settings.</p>
+<h2 id="framework-settings-djangorssettings"><a class="header" href="#framework-settings-djangorssettings">Framework settings (<code>DjangorsSettings</code>)</a></h2>
+<p><code>DjangorsSettings</code> holds the framework’s own settings. Each one can be overridden with an
+environment variable when the settings are loaded with <code>DjangorsSettings::from_env()</code> or
+<code>DjangorsSettings::load()</code>. A malformed value is reported as a warning and the default is kept.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Setting</th><th>Environment variable</th><th>Default</th></tr>
+</thead>
+<tbody>
+<tr><td><code>debug</code></td><td><code>DJANGORS_DEBUG</code></td><td><code>true</code></td></tr>
+<tr><td><code>allowed_hosts</code></td><td><code>DJANGORS_ALLOWED_HOSTS</code></td><td><code>127.0.0.1,localhost</code></td></tr>
+<tr><td><code>secret_key</code></td><td><code>DJANGORS_SECRET_KEY</code></td><td>empty</td></tr>
+<tr><td><code>host</code></td><td><code>DJANGORS_HOST</code></td><td><code>127.0.0.1</code></td></tr>
+<tr><td><code>port</code></td><td><code>DJANGORS_PORT</code></td><td><code>8000</code></td></tr>
+<tr><td><code>max_body_bytes</code></td><td><code>DJANGORS_MAX_BODY_BYTES</code></td><td><code>10485760</code> (10 MiB)</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>max_body_bytes</code> is the largest request body the router will read. See
+<a href="#request-size-limit">Request size limit</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="pdf-generation-djangors-pdf"><a class="header" href="#pdf-generation-djangors-pdf">PDF Generation (<code>djangors-pdf</code>)</a></h1>
 <p><code>djangors-pdf</code> is the Djangors equivalent of <code>weasyprint</code>, but built differently on purpose.
@@ -8275,11 +8818,11 @@ let db = djangors_db::Database::connect(&amp;config).await?;
 <h3 id="cargo-feature-flags-postgres-and-sqlite"><a class="header" href="#cargo-feature-flags-postgres-and-sqlite">Cargo Feature Flags (<code>postgres</code> and <code>sqlite</code>)</a></h3>
 <p>At compile time, <code>djangors-db</code> (and the <code>djangors</code> facade crate) gate each SQL driver behind its own Cargo feature flag (<code>postgres</code> and <code>sqlite</code>, both enabled by default). If your production deployment targets only one database engine, disable default features and enable only the backend you need to drop the unused driver (such as bundled <code>libsqlite3-sys</code> or <code>sqlx-postgres</code>) from your dependency graph and release binary:</p>
 <pre><code class="language-toml"># PostgreSQL-only build (drops sqlx-sqlite and libsqlite3-sys)
-djangors = { version = "0.9", default-features = false, features = ["postgres", "rest"] }
+djangors = { version = "0.11", default-features = false, features = ["postgres", "rest"] }
 
 # Or when depending on djangors-db / djangors-orm directly:
-djangors-db = { version = "0.9", default-features = false, features = ["postgres"] }
-djangors-orm = { version = "0.9", default-features = false, features = ["postgres"] }
+djangors-db = { version = "0.11", default-features = false, features = ["postgres"] }
+djangors-orm = { version = "0.11", default-features = false, features = ["postgres"] }
 </code></pre>
 <blockquote class="blockquote-tag blockquote-tag-note">
 <p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
@@ -8998,8 +9541,10 @@ try {
 </code></pre>
 <p><code>ClientOptions.fetch</code> lets you pass your own <code>fetch</code> implementation, for example in
 tests or older runtimes.</p>
-<p><strong>Check the paths.</strong> The generator assumes each model is served at
-<code>/api/&lt;plural&gt;/</code>, the layout <code>dj generate resource</code> produces. If you mount a ViewSet
+<p><strong>Check the paths.</strong> By default, the generator assumes each model is served at
+<code>/api/&lt;plural&gt;/</code>, the layout <code>dj generate resource</code> produces. Set <code>--api-prefix &lt;PREFIX&gt;</code>
+to change the prefix and repeat <code>--model &lt;NAME&gt;</code> to include only matching Rust struct names.
+If you mount a ViewSet
 somewhere else, or don’t expose a model over REST at all, edit the generated paths or
 delete those methods. Regenerate the client whenever your models change; the file
 starts with a “do not edit” header for that reason.</p>
@@ -9274,8 +9819,27 @@ pub fn routes(groups: Groups) -&gt; Router {
 }
 <span class="boring">}</span></code></pre>
 <p><code>Groups</code> lives in one process. If you run several instances behind a load balancer,
-each one only reaches its own clients; send the message to every instance (for example
-through Postgres <code>LISTEN/NOTIFY</code> or Redis) and let each one broadcast locally.</p>
+each one only reaches its own clients unless you connect them with <code>PgGroups</code>. It sends
+every message through Postgres <code>NOTIFY</code> and each instance delivers what it hears to its
+local <code>Groups</code>:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_core::{DjangorsError, Groups, PgGroups};
+use djangors_orm::djangors_db::Database;
+
+async fn start_groups(db: &amp;Database) -&gt; Result&lt;PgGroups, DjangorsError&gt; {
+    // Every instance listens on the same channel with its own local `Groups`.
+    let groups = Groups::new();
+    PgGroups::start(db, groups, "app_events").await
+}
+
+// Any instance, including the one that sends:
+// pg_groups.send("notifications", "new order").await?;
+<span class="boring">}</span></code></pre>
+<p>The sending instance also receives its own message through <code>LISTEN</code>, so call sites use only
+<code>send</code>. <code>PgGroups</code> needs a PostgreSQL database; it returns an error on SQLite. Each started
+<code>PgGroups</code> holds one connection from the pool for its <code>LISTEN</code>. Payloads must be under 8000
+bytes, and larger messages return an error instead of being truncated.</p>
 <h2 id="cross-origin-protection"><a class="header" href="#cross-origin-protection">Cross-origin protection</a></h2>
 <p>Browsers attach the user’s cookies to a WebSocket handshake even when another website
 opens it, and CSRF protection doesn’t run on the <code>GET</code> that starts a WebSocket. A
@@ -10628,6 +11192,22 @@ let router = djangors_core::Router::new()
     .sse("/events/live", events_live)
     .post("/events", publish_event);
 <span class="boring">}</span></code></pre>
+<h3 id="across-several-servers-postgresql"><a class="header" href="#across-several-servers-postgresql">Across several servers (PostgreSQL)</a></h3>
+<p><code>Groups</code> only reaches subscribers in the same process. When you run several instances,
+use <code>PgGroups</code> (the <code>postgres</code> feature) so that a <code>send</code> on one instance reaches the SSE
+clients connected to every instance. Each instance starts a <code>PgGroups</code> on the same channel
+name; <code>send</code> publishes through Postgres <code>LISTEN</code>/<code>NOTIFY</code>:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_core::{DjangorsError, Groups, PgGroups};
+
+async fn publish_event(pg_groups: &amp;PgGroups, body: String) -&gt; Result&lt;(), DjangorsError&gt; {
+    // Reaches `live-events` subscribers on every instance, this one included.
+    pg_groups.send("live-events", &amp;body).await
+}
+<span class="boring">}</span></code></pre>
+<p>The message is delivered back to the sender through <code>LISTEN</code>, so do not also call
+<code>Groups::send</code> for the same message. Messages larger than 8000 bytes are rejected.</p>
 <h3 id="semantics-to-keep-in-mind"><a class="header" href="#semantics-to-keep-in-mind">Semantics to keep in mind</a></h3>
 <ul>
 <li><strong>Fixed buffer</strong>: each channel buffers up to its capacity. A slow subscriber that falls behind
@@ -10673,35 +11253,31 @@ its timing and a warning for each repeated one.</p>
 <h3 id="1-enable-the-feature"><a class="header" href="#1-enable-the-feature">1. Enable the feature</a></h3>
 <p>The panel is behind the <code>debug-panel</code> Cargo feature, which is off by default:</p>
 <pre><code class="language-toml">[dependencies]
-djangors = { version = "0.9", features = ["debug-panel"] }
+djangors = { version = "0.11", features = ["debug-panel"] }
 </code></pre>
-<h3 id="2-wrap-your-router-in-development-only"><a class="header" href="#2-wrap-your-router-in-development-only">2. Wrap your router, in development only</a></h3>
-<p><code>debug_panel_layer()</code> is a Tower layer. Wrap your <code>RouterService</code> with it and serve
-the result with <code>serve_service</code>:</p>
+<h3 id="2-wrap-your-router-with-settings"><a class="header" href="#2-wrap-your-router-with-settings">2. Wrap your router with settings</a></h3>
+<p><code>DebugPanelLayer::for_settings(&amp;settings)</code> enables the panel only when <code>settings.debug</code>
+is true. Wrap your <code>RouterService</code> with it and serve the result with <code>serve_service</code>:</p>
 <pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>use djangors_core::{debug_panel_layer, Djangors, DjangorsSettings, Router};
+</span>use djangors_core::{DebugPanelLayer, Djangors, DjangorsSettings, Router};
 use djangors_core::router::RouterService;
 use tower::Layer;
 
 async fn serve(settings: DjangorsSettings, router: Router) -&gt; Result&lt;(), djangors_core::DjangorsError&gt; {
-    let debug = settings.debug;
-    let service = RouterService::new(router.clone(), debug);
+    let panel = DebugPanelLayer::for_settings(&amp;settings);
+    let service = RouterService::new(router.clone(), settings.debug);
     let app = Djangors::new(settings, router);
     let listener = app.bind().await?;
-
-    if debug {
-        app.serve_service(listener, debug_panel_layer().layer(service)).await
-    } else {
-        app.serve_service(listener, service).await
-    }
+    app.serve_service(listener, panel.layer(service)).await
 }
 <span class="boring">}</span></code></pre>
 <blockquote>
 <p><strong>Never enable the panel in production.</strong> It shows the SQL text of every query to
-whoever loads the page. The layer doesn’t check the <code>debug</code> setting itself, so gate
-it on <code>settings.debug</code> as above, or only enable the <code>debug-panel</code> feature in
-development builds.</p>
+whoever loads the page. <code>for_settings</code> turns the panel off completely (no headers, no
+toolbar, no query recording) when <code>debug</code> is false. A panel built with
+<code>debug_panel_layer()</code> or <code>DebugPanelLayer::new()</code> doesn’t know your settings, so it logs
+a warning at startup unless <code>DJANGORS_DEBUG</code> is <code>true</code> or <code>1</code>.</p>
 </blockquote>
 <p>For JSON APIs you can keep the headers and skip the HTML toolbar with
 <code>DebugPanelLayer::new().with_html_injection(false)</code>.</p>
@@ -10736,12 +11312,268 @@ async fn check_query_budget(db: &amp;Database) {
 <code>count</code>, and <code>total_duration_micros</code>). Outside <code>with_query_log</code>, recording costs
 almost nothing: one task-local lookup per query.</p>
 <div style="break-before: page; page-break-before: always;"></div>
-<h1 id="how-to-internationalize-templates"><a class="header" href="#how-to-internationalize-templates">How to Internationalize Templates</a></h1>
+<h1 id="how-to-use-htmx"><a class="header" href="#how-to-use-htmx">How to Use htmx</a></h1>
 <h2 id="problem-6"><a class="header" href="#problem-6">Problem</a></h2>
-<p>You want to translate text strings in HTML templates based on the user’s preferred locale or HTTP <code>Accept-Language</code> header.</p>
+<p>You use <a href="https://htmx.org">htmx</a> to update parts of a page, and want one view to return
+either a small HTML fragment (for htmx) or the full page (for a normal visit), plus a way
+to send htmx instructions such as “redirect” or “trigger this event” from the server.</p>
 <h2 id="solution-6"><a class="header" href="#solution-6">Solution</a></h2>
-<p>Use <code>djangors_i18n::Locales</code> to load Fluent (<code>.ftl</code>) catalogs. Pass <code>locales_value(Arc::new(locales))</code> and the resolved locale code into the MiniJinja context, and use the <code>trans</code> template filter.</p>
+<p><code>Request</code> can tell you whether htmx sent the request, and <code>Response</code> has builders for
+htmx’s response headers. This is the Djangors equivalent of <code>django-htmx</code>.</p>
+<pre class="playground"><code class="language-rust compile"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_core::{DjangorsError, PathParams, Request, Response, StatusCode};
+
+async fn search(req: Request, _params: PathParams) -&gt; Result&lt;Response, DjangorsError&gt; {
+    let results = "&lt;ul&gt;&lt;li&gt;First result&lt;/li&gt;&lt;/ul&gt;";
+    let response = if req.is_htmx() {
+        // htmx swaps this fragment into the element named by `hx-target`.
+        Response::html(StatusCode::OK, results)
+    } else {
+        Response::html(
+            StatusCode::OK,
+            format!("&lt;html&gt;&lt;body&gt;&lt;h1&gt;Search&lt;/h1&gt;{results}&lt;/body&gt;&lt;/html&gt;"),
+        )
+    };
+    // The same URL returns two different bodies, so tell caches to keep them apart.
+    Ok(response.header("Vary", "HX-Request"))
+}
+
+async fn save(_req: Request, _params: PathParams) -&gt; Result&lt;Response, DjangorsError&gt; {
+    // ... save the form ...
+    Ok(Response::new(StatusCode::NO_CONTENT)
+        .hx_trigger("saved")       // fire a `saved` event in the browser
+        .hx_push_url("/items/42")) // update the address bar
+}
+<span class="boring">}</span></code></pre>
+<p><strong>Always add <code>Vary: HX-Request</code></strong> when a URL answers htmx and normal requests
+differently. Without it, a cache (including Djangors’ own
+<a href="#how-to-cache-a-view-response"><code>CacheLayer</code></a>) or the browser’s back button can show the bare fragment
+as if it were the whole page.</p>
+<h2 id="request-helpers"><a class="header" href="#request-helpers">Request helpers</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th style="text-align: left">Method</th><th style="text-align: left">Header</th><th style="text-align: left">Returns</th></tr>
+</thead>
+<tbody>
+<tr><td style="text-align: left"><code>req.is_htmx()</code></td><td style="text-align: left"><code>HX-Request</code></td><td style="text-align: left"><code>true</code> for requests sent by htmx</td></tr>
+<tr><td style="text-align: left"><code>req.is_htmx_boosted()</code></td><td style="text-align: left"><code>HX-Boosted</code></td><td style="text-align: left"><code>true</code> for links and forms using <code>hx-boost</code></td></tr>
+<tr><td style="text-align: left"><code>req.htmx_target()</code></td><td style="text-align: left"><code>HX-Target</code></td><td style="text-align: left"><code>id</code> of the element being updated</td></tr>
+<tr><td style="text-align: left"><code>req.htmx_trigger()</code></td><td style="text-align: left"><code>HX-Trigger</code></td><td style="text-align: left"><code>id</code> of the element that triggered the request</td></tr>
+<tr><td style="text-align: left"><code>req.htmx_current_url()</code></td><td style="text-align: left"><code>HX-Current-URL</code></td><td style="text-align: left">The page URL in the browser</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="response-builders"><a class="header" href="#response-builders">Response builders</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th style="text-align: left">Method</th><th style="text-align: left">Header</th><th style="text-align: left">Effect in the browser</th></tr>
+</thead>
+<tbody>
+<tr><td style="text-align: left"><code>.hx_trigger("event")</code></td><td style="text-align: left"><code>HX-Trigger</code></td><td style="text-align: left">Fires a client-side event</td></tr>
+<tr><td style="text-align: left"><code>.hx_redirect("/url")</code></td><td style="text-align: left"><code>HX-Redirect</code></td><td style="text-align: left">Full-page redirect</td></tr>
+<tr><td style="text-align: left"><code>.hx_refresh()</code></td><td style="text-align: left"><code>HX-Refresh: true</code></td><td style="text-align: left">Reloads the page</td></tr>
+<tr><td style="text-align: left"><code>.hx_push_url("/url")</code></td><td style="text-align: left"><code>HX-Push-Url</code></td><td style="text-align: left">Adds the URL to browser history</td></tr>
+<tr><td style="text-align: left"><code>.hx_retarget("#css")</code></td><td style="text-align: left"><code>HX-Retarget</code></td><td style="text-align: left">Swaps into a different element</td></tr>
+<tr><td style="text-align: left"><code>.hx_reswap("outerHTML")</code></td><td style="text-align: left"><code>HX-Reswap</code></td><td style="text-align: left">Changes how the content is swapped in</td></tr>
+</tbody>
+</table>
+</div>
+<p>A value that isn’t allowed in an HTTP header, such as one containing a newline, is
+skipped with a warning in the logs instead of crashing the request.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="how-to-make-payments-and-other-posts-safe-to-retry"><a class="header" href="#how-to-make-payments-and-other-posts-safe-to-retry">How to Make Payments and Other POSTs Safe to Retry</a></h1>
+<h2 id="problem-7"><a class="header" href="#problem-7">Problem</a></h2>
+<p>A client sends “charge this card” and the connection drops before the response arrives.
+The client can’t tell whether the charge happened. If it retries, the customer may be
+charged twice; if it doesn’t, the order may never be paid.</p>
+<h2 id="solution-7"><a class="header" href="#solution-7">Solution</a></h2>
+<p>Have clients send an <code>Idempotency-Key</code> header, a unique value per operation such as a
+UUID, and wrap your app in <code>IdempotencyLayer</code>. This is the scheme Stripe’s API uses:</p>
+<ul>
+<li>The first request with a key runs normally, and its response is stored.</li>
+<li>A retry with the same key and the same body gets the stored response back, with the
+header <code>Idempotent-Replayed: true</code>. The handler does not run again.</li>
+<li>A retry that arrives while the first request is still running gets <code>409 Conflict</code>.</li>
+<li>The same key with a different body gets <code>422</code>: that’s a client bug, not a retry.</li>
+<li>A <code>5xx</code> response is not stored, so the client can retry an operation that failed.</li>
+</ul>
+<p>Only <code>POST</code>, <code>PUT</code>, <code>PATCH</code>, and <code>DELETE</code> requests that carry the header are affected;
+everything else passes straight through.</p>
+<pre class="playground"><code class="language-rust compile"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use std::sync::Arc;
+use std::time::Duration;
+use djangors_cache::{DatabaseCache, IdempotencyLayer};
+use djangors_core::router::RouterService;
+use djangors_core::{Djangors, DjangorsError, DjangorsSettings, Router};
+use djangors_db::Database;
+use tower::Layer;
+
+async fn serve(settings: DjangorsSettings, router: Router, db: Database) -&gt; Result&lt;(), DjangorsError&gt; {
+    let service = RouterService::new(router.clone(), settings.debug);
+    // Keep records for 24 hours, in the database so every app instance shares them.
+    let idempotent = IdempotencyLayer::new(Arc::new(DatabaseCache::new(db)), Duration::from_secs(86_400))
+        .layer(service);
+
+    let app = Djangors::new(settings, router);
+    let listener = app.bind().await?;
+    app.serve_service(listener, idempotent).await
+}
+<span class="boring">}</span></code></pre>
+<p>From the client:</p>
+<pre><code class="language-bash">curl -X POST https://example.com/api/payments \
+  -H "Idempotency-Key: 3f1c9a52-6b8e-4c11-9d0f-2a7e5b4c8d10" \
+  -d '{"amount": 5000}'
+</code></pre>
+<h2 id="choosing-a-cache"><a class="header" href="#choosing-a-cache">Choosing a cache</a></h2>
+<p>The cache must be shared by every instance of your app, or a retry that reaches a
+different instance runs again. Use <code>DatabaseCache</code> or <code>RedisCache</code> in production;
+<code>InMemoryCache</code> is only safe with a single process. All three implement the atomic
+“store if absent” operation (<code>Cache::add</code>) the layer needs. If the cache can’t be reached,
+the layer answers <code>503</code> without running the handler, so duplicate protection is never
+silently skipped.</p>
+<h2 id="whose-key-is-it"><a class="header" href="#whose-key-is-it">Whose key is it?</a></h2>
+<p>Keys are scoped to the method, the path, and the caller, so two users who happen to send
+the same key never see each other’s responses. By default the caller is identified by
+the <code>Authorization</code> and <code>Cookie</code> headers. If other cookies change between retries (an
+analytics cookie, say), a retry would look like a different caller and run again. In that
+case scope by just the session cookie, which the server issues and signs:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>let layer = IdempotencyLayer::new(cache, Duration::from_secs(86_400)).with_scope(|parts| {
+    let cookies = parts.headers.get("cookie").and_then(|v| v.to_str().ok()).unwrap_or("");
+    cookies
+        .split(';')
+        .map(str::trim)
+        .find(|c| c.starts_with("djangors_sessionid="))
+        .unwrap_or("")
+        .as_bytes()
+        .to_vec()
+});
+<span class="boring">}</span></code></pre>
+<p>Never scope by a header the client sets freely, such as a user ID sent by the client:
+anyone could send someone else’s ID and receive their stored responses.</p>
+<p>Requests without the scoped credential share one scope. An anonymous visitor with no
+session cookie has an empty session value, so all anonymous callers using the same key
+and path see each other’s stored responses. Require login for endpoints that use
+idempotency keys, or scope by something every caller has, so that a missing credential
+never becomes a shared scope.</p>
+<h2 id="what-is-replayed"><a class="header" href="#what-is-replayed">What is replayed</a></h2>
+<p>The stored response keeps its status code, body, <code>Content-Type</code>, and <code>Location</code>. Other
+headers, including <code>Set-Cookie</code>, are not replayed.</p>
+<h2 id="body-size-limit"><a class="header" href="#body-size-limit">Body size limit</a></h2>
+<p>The layer reads the whole request body to compare retries, so it applies its own limit:
+10 MiB by default. A larger body gets <code>413 Payload Too Large</code> before your handler runs,
+whether or not it carries an <code>Idempotency-Key</code>. A <code>Content-Length</code> over the limit is
+refused without reading the body. Change the limit with <code>.max_body_bytes(...)</code>:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>let idempotent = IdempotencyLayer::new(cache, Duration::from_secs(86_400))
+    .max_body_bytes(1024 * 1024);
+<span class="boring">}</span></code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="how-to-export-traces-with-opentelemetry"><a class="header" href="#how-to-export-traces-with-opentelemetry">How to Export Traces with OpenTelemetry</a></h1>
+<h2 id="problem-8"><a class="header" href="#problem-8">Problem</a></h2>
+<p>You want to see where time goes in a request: which handler ran, which SQL
+statements it executed, and how long each took. You want those traces in a
+tracing backend such as Jaeger, Grafana Tempo, Honeycomb, or Datadog.</p>
+<h2 id="solution-8"><a class="header" href="#solution-8">Solution</a></h2>
+<p>Enable the <code>otel</code> Cargo feature and call <code>djangors_core::logging::init_otel_logging</code>
+once at the top of <code>main()</code>. The function keeps the production JSON log output and
+also sends every span to an OpenTelemetry collector over OTLP/HTTP.</p>
+<p>The feature is off by default. Builds without it do not compile or link any
+OpenTelemetry code.</p>
+<h2 id="enable-the-feature"><a class="header" href="#enable-the-feature">Enable the feature</a></h2>
+<p>Turn on <code>otel</code> on the facade crate:</p>
+<pre><code class="language-toml">[dependencies]
+djangors = { version = "0.11", features = ["otel"] }
+</code></pre>
+<p>If you depend on <code>djangors-core</code> directly, enable <code>otel</code> there instead.</p>
 <h2 id="code-example-6"><a class="header" href="#code-example-6">Code Example</a></h2>
+<pre class="playground"><code class="language-rust illustrative">use djangors::core::logging::init_otel_logging;
+
+#[tokio::main]
+async fn main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+    // Keep the guard alive for the whole process. Dropping it flushes queued spans.
+    let _otel = init_otel_logging("my-service")?;
+
+    // ... build the app and serve requests as usual.
+    Ok(())
+}</code></pre>
+<p>The guard must stay alive until shutdown. If you drop it early, spans recorded
+afterwards are not exported.</p>
+<h2 id="configuration"><a class="header" href="#configuration">Configuration</a></h2>
+<p>Export is configured with the standard OpenTelemetry environment variables:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Variable</th><th>Purpose</th><th>Default</th></tr>
+</thead>
+<tbody>
+<tr><td><code>OTEL_EXPORTER_OTLP_ENDPOINT</code></td><td>Collector base URL. <code>/v1/traces</code> is appended.</td><td><code>http://localhost:4318</code></td></tr>
+<tr><td><code>OTEL_EXPORTER_OTLP_TRACES_ENDPOINT</code></td><td>Full traces URL. Overrides the base endpoint.</td><td>unset</td></tr>
+<tr><td><code>OTEL_EXPORTER_OTLP_HEADERS</code></td><td>Extra headers, such as an API key (<code>key=value,key2=value2</code>).</td><td>unset</td></tr>
+<tr><td><code>OTEL_EXPORTER_OTLP_TRACES_TIMEOUT</code></td><td>Export timeout in milliseconds.</td><td>10000</td></tr>
+<tr><td><code>RUST_LOG</code></td><td>Log and span filter, as with the other logging setups.</td><td><code>info,djangors_core=info,opentelemetry=off,opentelemetry_sdk=off</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>The <code>service_name</code> argument becomes the <code>service.name</code> resource attribute. Use it
+to tell services apart in the backend.</p>
+<p>The default filter turns off the OpenTelemetry SDK’s own internal logs. Without
+this, a missing collector would produce a steady stream of export errors. Set
+<code>RUST_LOG</code> explicitly if you want to see them.</p>
+<p>Export never panics. If the collector is down, the SDK reports the failure and
+drops that batch, and the application keeps serving requests.</p>
+<h2 id="running-a-local-collector"><a class="header" href="#running-a-local-collector">Running a local collector</a></h2>
+<p>Jaeger’s all-in-one image accepts OTLP over HTTP on port 4318 and serves its UI
+on port 16686:</p>
+<pre><code class="language-bash">docker run --rm -p 4318:4318 -p 16686:16686 jaegertracing/all-in-one:latest
+</code></pre>
+<p>Start your application with the default endpoint, then open
+<code>http://localhost:16686</code> and select your <code>service_name</code>.</p>
+<h2 id="what-spans-exist"><a class="header" href="#what-spans-exist">What spans exist</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Span</th><th>Created by</th><th>Fields</th></tr>
+</thead>
+<tbody>
+<tr><td><code>request</code></td><td>Every request handled by the router (<code>Router::handle_dispatch</code>)</td><td><code>method</code>, <code>path</code></td></tr>
+<tr><td><code>sql</code></td><td>Every query run through <code>Conn</code> (<code>fetch_all</code>, <code>fetch_one</code>, <code>fetch_optional</code>, <code>execute</code>)</td><td><code>statement</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>The <code>sql</code> span records the SQL text only. Bound parameter values are never
+recorded, so secrets and personal data do not leave the process through traces.
+Queries you write inside a handler run under the <code>request</code> span, and the <code>sql</code>
+spans appear as its children.</p>
+<p>The <code>request</code> and <code>sql</code> spans are plain <code>tracing</code> spans. They cost almost nothing
+when no subscriber is installed, so they are present in every build. The <code>otel</code>
+feature only adds the exporter.</p>
+<p>Your own <code>tracing::info_span!</code> and <code>#[tracing::instrument]</code> spans nest inside
+them automatically.</p>
+<h2 id="notes"><a class="header" href="#notes">Notes</a></h2>
+<ul>
+<li>The exporter uses HTTP with protobuf encoding and rustls with the <code>ring</code> crypto
+provider, so <code>https://</code> endpoints work. It needs no OpenSSL, C toolchain or gRPC
+stack. <code>init_otel_logging</code> installs <code>ring</code> as the process-wide rustls provider
+unless your application installed one first.</li>
+<li>Traces are batched. Spans recorded just before a crash may not be exported.
+Call <code>init_otel_logging</code> once and keep the guard until shutdown.</li>
+<li>Calling <code>init_otel_logging</code> a second time returns a guard without installing a
+second subscriber. The first call’s configuration stays in effect.</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="how-to-internationalize-templates"><a class="header" href="#how-to-internationalize-templates">How to Internationalize Templates</a></h1>
+<h2 id="problem-9"><a class="header" href="#problem-9">Problem</a></h2>
+<p>You want to translate text strings in HTML templates based on the user’s preferred locale or HTTP <code>Accept-Language</code> header.</p>
+<h2 id="solution-9"><a class="header" href="#solution-9">Solution</a></h2>
+<p>Use <code>djangors_i18n::Locales</code> to load Fluent (<code>.ftl</code>) catalogs. Pass <code>locales_value(Arc::new(locales))</code> and the resolved locale code into the MiniJinja context, and use the <code>trans</code> template filter.</p>
+<h2 id="code-example-7"><a class="header" href="#code-example-7">Code Example</a></h2>
 <pre class="playground"><code class="language-rust compile"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>use std::sync::Arc;
