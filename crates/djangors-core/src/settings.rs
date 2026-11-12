@@ -95,6 +95,9 @@ impl_from_settings_value_via_parse!(
     i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize, f32, f64
 );
 
+/// Default upper bound on request body size: 10 MiB.
+pub(crate) const DEFAULT_MAX_BODY_BYTES: usize = 10 * 1024 * 1024;
+
 /// Settings structure holding configuration parameters for the Djangors framework.
 /// Mirrors Django's `settings.py` structure.
 #[derive(Clone)]
@@ -117,6 +120,13 @@ pub struct DjangorsSettings {
 
     /// Port number to listen on (e.g., 8000).
     pub port: u16,
+
+    /// Largest request body, in bytes, that the router will read. Larger bodies are
+    /// rejected with `413 Payload Too Large`. Overridden by a limit set explicitly on
+    /// the router (see [`Router::max_body_bytes`](crate::router::Router::max_body_bytes)).
+    /// Defaults to 10 MiB. Set with `max_body_bytes` in `djangors.toml` or the
+    /// `DJANGORS_MAX_BODY_BYTES` environment variable (which wins).
+    pub max_body_bytes: usize,
 }
 
 impl fmt::Debug for DjangorsSettings {
@@ -127,6 +137,7 @@ impl fmt::Debug for DjangorsSettings {
             .field("secret_key", &"[redacted]")
             .field("host", &self.host)
             .field("port", &self.port)
+            .field("max_body_bytes", &self.max_body_bytes)
             .finish()
     }
 }
@@ -139,6 +150,7 @@ impl Default for DjangorsSettings {
             secret_key: String::new(),
             host: "127.0.0.1".into(),
             port: 8000,
+            max_body_bytes: DEFAULT_MAX_BODY_BYTES,
         }
     }
 }
@@ -181,6 +193,12 @@ impl DjangorsSettings {
         self.port = port;
         self
     }
+
+    /// Sets the largest request body, in bytes, the router will read.
+    pub fn with_max_body_bytes(mut self, bytes: usize) -> Self {
+        self.max_body_bytes = bytes;
+        self
+    }
 }
 
 #[derive(Deserialize)]
@@ -190,6 +208,7 @@ struct PartialSettings {
     secret_key: Option<String>,
     host: Option<String>,
     port: Option<u16>,
+    max_body_bytes: Option<usize>,
 }
 
 impl DjangorsSettings {
@@ -231,6 +250,16 @@ impl DjangorsSettings {
             }
         }
 
+        if let Ok(val) = std::env::var("DJANGORS_MAX_BODY_BYTES") {
+            match val.parse::<usize>() {
+                Ok(bytes) => self.max_body_bytes = bytes,
+                Err(_) => warnings.push(format!(
+                    "Ignored invalid env var DJANGORS_MAX_BODY_BYTES: '{}'",
+                    val
+                )),
+            }
+        }
+
         warnings
     }
 
@@ -263,6 +292,9 @@ impl DjangorsSettings {
         }
         if let Some(port) = partial.port {
             settings.port = port;
+        }
+        if let Some(max_body_bytes) = partial.max_body_bytes {
+            settings.max_body_bytes = max_body_bytes;
         }
 
         Ok(settings)

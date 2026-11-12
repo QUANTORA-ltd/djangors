@@ -21,8 +21,12 @@ pub struct Djangors {
 impl Djangors {
     /// Create a new Djangors application from settings and a router.
     ///
+    /// If the router has no body limit of its own, it takes
+    /// [`DjangorsSettings::max_body_bytes`]; a limit set on the router is kept.
+    ///
     /// No network activity takes place until [`run`](Self::run) is called.
     pub fn new(settings: DjangorsSettings, router: Router) -> Self {
+        let router = router.with_default_max_body_bytes(settings.max_body_bytes);
         Djangors { settings, router }
     }
 
