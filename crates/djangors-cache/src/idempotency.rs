@@ -18,6 +18,9 @@ use tower::{Layer, Service};
 
 const IN_PROGRESS_PREFIX: &[u8] = b"in_progress:";
 
+/// The default request body limit: 10 MiB, matching the router's default.
+pub const DEFAULT_MAX_BODY_BYTES: usize = 10 * 1024 * 1024;
+
 /// Derives the caller identity that idempotency keys are scoped to.
 type ScopeFn = dyn Fn(&Parts) -> Vec<u8> + Send + Sync;
 
@@ -28,11 +31,16 @@ type ScopeFn = dyn Fn(&Parts) -> Vec<u8> + Send + Sync;
 /// the `Authorization` and `Cookie` headers, so two users choosing the same key never see
 /// each other's responses; use [`IdempotencyLayer::with_scope`] to scope by something
 /// more precise, such as a session or user ID.
+///
+/// The layer reads the whole request body to hash it, so it enforces its own size limit
+/// ([`DEFAULT_MAX_BODY_BYTES`] unless changed with [`IdempotencyLayer::max_body_bytes`])
+/// and answers larger bodies with `413 Payload Too Large`.
 #[derive(Clone)]
 pub struct IdempotencyLayer {
     cache: Arc<dyn Cache>,
     ttl: Duration,
     scope: Arc<ScopeFn>,
+    max_body_bytes: usize,
 }
 
 impl IdempotencyLayer {
@@ -43,7 +51,15 @@ impl IdempotencyLayer {
             cache,
             ttl,
             scope: Arc::new(default_scope),
+            max_body_bytes: DEFAULT_MAX_BODY_BYTES,
         }
+    }
+
+    /// Sets the largest request body, in bytes, the layer will read. Larger bodies get
+    /// `413 Payload Too Large` before the handler runs.
+    pub fn max_body_bytes(mut self, limit: usize) -> Self {
+        self.max_body_bytes = limit;
+        self
     }
 
     /// Replaces the default caller identity (`Authorization` + `Cookie` headers).
@@ -74,6 +90,7 @@ impl<S> Layer<S> for IdempotencyLayer {
             cache: self.cache.clone(),
             ttl: self.ttl,
             scope: self.scope.clone(),
+            max_body_bytes: self.max_body_bytes,
         }
     }
 }
@@ -85,6 +102,7 @@ pub struct IdempotencyService<S> {
     cache: Arc<dyn Cache>,
     ttl: Duration,
     scope: Arc<ScopeFn>,
+    max_body_bytes: usize,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -148,7 +166,8 @@ where
         let cache = self.cache.clone();
         let ttl = self.ttl;
         let scope = self.scope.clone();
-        Box::pin(handle(inner, cache, ttl, scope, req))
+        let limit = self.max_body_bytes;
+        Box::pin(handle(inner, cache, ttl, scope, limit, req))
     }
 }
 
@@ -157,6 +176,7 @@ async fn handle<S, B>(
     cache: Arc<dyn Cache>,
     ttl: Duration,
     scope: Arc<ScopeFn>,
+    limit: usize,
     req: Request<B>,
 ) -> Result<Response<Full<Bytes>>, Infallible>
 where
@@ -165,14 +185,9 @@ where
     B::Error: std::fmt::Debug,
 {
     let (parts, body) = req.into_parts();
-    let body = match body.collect().await {
-        Ok(collected) => collected.to_bytes(),
-        Err(_) => {
-            return Ok(error_response(
-                StatusCode::BAD_REQUEST,
-                "invalid_request_body",
-            ))
-        }
+    let body = match read_limited(&parts, body, limit).await {
+        Ok(body) => body,
+        Err(response) => return Ok(response),
     };
 
     let unsafe_method = matches!(
@@ -311,6 +326,40 @@ fn store_unavailable() -> Response<Full<Bytes>> {
         StatusCode::SERVICE_UNAVAILABLE,
         "idempotency_store_unavailable",
     )
+}
+
+/// Reads the body, refusing it with 413 as soon as it is known to exceed `limit`
+/// (from `Content-Length`, or while streaming) so oversized bodies are never buffered.
+async fn read_limited<B>(
+    parts: &Parts,
+    body: B,
+    limit: usize,
+) -> Result<Bytes, Response<Full<Bytes>>>
+where
+    B: http_body::Body<Data = Bytes>,
+{
+    let too_large = || error_response(StatusCode::PAYLOAD_TOO_LARGE, "payload_too_large");
+    let declared = parts
+        .headers
+        .get(hyper::header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<u64>().ok());
+    if declared.is_some_and(|len| len > limit as u64) {
+        return Err(too_large());
+    }
+    let mut body = std::pin::pin!(body);
+    let mut buf = Vec::new();
+    while let Some(frame) = body.frame().await {
+        let frame =
+            frame.map_err(|_| error_response(StatusCode::BAD_REQUEST, "invalid_request_body"))?;
+        if let Ok(data) = frame.into_data() {
+            if buf.len() + data.len() > limit {
+                return Err(too_large());
+            }
+            buf.extend_from_slice(&data);
+        }
+    }
+    Ok(Bytes::from(buf))
 }
 
 fn error_response(status: StatusCode, code: &str) -> Response<Full<Bytes>> {

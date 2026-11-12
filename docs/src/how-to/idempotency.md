@@ -83,7 +83,25 @@ let layer = IdempotencyLayer::new(cache, Duration::from_secs(86_400)).with_scope
 Never scope by a header the client sets freely, such as a user ID sent by the client:
 anyone could send someone else's ID and receive their stored responses.
 
+Requests without the scoped credential share one scope. An anonymous visitor with no
+session cookie has an empty session value, so all anonymous callers using the same key
+and path see each other's stored responses. Require login for endpoints that use
+idempotency keys, or scope by something every caller has, so that a missing credential
+never becomes a shared scope.
+
 ## What is replayed
 
 The stored response keeps its status code, body, `Content-Type`, and `Location`. Other
 headers, including `Set-Cookie`, are not replayed.
+
+## Body size limit
+
+The layer reads the whole request body to compare retries, so it applies its own limit:
+10 MiB by default. A larger body gets `413 Payload Too Large` before your handler runs,
+whether or not it carries an `Idempotency-Key`. A `Content-Length` over the limit is
+refused without reading the body. Change the limit with `.max_body_bytes(...)`:
+
+```rust,illustrative
+let idempotent = IdempotencyLayer::new(cache, Duration::from_secs(86_400))
+    .max_body_bytes(1024 * 1024);
+```
