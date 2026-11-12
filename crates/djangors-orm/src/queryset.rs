@@ -46,6 +46,7 @@ pub struct QuerySet<T: Model + FromRow> {
     for_update: Option<ForUpdate>,
     search_condition: Option<String>,
     cache_ttl: Option<std::time::Duration>,
+    include_deleted: bool,
     _marker: PhantomData<T>,
 }
 
@@ -59,6 +60,7 @@ impl<T: Model + FromRow> Clone for QuerySet<T> {
             for_update: self.for_update.clone(),
             search_condition: self.search_condition.clone(),
             cache_ttl: self.cache_ttl,
+            include_deleted: self.include_deleted,
             _marker: PhantomData,
         }
     }
@@ -81,8 +83,38 @@ impl<T: Model + FromRow> QuerySet<T> {
             for_update: None,
             search_condition: None,
             cache_ttl: None,
+            include_deleted: false,
             _marker: PhantomData,
         }
+    }
+
+    /// Includes soft-deleted rows in the results of this queryset.
+    ///
+    /// Has no effect on models without `#[djangors(soft_delete)]`.
+    pub fn with_deleted(mut self) -> Self {
+        self.include_deleted = true;
+        self
+    }
+
+    /// Restricts this queryset to soft-deleted rows (`deleted_at IS NOT NULL`).
+    ///
+    /// On a model without `#[djangors(soft_delete)]` nothing is deleted, so the
+    /// queryset matches no rows.
+    pub fn only_deleted(mut self) -> Self {
+        self.include_deleted = true;
+        let filter = match T::soft_delete_column() {
+            Some(col) => match T::meta().fields.iter().find(|f| f.column_name == col) {
+                Some(f) => Expr::Compare {
+                    field: f.name,
+                    op: CompareOp::IsNull,
+                    value: Value::Bool(false),
+                },
+                None => Expr::Or(Vec::new()),
+            },
+            None => Expr::Or(Vec::new()),
+        };
+        self.filters.push(filter);
+        self
     }
 
     /// Enables result caching for this queryset with an optional TTL.
@@ -152,6 +184,49 @@ impl<T: Model + FromRow> QuerySet<T> {
         Self::check_field_meta(T::meta(), field)
     }
 
+    /// Rejects a filter, ordering or search on an encrypted field of `meta`'s model.
+    /// Ciphertext is randomized, so it cannot be compared or sorted.
+    fn reject_encrypted(meta: &'static ModelMeta, field: &str) -> Result<(), OrmError> {
+        let encrypted = T::encrypted_fields().contains(&field);
+        if encrypted && meta.struct_name == T::meta().struct_name {
+            return Err(OrmError::InvalidQuery(format!(
+                "cannot filter on encrypted field {field}"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Rejects using an encrypted field where SQL would have to read its plaintext
+    /// (grouping, ordering by value, `MIN`/`MAX`/`SUM`/`AVG`, string functions).
+    /// Every encrypted value has a random nonce, so the database only sees noise.
+    fn reject_encrypted_use(field: &str, what: &str) -> Result<(), OrmError> {
+        if T::encrypted_fields().contains(&field) {
+            return Err(OrmError::InvalidQuery(format!(
+                "cannot {what} encrypted field {field}"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Rejects aggregates other than `COUNT` on encrypted fields.
+    fn reject_encrypted_agg(agg: &crate::aggregate::AggExpr) -> Result<(), OrmError> {
+        if matches!(agg, crate::aggregate::AggExpr::Count { .. }) {
+            return Ok(());
+        }
+        Self::reject_encrypted_use(agg_field(agg), "aggregate")
+    }
+
+    /// Decrypts the values of encrypted fields in a `values()` row.
+    fn decrypt_value(field: &str, value: Value) -> Result<Value, OrmError> {
+        if !T::encrypted_fields().contains(&field) {
+            return Ok(value);
+        }
+        match value {
+            Value::Text(stored) => Ok(Value::Text(crate::encryption::decrypt_str(&stored)?)),
+            other => Ok(other),
+        }
+    }
+
     fn check_field_meta(
         meta: &'static ModelMeta,
         field: &'static str,
@@ -203,6 +278,7 @@ impl<T: Model + FromRow> QuerySet<T> {
                 for comp in compares {
                     let (field_name, suffix) = crate::expr::split_field_lookup(comp.field);
                     let field = Self::check_field_meta(meta, field_name)?;
+                    Self::reject_encrypted(meta, field_name)?;
                     resolved.push(Expr::Compare {
                         field,
                         op: suffix_to_op(suffix),
@@ -217,6 +293,8 @@ impl<T: Model + FromRow> QuerySet<T> {
                     let (left_name, suffix) = crate::expr::split_field_lookup(comp.left);
                     let left = Self::check_field_meta(meta, left_name)?;
                     let right = Self::check_field_meta(meta, comp.right)?;
+                    Self::reject_encrypted(meta, left_name)?;
+                    Self::reject_encrypted(meta, right)?;
                     resolved.push(Expr::CompareField {
                         left,
                         op: suffix_to_op(suffix),
@@ -236,6 +314,8 @@ impl<T: Model + FromRow> QuerySet<T> {
                     let (field_name, suffix) = crate::expr::split_field_lookup(comp.field);
                     let sub_col = Self::check_field_column_meta(meta, field_name)?;
                     let outer_col = Self::check_field_column_meta(outer_m, comp.outer_field)?;
+                    Self::reject_encrypted(meta, field_name)?;
+                    Self::reject_encrypted(outer_m, comp.outer_field)?;
                     resolved.push(Expr::OuterCompare {
                         field: sub_col,
                         op: suffix_to_op(suffix),
@@ -264,12 +344,23 @@ impl<T: Model + FromRow> QuerySet<T> {
             UnresolvedExpr::Exists {
                 negated,
                 subquery_meta,
+                soft_delete_col,
                 filters,
             } => {
                 let sub_meta = subquery_meta();
                 let mut resolved_filters = Vec::new();
                 for f in filters {
                     resolved_filters.push(Self::resolve_expr_with_meta(f, sub_meta, Some(meta))?);
+                }
+                // Soft-deleted rows of the subquery model do not count as matches.
+                // The subquery compiles its fields as raw `"table"."column"`, so the
+                // column name is passed here.
+                if let Some(col) = soft_delete_col {
+                    resolved_filters.push(Expr::Compare {
+                        field: col,
+                        op: CompareOp::IsNull,
+                        value: Value::Bool(true),
+                    });
                 }
                 Ok(Expr::Exists {
                     negated,
@@ -304,12 +395,14 @@ impl<T: Model + FromRow> QuerySet<T> {
 
         for field in group_by {
             Self::check_field(field)?;
+            Self::reject_encrypted_use(field, "group by")?;
         }
         for (_, agg) in &aggs {
             let field_name = agg_field(agg);
             if field_name != "*" {
                 Self::check_field_named(field_name)?;
             }
+            Self::reject_encrypted_agg(agg)?;
         }
 
         let field_to_col = |field_name: &str| -> String {
@@ -397,6 +490,12 @@ impl<T: Model + FromRow> QuerySet<T> {
 
         for field in group_by {
             Self::check_field(field)?;
+            Self::reject_encrypted_use(field, "group by")?;
+        }
+        for (_, func) in &funcs {
+            for field in func_fields(func) {
+                Self::reject_encrypted_use(field, "apply a SQL function to")?;
+            }
         }
 
         let group_cols: Vec<String> = group_by
@@ -493,16 +592,19 @@ impl<T: Model + FromRow> QuerySet<T> {
         db.record_query();
         let rows = db.conn().fetch_all(&sql, &bind_values).await?;
 
-        Ok(rows
-            .iter()
+        // Encrypted fields come back decrypted, as they do on a loaded model.
+        rows.iter()
             .map(|row| {
                 fields
                     .iter()
                     .enumerate()
-                    .map(|(i, f)| (*f, decode_value(row, i, field_kind_of(f, meta))))
+                    .map(|(i, f)| {
+                        let value = decode_value(row, i, field_kind_of(f, meta));
+                        Ok((*f, Self::decrypt_value(f, value)?))
+                    })
                     .collect()
             })
-            .collect())
+            .collect()
     }
 
     /// Like [`values`](Self::values) but for a single field — Django's `.values_list(field, flat=True)`.
@@ -547,6 +649,7 @@ impl<T: Model + FromRow> QuerySet<T> {
                     model: meta.struct_name,
                 });
             }
+            Self::reject_encrypted(meta, field_name)?;
             compares.push(Expr::Compare {
                 field: field_name,
                 op: CompareOp::IContains,
@@ -564,6 +667,9 @@ impl<T: Model + FromRow> QuerySet<T> {
     /// Postgres-only. Use `filter_or_icontains` for case-insensitive substring
     /// matching on both backends.
     pub fn search(mut self, query: &str, fields: &[&'static str]) -> Result<Self, OrmError> {
+        for field in fields {
+            Self::reject_encrypted(T::meta(), field)?;
+        }
         let escaped = query.replace('\'', "''");
         let tsvector_parts: Vec<String> = fields
             .iter()
@@ -591,6 +697,7 @@ impl<T: Model + FromRow> QuerySet<T> {
                 model: meta.struct_name,
             });
         }
+        Self::reject_encrypted(meta, field)?;
         self.filters.push(Expr::And(vec![
             Expr::Compare {
                 field,
@@ -625,6 +732,7 @@ impl<T: Model + FromRow> QuerySet<T> {
                     model: meta.struct_name,
                 });
             }
+            Self::reject_encrypted(meta, field)?;
         }
         let op = if descending {
             CompareOp::Lt
@@ -661,6 +769,7 @@ impl<T: Model + FromRow> QuerySet<T> {
             (field, false)
         };
         let meta = T::meta();
+        Self::reject_encrypted(meta, clean_field)?;
         let col = if let Some(f) = meta.fields.iter().find(|f| f.name == clean_field) {
             format!("\"{}\"", f.column_name)
         } else if let Some(r) = meta.relations.iter().find(|r| r.field_name == clean_field) {
@@ -752,6 +861,43 @@ impl<T: Model + FromRow> QuerySet<T> {
         self.compile_select_with_order(select_list, true, Dialect::Postgres)
     }
 
+    /// The body of the `WHERE` clause (without the keyword): the filter expressions,
+    /// plus `"deleted_at" IS NULL` for soft-delete models unless
+    /// [`with_deleted`](Self::with_deleted) was called. Returns `None` when there is
+    /// nothing to filter on. Bind values are appended to `params`.
+    fn where_body(
+        &self,
+        field_to_col: &dyn Fn(&str) -> String,
+        params: &mut Vec<Value>,
+        param_idx: &mut usize,
+        dialect: Dialect,
+    ) -> Option<String> {
+        let meta = T::meta();
+        let mut parts = Vec::new();
+        if !self.filters.is_empty() {
+            let combined = Expr::And(self.filters.clone());
+            parts.push(compile_expr_sql(
+                &combined,
+                meta.table_name,
+                None,
+                field_to_col,
+                params,
+                param_idx,
+                dialect,
+            ));
+        }
+        if !self.include_deleted {
+            if let Some(col) = T::soft_delete_column() {
+                parts.push(format!("\"{}\" IS NULL", col));
+            }
+        }
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join(" AND "))
+        }
+    }
+
     /// Compiles the query with specified dialect.
     pub(crate) fn compile_select_with_order(
         &self,
@@ -774,17 +920,9 @@ impl<T: Model + FromRow> QuerySet<T> {
             }
         };
 
-        if !self.filters.is_empty() {
-            let combined = Expr::And(self.filters.clone());
-            let where_clause = compile_expr_sql(
-                &combined,
-                meta.table_name,
-                None,
-                &field_to_col,
-                &mut params,
-                &mut param_idx,
-                dialect,
-            );
+        if let Some(where_clause) =
+            self.where_body(&field_to_col, &mut params, &mut param_idx, dialect)
+        {
             sql.push_str(" WHERE ");
             sql.push_str(&where_clause);
         }
@@ -989,6 +1127,7 @@ impl<T: Model + FromRow> QuerySet<T> {
         let meta = T::meta();
 
         for agg in &aggs {
+            Self::reject_encrypted_agg(agg)?;
             let field_name = match agg {
                 crate::aggregate::AggExpr::Count { field } => *field,
                 crate::aggregate::AggExpr::Sum { field } => *field,
@@ -1081,10 +1220,26 @@ impl<T: Model + FromRow> QuerySet<T> {
     pub async fn update<E: djangors_db::DbExecutor>(
         &self,
         mut db: E,
-        sets: Vec<(&'static str, SetExpr)>,
+        mut sets: Vec<(&'static str, SetExpr)>,
     ) -> Result<u64, OrmError> {
         let dialect = db.dialect();
         let meta = T::meta();
+        for (field_name, set_expr) in sets.iter_mut() {
+            if !T::encrypted_fields().contains(field_name) {
+                continue;
+            }
+            match set_expr {
+                SetExpr::Literal(value) => {
+                    let plain = std::mem::replace(value, Value::Null);
+                    *value = crate::encryption::encrypt_value(plain)?;
+                }
+                SetExpr::FieldOp { .. } => {
+                    return Err(OrmError::InvalidQuery(format!(
+                        "cannot apply arithmetic to encrypted field {field_name}"
+                    )));
+                }
+            }
+        }
 
         for &(field_name, ref set_expr) in &sets {
             let exists_lhs = meta.fields.iter().any(|f| f.name == field_name)
@@ -1169,22 +1324,14 @@ impl<T: Model + FromRow> QuerySet<T> {
             meta.table_name,
             set_parts.join(", ")
         );
-        if !self.filters.is_empty() {
-            let combined = Expr::And(self.filters.clone());
-            let where_clause = compile_expr_sql(
-                &combined,
-                meta.table_name,
-                None,
-                &field_to_col,
-                &mut raw_params,
-                &mut param_idx,
-                dialect,
-            );
+        if let Some(where_clause) =
+            self.where_body(&field_to_col, &mut raw_params, &mut param_idx, dialect)
+        {
             sql.push_str(" WHERE ");
             sql.push_str(&where_clause);
-            for p in raw_params {
-                bind_values.push(BindValue::from(p));
-            }
+        }
+        for p in raw_params {
+            bind_values.push(BindValue::from(p));
         }
 
         db.record_query();
@@ -1194,10 +1341,35 @@ impl<T: Model + FromRow> QuerySet<T> {
 
     /// Deletes all rows matching the current filters — Django's `queryset.delete()`.
     ///
-    /// Returns the number of rows deleted. Unlike [`delete_by_pk`](Self::delete_by_pk),
+    /// Returns the number of rows affected. Unlike [`delete_by_pk`](Self::delete_by_pk),
     /// this operates on the whole filtered set. If no filter is applied, every row in
-    /// the table is deleted.
-    pub async fn delete<E: djangors_db::DbExecutor>(&self, mut db: E) -> Result<u64, OrmError> {
+    /// the table is affected.
+    ///
+    /// On a `#[djangors(soft_delete)]` model this stamps `deleted_at` with the current
+    /// time instead of removing rows (already soft-deleted rows are skipped). Use
+    /// [`with_deleted`](Self::with_deleted) to hard-delete, or
+    /// [`force_delete`](Self::force_delete) to hard-delete without it.
+    pub async fn delete<E: djangors_db::DbExecutor>(&self, db: E) -> Result<u64, OrmError> {
+        let soft = !self.include_deleted;
+        self.delete_rows(db, soft).await
+    }
+
+    /// Permanently deletes all rows matching the current filters, even on a
+    /// soft-delete model. Already soft-deleted rows are skipped unless
+    /// [`with_deleted`](Self::with_deleted) or [`only_deleted`](Self::only_deleted) is set.
+    pub async fn force_delete<E: djangors_db::DbExecutor>(&self, db: E) -> Result<u64, OrmError> {
+        self.delete_rows(db, false).await
+    }
+
+    /// Shared implementation of [`delete`](Self::delete) and [`force_delete`](Self::force_delete).
+    ///
+    /// When `soft` is true and `T` is a soft-delete model, the statement is an
+    /// `UPDATE` that sets `deleted_at` to now; otherwise it is a `DELETE`.
+    async fn delete_rows<E: djangors_db::DbExecutor>(
+        &self,
+        mut db: E,
+        soft: bool,
+    ) -> Result<u64, OrmError> {
         let dialect = db.dialect();
         let meta = T::meta();
 
@@ -1211,27 +1383,28 @@ impl<T: Model + FromRow> QuerySet<T> {
             }
         };
 
-        let mut sql = format!("DELETE FROM \"{}\"", meta.table_name);
+        let soft_col = if soft { T::soft_delete_column() } else { None };
         let mut bind_values: Vec<BindValue> = Vec::new();
         let mut param_idx = 1;
+        let mut sql = match soft_col {
+            Some(col) => {
+                bind_values.push(BindValue::from(Value::DateTime(chrono::Utc::now())));
+                let set_sql = format!("\"{}\" = {}", col, dialect.placeholder(param_idx));
+                param_idx += 1;
+                format!("UPDATE \"{}\" SET {}", meta.table_name, set_sql)
+            }
+            None => format!("DELETE FROM \"{}\"", meta.table_name),
+        };
 
-        if !self.filters.is_empty() {
-            let combined = Expr::And(self.filters.clone());
-            let mut raw_params = Vec::new();
-            let where_clause = compile_expr_sql(
-                &combined,
-                meta.table_name,
-                None,
-                &field_to_col,
-                &mut raw_params,
-                &mut param_idx,
-                dialect,
-            );
+        let mut raw_params = Vec::new();
+        if let Some(where_clause) =
+            self.where_body(&field_to_col, &mut raw_params, &mut param_idx, dialect)
+        {
             sql.push_str(" WHERE ");
             sql.push_str(&where_clause);
-            for p in raw_params {
-                bind_values.push(BindValue::from(p));
-            }
+        }
+        for p in raw_params {
+            bind_values.push(BindValue::from(p));
         }
 
         db.record_query();
@@ -1243,10 +1416,16 @@ impl<T: Model + FromRow> QuerySet<T> {
     /// Performs a low-level INSERT query for `T` returning the generated primary key ID.
     pub async fn insert_raw<E: djangors_db::DbExecutor>(
         mut db: E,
-        values: Vec<(&'static str, crate::expr::Value)>,
+        mut values: Vec<(&'static str, crate::expr::Value)>,
     ) -> Result<i64, OrmError> {
         let dialect = db.dialect();
         let meta = T::meta();
+        for (field_name, value) in values.iter_mut() {
+            if T::encrypted_fields().contains(field_name) {
+                let plain = std::mem::replace(value, Value::Null);
+                *value = crate::encryption::encrypt_value(plain)?;
+            }
+        }
         let pk_field = meta
             .fields
             .iter()
@@ -1405,6 +1584,7 @@ impl<T: Model + FromRow> QuerySet<T> {
             }
         }
 
+        let encrypted_names = T::encrypted_fields();
         let mut placeholder_groups = Vec::new();
         let mut bind_values = Vec::new();
         let mut param_idx = 1;
@@ -1417,6 +1597,11 @@ impl<T: Model + FromRow> QuerySet<T> {
                     .find(|(name, _)| name == field_name)
                     .map(|(_, v)| v.clone())
                     .unwrap_or(Value::Null);
+                let val = if encrypted_names.contains(field_name) {
+                    crate::encryption::encrypt_value(val)?
+                } else {
+                    val
+                };
                 row_placeholders.push(dialect.placeholder(param_idx));
                 let nk = null_bind_kind_for(field_name, meta);
                 let bv = match val {
@@ -1448,9 +1633,26 @@ impl<T: Model + FromRow> QuerySet<T> {
     }
 
     /// Deletes a record from table `T` by primary key `pk`.
-    pub async fn delete_by_pk<E: djangors_db::DbExecutor>(
+    ///
+    /// On a `#[djangors(soft_delete)]` model this stamps `deleted_at` instead (a row
+    /// that is already soft-deleted is left alone and counts as 0 rows). Use
+    /// [`force_delete_by_pk`](Self::force_delete_by_pk) to remove the row.
+    pub async fn delete_by_pk<E: djangors_db::DbExecutor>(db: E, pk: i64) -> Result<u64, OrmError> {
+        Self::delete_by_pk_inner(db, pk, true).await
+    }
+
+    /// Permanently deletes a record by primary key, even on a soft-delete model.
+    pub async fn force_delete_by_pk<E: djangors_db::DbExecutor>(
+        db: E,
+        pk: i64,
+    ) -> Result<u64, OrmError> {
+        Self::delete_by_pk_inner(db, pk, false).await
+    }
+
+    async fn delete_by_pk_inner<E: djangors_db::DbExecutor>(
         mut db: E,
         pk: i64,
+        soft: bool,
     ) -> Result<u64, OrmError> {
         let dialect = db.dialect();
         let meta = T::meta();
@@ -1460,14 +1662,35 @@ impl<T: Model + FromRow> QuerySet<T> {
             .find(|f| f.primary_key)
             .expect("Primary key field not found");
 
-        let sql = format!(
-            "DELETE FROM \"{}\" WHERE \"{}\" = {}",
-            meta.table_name,
-            pk_field.column_name,
-            dialect.placeholder(1)
-        );
+        let soft_col = if soft { T::soft_delete_column() } else { None };
+        let (sql, params) = match soft_col {
+            Some(col) => (
+                format!(
+                    "UPDATE \"{}\" SET \"{}\" = {} WHERE \"{}\" = {} AND \"{}\" IS NULL",
+                    meta.table_name,
+                    col,
+                    dialect.placeholder(1),
+                    pk_field.column_name,
+                    dialect.placeholder(2),
+                    col
+                ),
+                vec![
+                    BindValue::from(Value::DateTime(chrono::Utc::now())),
+                    BindValue::I64(pk),
+                ],
+            ),
+            None => (
+                format!(
+                    "DELETE FROM \"{}\" WHERE \"{}\" = {}",
+                    meta.table_name,
+                    pk_field.column_name,
+                    dialect.placeholder(1)
+                ),
+                vec![BindValue::I64(pk)],
+            ),
+        };
         db.record_query();
-        let rows_affected = db.conn().execute(&sql, &[BindValue::I64(pk)]).await?;
+        let rows_affected = db.conn().execute(&sql, &params).await?;
         crate::query_cache::invalidate_table(meta.table_name);
         Ok(rows_affected)
     }
@@ -1540,11 +1763,13 @@ impl<T: Model + FromRow> QuerySet<T> {
         let r_placeholders: Vec<String> = (1..=relation_ids_vec.len())
             .map(|i| dialect.placeholder(i))
             .collect();
+        // A soft-deleted related row is treated as missing.
         let r_sql = format!(
-            "SELECT * FROM \"{}\" WHERE \"{}\" IN ({})",
+            "SELECT * FROM \"{}\" WHERE \"{}\" IN ({}){}",
             r_meta.table_name,
             r_pk_col,
-            r_placeholders.join(", ")
+            r_placeholders.join(", "),
+            live_rows_clause::<R>("")
         );
         let r_bind_values: Vec<BindValue> = relation_ids_vec
             .iter()
@@ -1571,6 +1796,16 @@ impl<T: Model + FromRow> QuerySet<T> {
         }
 
         Ok(final_results)
+    }
+}
+
+/// ` AND "col" IS NULL` (or ` AND "table"."col" IS NULL` when `table` is non-empty) for a
+/// soft-delete model, so related loaders skip deleted rows; empty for other models.
+fn live_rows_clause<R: Model>(table: &str) -> String {
+    match R::soft_delete_column() {
+        Some(col) if table.is_empty() => format!(" AND \"{col}\" IS NULL"),
+        Some(col) => format!(" AND \"{table}\".\"{col}\" IS NULL"),
+        None => String::new(),
     }
 }
 
@@ -1629,10 +1864,11 @@ where
         .map(|i| dialect.placeholder(i))
         .collect();
     let sql = format!(
-        "SELECT * FROM \"{}\" WHERE \"{}\" IN ({})",
+        "SELECT * FROM \"{}\" WHERE \"{}\" IN ({}){}",
         child_meta.table_name,
         relation.field_name,
-        placeholders.join(", ")
+        placeholders.join(", "),
+        live_rows_clause::<R>("")
     );
     let bind_values: Vec<BindValue> = parent_ids.iter().map(|&id| BindValue::I64(id)).collect();
 
@@ -1705,7 +1941,7 @@ pub async fn m2m_related<S: Model, R: Model + FromRow, E: djangors_db::DbExecuto
     let sql = format!(
         "SELECT \"{}\".* FROM \"{}\" \
          INNER JOIN \"{}\" ON \"{}\".\"{}\" = \"{}\".\"{}\" \
-         WHERE \"{}\".\"{}\" = {}",
+         WHERE \"{}\".\"{}\" = {}{}",
         r_meta.table_name,
         r_meta.table_name,
         through,
@@ -1716,6 +1952,7 @@ pub async fn m2m_related<S: Model, R: Model + FromRow, E: djangors_db::DbExecuto
         through,
         source_col,
         dialect.placeholder(1),
+        live_rows_clause::<R>(r_meta.table_name),
     );
     db.record_query();
     let rows = db
@@ -1852,6 +2089,18 @@ impl GroupRow {
             .iter()
             .find(|(k, _)| k == alias)
             .map(|(_, v)| *v)
+    }
+}
+
+/// The model fields a scalar function reads.
+fn func_fields(func: &crate::aggregate::FuncExpr) -> Vec<&'static str> {
+    use crate::aggregate::FuncExpr;
+    match func {
+        FuncExpr::Coalesce { field, .. }
+        | FuncExpr::Lower { field }
+        | FuncExpr::Upper { field }
+        | FuncExpr::Length { field } => vec![field],
+        FuncExpr::Concat { fields } => fields.clone(),
     }
 }
 

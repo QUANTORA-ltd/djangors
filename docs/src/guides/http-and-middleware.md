@@ -290,6 +290,42 @@ let service = ServiceBuilder::new()
 > Serve the stack with `Djangors::serve_service(listener, service)`; the plain `serve()`/`run()`
 > loops do not apply middleware layers.
 
+## Request size limit
+
+The router reads each request body into memory before the handler runs, so it caps how
+large a body it will read. The default limit is 10 MiB.
+
+A request whose body is larger than the limit gets `413 Payload Too Large`, and its handler
+is not called. When the client sends a `Content-Length` header that is already larger than
+the limit, the router refuses the request without reading the body. Without that header
+(for example a chunked upload), the router reads until the body passes the limit and then
+refuses it. WebSocket upgrade requests carry no body, so they are not affected.
+
+The limit comes from `DJANGORS_MAX_BODY_BYTES`, or from
+`DjangorsSettings::with_max_body_bytes`, when the application is built with
+`Djangors::new`. A limit set on the router with `Router::max_body_bytes` takes precedence
+over the settings value.
+
+```rust,compile
+use djangors_core::{Djangors, DjangorsSettings, Router};
+
+fn main() {
+    // Application-wide limit: 1 MiB for every route.
+    let settings = DjangorsSettings::new().with_max_body_bytes(1024 * 1024);
+
+    // This router keeps its own, smaller limit: 64 KiB.
+    let router = Router::new().max_body_bytes(64 * 1024);
+
+    let _app = Djangors::new(settings, router);
+}
+```
+
+> [!IMPORTANT]
+> The limit applies only to the body the router reads. Layers that buffer the body before
+> the router sees it, such as `djangors_cache::IdempotencyLayer`, read the whole body first
+> and are not covered. Set a body size limit at your reverse proxy as well, which protects
+> those layers too.
+
 ## DjangorsError
 
 [`DjangorsError`](https://docs.rs/djangors_core/latest/djangors_core/error/index.html) is the single error
@@ -443,8 +479,8 @@ to write the body into your own buffer.
 **Internal errors stay private.** `DjangorsError::Internal` and panics are always rendered
 as `"Internal Server Error"` by `ProblemDetailsRenderer`, and by the JSON and problem+json
 output of the default renderer whenever `debug` is off, so the real message, which might
-contain SQL or file paths, never reaches the client. The router doesn't log that message
-for you; record it with `tracing::error!` where you create the error if you need it later.
+contain SQL or file paths, never reaches the client. The router logs the original message
+once at `error` level via `tracing` before rendering the response.
 
 ## Paginator and cursor primitives
 

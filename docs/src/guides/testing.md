@@ -256,9 +256,9 @@ async fn example(db: &Database) -> Result<(), djangors_orm::OrmError> {
 The sequence number `n` is shared by all factories of a model and increases with every
 `build`, so unique columns don't collide.
 
-Relation fields default to ID `1` because the factory doesn't create related rows.
-Unless that row exists, `create` fails with a foreign-key error, so create the parent
-first and pass its ID with `.with_<field>_id(id)`:
+`build` still uses ID `1` for relation fields. `create` and `create_many` require each
+`ForeignKey` or `OneToOne` to be set explicitly; otherwise they return an `InvalidQuery`
+that names the missing `.with_<field>_id(..)` call. Create the parent first and pass its ID:
 
 ```rust,illustrative
 let author = Author::factory().create(&db).await?;
@@ -266,6 +266,51 @@ let book = Book::factory().with_author_id(author.id).create(&db).await?;
 ```
 
 `Factory` is also re-exported as `djangors_test::Factory`.
+
+### Seeding a development database
+
+`dj seed` fills a development database in one command, like `rails db:seed` or a Laravel
+seeder. There is no special seed format. The seed script is an ordinary binary at
+`src/bin/seed.rs`, which `dj new` creates for you. It connects with `DATABASE_URL`, so run
+`dj seed` with the same environment your app uses:
+
+```rust,illustrative
+// src/bin/seed.rs
+use djangors_db::config::DatabaseConfig;
+use djangors_db::Database;
+use my_project::blog::Article;
+use my_project::blog::Author;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let url = std::env::var("DATABASE_URL")?;
+    let db = Database::connect(&DatabaseConfig::new(url)).await?;
+
+    // Every field has a `with_<field>` setter; `Author` has an `email` field here.
+    let author = Author::factory().with_email("ada@example.com").create(&db).await?;
+    Article::factory()
+        .with_author_id(author.id)
+        .create_many(&db, 20)
+        .await?;
+
+    println!("Seeded 1 author and 20 articles");
+    Ok(())
+}
+```
+
+The seed binary is a separate crate, so it can only use code in the project's library target.
+`dj new` sets that up: app modules are declared in `src/lib.rs` (`pub mod blog;`), and both
+`src/main.rs` and `src/bin/seed.rs` import them with `use my_project::...`. `dj new-app` and
+`dj generate resource` tell you to add `pub mod <app>;` to `src/lib.rs` when it exists.
+
+A project created before 0.11 declares its modules in `src/main.rs`, where the seed binary
+can't reach them. Move those `mod` lines to a new `src/lib.rs` as `pub mod`, and replace them
+in `main.rs` with `use my_project::...`.
+
+`dj seed` runs `cargo run --bin seed` and exits with its status. It refuses to run when
+`DJANGORS_DEBUG=false`, so development data doesn't reach a production database by accident.
+Pass `dj seed --force` to override that check on purpose. Seed scripts should be safe to run
+more than once: check for existing rows, or truncate tables you own, before inserting.
 
 ---
 

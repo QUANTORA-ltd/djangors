@@ -119,3 +119,21 @@ match err {
 Call `load()` once at process startup (in `main()`, before the server starts accepting
 connections) and treat any `Err` as a hard failure to boot. This is the same "fail fast on bad
 config" principle `dj check --deploy` already applies to the framework's own settings.
+
+## Framework settings (`DjangorsSettings`)
+
+`DjangorsSettings` holds the framework's own settings. Each one can be overridden with an
+environment variable when the settings are loaded with `DjangorsSettings::from_env()` or
+`DjangorsSettings::load()`. A malformed value is reported as a warning and the default is kept.
+
+| Setting | Environment variable | Default |
+|---|---|---|
+| `debug` | `DJANGORS_DEBUG` | `true` |
+| `allowed_hosts` | `DJANGORS_ALLOWED_HOSTS` | `127.0.0.1,localhost` |
+| `secret_key` | `DJANGORS_SECRET_KEY` | empty |
+| `host` | `DJANGORS_HOST` | `127.0.0.1` |
+| `port` | `DJANGORS_PORT` | `8000` |
+| `max_body_bytes` | `DJANGORS_MAX_BODY_BYTES` | `10485760` (10 MiB) |
+
+`max_body_bytes` is the largest request body the router will read. See
+[Request size limit](http-and-middleware.md#request-size-limit).

@@ -119,6 +119,25 @@ let router = djangors_core::Router::new()
     .post("/events", publish_event);
 ```
 
+### Across several servers (PostgreSQL)
+
+`Groups` only reaches subscribers in the same process. When you run several instances,
+use `PgGroups` (the `postgres` feature) so that a `send` on one instance reaches the SSE
+clients connected to every instance. Each instance starts a `PgGroups` on the same channel
+name; `send` publishes through Postgres `LISTEN`/`NOTIFY`:
+
+```rust,illustrative
+use djangors_core::{DjangorsError, Groups, PgGroups};
+
+async fn publish_event(pg_groups: &PgGroups, body: String) -> Result<(), DjangorsError> {
+    // Reaches `live-events` subscribers on every instance, this one included.
+    pg_groups.send("live-events", &body).await
+}
+```
+
+The message is delivered back to the sender through `LISTEN`, so do not also call
+`Groups::send` for the same message. Messages larger than 8000 bytes are rejected.
+
 ### Semantics to keep in mind
 - **Fixed buffer**: each channel buffers up to its capacity. A slow subscriber that falls behind
   skips the missed messages (the `GroupStream` swallows `Lagged` errors) rather than blocking the

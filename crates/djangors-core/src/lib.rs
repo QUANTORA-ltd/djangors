@@ -33,6 +33,9 @@ pub mod error;
 pub mod extract;
 /// Pub/sub broadcast group channel registry.
 pub mod groups;
+/// Cross-server broadcast groups over PostgreSQL `LISTEN`/`NOTIFY` (`postgres` feature).
+#[cfg(feature = "postgres")]
+pub mod groups_pg;
 /// Handler trait definitions for standard and streaming HTTP routes.
 pub mod handler;
 /// HTTP request/response logging middleware.
@@ -73,6 +76,8 @@ pub use error::{
     ApiError, ApiResultExt, DjangorsError, ErrorRenderer, JsonErrorRenderer, ProblemDetailsRenderer,
 };
 pub use groups::{GroupHandle, Groups};
+#[cfg(feature = "postgres")]
+pub use groups_pg::PgGroups;
 pub use handler::{Handler, StreamingHandler};
 pub use pagination::{decode_cursor, encode_cursor, CursorError, CursorPage, Paginator};
 pub use path_params::PathParams;

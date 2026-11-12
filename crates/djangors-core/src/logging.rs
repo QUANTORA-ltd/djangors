@@ -96,6 +96,97 @@ pub fn init_production_logging_with_sentry(dsn: &str) -> sentry::ClientInitGuard
     guard
 }
 
+/// Keeps the OpenTelemetry trace pipeline alive. Returned by
+/// [`init_otel_logging`].
+///
+/// Hold it for the lifetime of the process (`let _otel = ...;` at the top of
+/// `main()`). When it is dropped, the tracer provider is shut down, which
+/// exports any spans still waiting in the batch queue.
+#[cfg(feature = "otel")]
+pub struct OtelGuard {
+    provider: opentelemetry_sdk::trace::SdkTracerProvider,
+}
+
+#[cfg(feature = "otel")]
+impl Drop for OtelGuard {
+    fn drop(&mut self) {
+        if let Err(err) = self.provider.shutdown() {
+            tracing::warn!(
+                error = %err,
+                "failed to shut down the OpenTelemetry tracer provider"
+            );
+        }
+    }
+}
+
+/// Initializes the production JSON `tracing` subscriber and also exports every
+/// span to an OpenTelemetry collector over OTLP/HTTP (protobuf).
+///
+/// Spans are sent to the endpoint named by the standard
+/// `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable. When it is not set, the
+/// exporter uses `http://localhost:4318` and appends `/v1/traces`. The
+/// `OTEL_EXPORTER_OTLP_TRACES_*` variables (endpoint, headers, timeout) are
+/// honored as well, as defined by the OpenTelemetry specification.
+///
+/// `service_name` becomes the `service.name` resource attribute, which is how
+/// backends such as Jaeger, Grafana Tempo, Honeycomb and Datadog label your
+/// service.
+///
+/// Filtering works like [`init_production_logging`]: `RUST_LOG` overrides the
+/// default level. The default also silences the OpenTelemetry SDK's own
+/// internal logs, so an unreachable collector does not flood the output.
+///
+/// Export failures never panic. They are reported by the SDK and the affected
+/// batch is dropped. Building the exporter does not connect to the collector,
+/// so this works even when no collector is running.
+///
+/// Call this once in `main()` and keep the returned guard alive. A second
+/// call still returns a guard, but the subscriber installed by the first call
+/// stays in place.
+///
+/// Requires the `otel` Cargo feature.
+#[cfg(feature = "otel")]
+pub fn init_otel_logging(service_name: &str) -> Result<OtelGuard, crate::error::DjangorsError> {
+    use opentelemetry::trace::TracerProvider as _;
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+
+    // The exporter's HTTP client uses rustls without a built-in crypto provider; install
+    // `ring` unless the application already chose one.
+    if otel_rustls::crypto::CryptoProvider::get_default().is_none() {
+        let _ = otel_rustls::crypto::ring::default_provider().install_default();
+    }
+
+    let exporter = opentelemetry_otlp::SpanExporter::builder()
+        .with_http()
+        .build()
+        .map_err(|err| {
+            crate::error::DjangorsError::Internal(format!("failed to build OTLP exporter: {err}"))
+        })?;
+
+    let resource = opentelemetry_sdk::Resource::builder()
+        .with_service_name(service_name.to_string())
+        .build();
+
+    let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
+        .with_batch_exporter(exporter)
+        .with_resource(resource)
+        .build();
+    let tracer = provider.tracer("djangors");
+
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        EnvFilter::new("info,djangors_core=info,opentelemetry=off,opentelemetry_sdk=off")
+    });
+
+    let _ = tracing_subscriber::registry()
+        .with(filter)
+        .with(tracing_subscriber::fmt::layer().json())
+        .with(tracing_opentelemetry::layer().with_tracer(tracer))
+        .try_init();
+
+    Ok(OtelGuard { provider })
+}
+
 #[cfg(test)]
 #[path = "logging_tests.rs"]
 mod tests;

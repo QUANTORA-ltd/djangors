@@ -287,6 +287,7 @@ export DJANGORS_DEBUG=true
 export DJANGORS_ALLOWED_HOSTS="localhost,127.0.0.1"
 export DJANGORS_SECRET_KEY="supersecret"
 export DJANGORS_PORT=8000
+export DJANGORS_MAX_BODY_BYTES=10485760
 ```
 
 Loading in Rust:

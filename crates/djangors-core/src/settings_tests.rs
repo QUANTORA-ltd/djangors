@@ -251,9 +251,53 @@ fn test_custom_debug_redacts_secret_key() {
         secret_key: "my-super-secret-unredacted-key".to_string(),
         host: "127.0.0.1".to_string(),
         port: 8000,
+        max_body_bytes: 1024,
     };
 
     let debug_str = format!("{:?}", settings);
     assert!(!debug_str.contains("my-super-secret-unredacted-key"));
     assert!(debug_str.contains("[redacted]"));
+}
+
+#[test]
+fn settings_builder_sets_max_body_bytes() {
+    let settings = DjangorsSettings::new().with_max_body_bytes(4096);
+    assert_eq!(settings.max_body_bytes, 4096);
+}
+
+#[test]
+fn max_body_bytes_defaults_to_ten_mib_and_appears_in_debug() {
+    let settings = DjangorsSettings::default();
+    assert_eq!(settings.max_body_bytes, 10 * 1024 * 1024);
+    let debug_str = format!("{:?}", settings);
+    assert!(debug_str.contains("max_body_bytes"));
+}
+
+#[test]
+fn test_from_env_max_body_bytes() {
+    let _guard = EnvGuard::new(vec!["DJANGORS_MAX_BODY_BYTES"]);
+
+    std::env::set_var("DJANGORS_MAX_BODY_BYTES", "2048");
+    let (settings, warnings) = DjangorsSettings::from_env();
+    assert!(warnings.is_empty());
+    assert_eq!(settings.max_body_bytes, 2048);
+}
+
+#[test]
+fn test_from_env_invalid_max_body_bytes_keeps_default() {
+    let _guard = EnvGuard::new(vec!["DJANGORS_MAX_BODY_BYTES"]);
+
+    std::env::set_var("DJANGORS_MAX_BODY_BYTES", "ten-megabytes");
+    let (settings, warnings) = DjangorsSettings::from_env();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].contains("DJANGORS_MAX_BODY_BYTES"));
+    assert_eq!(settings.max_body_bytes, 10 * 1024 * 1024);
+}
+
+#[test]
+fn toml_sets_max_body_bytes() {
+    let settings = DjangorsSettings::from_toml_str("max_body_bytes = 2048\n").unwrap();
+    assert_eq!(settings.max_body_bytes, 2048);
+    let defaults = DjangorsSettings::from_toml_str("debug = true\n").unwrap();
+    assert_eq!(defaults.max_body_bytes, 10 * 1024 * 1024);
 }

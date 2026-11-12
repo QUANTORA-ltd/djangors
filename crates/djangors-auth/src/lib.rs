@@ -18,6 +18,9 @@ use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 use thiserror::Error;
 
+#[cfg(feature = "passkeys")]
+pub mod passkeys;
+
 type HmacSha256 = Hmac<Sha256>;
 
 /// Error type for authentication and user operations.

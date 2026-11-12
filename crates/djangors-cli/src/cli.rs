@@ -113,6 +113,13 @@ pub enum Commands {
     /// Run the test suite.
     #[command(name = "test")]
     Test,
+    /// Fill the development database by running the project's seed script (src/bin/seed.rs).
+    #[command(name = "seed")]
+    Seed {
+        /// Seed even when DJANGORS_DEBUG is false (for example, a production database).
+        #[arg(long)]
+        force: bool,
+    },
     /// Collect static files from source directories into one output directory.
     #[command(name = "collectstatic")]
     Collectstatic {
@@ -139,6 +146,12 @@ pub enum Commands {
         /// API version used in the generated OpenAPI specification.
         #[arg(long, default_value = "0.1.0")]
         api_version: String,
+        /// API path prefix used for every model.
+        #[arg(long, default_value = "/api")]
+        api_prefix: String,
+        /// Include only the named model (repeatable; defaults to all models).
+        #[arg(long = "model")]
+        model: Vec<String>,
     },
     /// Generate code artifacts such as full-stack CRUD resources (`dj generate resource`).
     #[command(name = "generate")]

@@ -3417,3 +3417,475 @@ async fn test_subquery_nested_filters_and_count_aggregate() {
         .execute("DROP TABLE test_subquery_author", &[])
         .await;
 }
+
+mod soft_delete {
+    use crate::aggregate::{AggExpr, AggResult};
+    use crate::error::OrmError;
+    use crate::expr::{SetExpr, Value};
+    use crate::meta::Model;
+    use crate::{Exists, NotExists};
+    use djangors_macros::Model;
+
+    #[derive(Model, Debug, Clone)]
+    #[djangors(app = "test_app", table_name = "soft_delete_test_model", soft_delete)]
+    #[allow(dead_code)]
+    pub struct SoftDeleteModel {
+        #[djangors(primary_key, auto)]
+        pub id: i64,
+
+        pub name: String,
+
+        pub deleted_at: Option<chrono::DateTime<chrono::Utc>>,
+    }
+
+    #[derive(Model, Debug, Clone)]
+    #[djangors(app = "test_app", table_name = "hard_delete_test_model")]
+    #[allow(dead_code)]
+    pub struct HardDeleteModel {
+        #[djangors(primary_key, auto)]
+        pub id: i64,
+
+        pub name: String,
+    }
+
+    #[derive(Model, Debug, Clone)]
+    #[djangors(app = "test_app", table_name = "soft_delete_test_child")]
+    #[allow(dead_code)]
+    pub struct ChildOfSoft {
+        #[djangors(primary_key, auto)]
+        pub id: i64,
+        #[djangors(foreign_key(on_delete = "cascade", related_name = "kids"))]
+        pub parent: crate::meta::ForeignKey<SoftDeleteModel>,
+    }
+
+    #[derive(Model, Debug, Clone)]
+    #[djangors(app = "test_app", table_name = "soft_delete_test_note", soft_delete)]
+    #[allow(dead_code)]
+    pub struct SoftNote {
+        #[djangors(primary_key, auto)]
+        pub id: i64,
+        #[djangors(foreign_key(on_delete = "cascade", related_name = "notes"))]
+        pub owner: crate::meta::ForeignKey<HardDeleteModel>,
+        pub deleted_at: Option<chrono::DateTime<chrono::Utc>>,
+    }
+
+    async fn connect_memory() -> djangors_db::Database {
+        let config = djangors_db::DatabaseConfig::new("sqlite::memory:")
+            .max_connections(1)
+            .min_connections(1);
+        djangors_db::Database::connect(&config).await.unwrap()
+    }
+
+    async fn create_related_tables(db: &djangors_db::Database) {
+        let auto_pk = db.dialect().auto_pk_type();
+        let ts_type = db.dialect().timestamp_type();
+        let child =
+            format!("CREATE TABLE soft_delete_test_child (id {auto_pk}, parent BIGINT NOT NULL)");
+        db.conn().execute(&child, &[]).await.unwrap();
+        let note = format!(
+            "CREATE TABLE soft_delete_test_note \
+             (id {auto_pk}, owner BIGINT NOT NULL, deleted_at {ts_type})"
+        );
+        db.conn().execute(&note, &[]).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn select_related_treats_a_soft_deleted_target_as_missing() {
+        let db = connect_memory().await;
+        create_tables(&db).await;
+        create_related_tables(&db).await;
+        let live = soft("live").save(&db).await.unwrap();
+        let gone = soft("gone").save(&db).await.unwrap();
+        for parent in [&live, &gone] {
+            ChildOfSoft {
+                id: 0,
+                parent: crate::meta::ForeignKey::new(parent.id),
+            }
+            .save(&db)
+            .await
+            .unwrap();
+        }
+        gone.delete(&db).await.unwrap();
+
+        let rows = ChildOfSoft::objects()
+            .order_by("id")
+            .unwrap()
+            .select_related::<SoftDeleteModel, _>(&db, "parent")
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].1.as_ref().map(|p| p.name.as_str()), Some("live"));
+        assert!(rows[1].1.is_none());
+        // ForeignKey::fetch agrees.
+        assert!(rows[1].0.parent.fetch(&db).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn prefetch_related_skips_soft_deleted_children() {
+        let db = connect_memory().await;
+        create_tables(&db).await;
+        create_related_tables(&db).await;
+        let owner = hard("owner").save(&db).await.unwrap();
+        let note = |owner_id| SoftNote {
+            id: 0,
+            owner: crate::meta::ForeignKey::new(owner_id),
+            deleted_at: None,
+        };
+        let kept = note(owner.id).save(&db).await.unwrap();
+        let removed = note(owner.id).save(&db).await.unwrap();
+        removed.delete(&db).await.unwrap();
+
+        let grouped: std::collections::HashMap<i64, Vec<SoftNote>> =
+            crate::prefetch_related(&db, std::slice::from_ref(&owner), "notes")
+                .await
+                .unwrap();
+        let notes = &grouped[&owner.id];
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].id, kept.id);
+    }
+
+    #[tokio::test]
+    async fn delete_by_pk_soft_deletes_and_force_delete_by_pk_removes() {
+        let db = connect_memory().await;
+        create_tables(&db).await;
+        let a = soft("a").save(&db).await.unwrap();
+
+        let n = crate::QuerySet::<SoftDeleteModel>::delete_by_pk(&db, a.id)
+            .await
+            .unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(SoftDeleteModel::objects().count(&db).await.unwrap(), 0);
+        assert_eq!(raw_count(&db, "soft_delete_test_model").await, 1);
+        // Already deleted: nothing changes.
+        let n = crate::QuerySet::<SoftDeleteModel>::delete_by_pk(&db, a.id)
+            .await
+            .unwrap();
+        assert_eq!(n, 0);
+
+        let n = crate::QuerySet::<SoftDeleteModel>::force_delete_by_pk(&db, a.id)
+            .await
+            .unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(raw_count(&db, "soft_delete_test_model").await, 0);
+
+        // Models without soft_delete keep the plain DELETE.
+        let h = hard("h").save(&db).await.unwrap();
+        crate::QuerySet::<HardDeleteModel>::delete_by_pk(&db, h.id)
+            .await
+            .unwrap();
+        assert_eq!(raw_count(&db, "hard_delete_test_model").await, 0);
+    }
+
+    async fn create_tables(db: &djangors_db::Database) {
+        let auto_pk = db.dialect().auto_pk_type();
+        let ts_type = db.dialect().timestamp_type();
+        let soft_sql = format!(
+            "CREATE TABLE soft_delete_test_model (
+                id {auto_pk},
+                name TEXT NOT NULL,
+                deleted_at {ts_type}
+            )"
+        );
+        db.conn().execute(&soft_sql, &[]).await.unwrap();
+        let hard_sql = format!(
+            "CREATE TABLE hard_delete_test_model (
+                id {auto_pk},
+                name TEXT NOT NULL
+            )"
+        );
+        db.conn().execute(&hard_sql, &[]).await.unwrap();
+    }
+
+    /// Counts every physical row, including soft-deleted ones.
+    async fn raw_count(db: &djangors_db::Database, table: &str) -> i64 {
+        let sql = format!("SELECT COUNT(*) FROM {table}");
+        let row = db.conn().fetch_one(&sql, &[]).await.unwrap();
+        row.try_i64(0).unwrap().unwrap()
+    }
+
+    fn soft(name: &str) -> SoftDeleteModel {
+        SoftDeleteModel {
+            id: 0,
+            name: name.to_string(),
+            deleted_at: None,
+        }
+    }
+
+    fn hard(name: &str) -> HardDeleteModel {
+        HardDeleteModel {
+            id: 0,
+            name: name.to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn delete_hides_the_row_from_select_count_and_get() {
+        let db = connect_memory().await;
+        create_tables(&db).await;
+        let a = soft("a").save(&db).await.unwrap();
+        soft("b").save(&db).await.unwrap();
+        soft("c").save(&db).await.unwrap();
+
+        a.delete(&db).await.unwrap();
+
+        assert_eq!(SoftDeleteModel::objects().count(&db).await.unwrap(), 2);
+        assert_eq!(SoftDeleteModel::objects().all(&db).await.unwrap().len(), 2);
+        let found = SoftDeleteModel::objects()
+            .filter(crate::q!(name = "a"))
+            .unwrap()
+            .get(&db)
+            .await;
+        assert!(matches!(found, Err(OrmError::NotFound { .. })));
+        // The row is hidden, not removed.
+        assert_eq!(raw_count(&db, "soft_delete_test_model").await, 3);
+    }
+
+    #[tokio::test]
+    async fn with_deleted_and_only_deleted_select_the_right_rows() {
+        let db = connect_memory().await;
+        create_tables(&db).await;
+        let a = soft("a").save(&db).await.unwrap();
+        soft("b").save(&db).await.unwrap();
+        a.delete(&db).await.unwrap();
+
+        assert_eq!(
+            SoftDeleteModel::objects()
+                .with_deleted()
+                .count(&db)
+                .await
+                .unwrap(),
+            2
+        );
+        let got = SoftDeleteModel::objects()
+            .with_deleted()
+            .filter(crate::q!(name = "a"))
+            .unwrap()
+            .get(&db)
+            .await
+            .unwrap();
+        assert_eq!(got.id, a.id);
+
+        let deleted = SoftDeleteModel::objects()
+            .only_deleted()
+            .all(&db)
+            .await
+            .unwrap();
+        assert_eq!(deleted.len(), 1);
+        assert_eq!(deleted[0].name, "a");
+        assert_eq!(
+            SoftDeleteModel::objects()
+                .only_deleted()
+                .count(&db)
+                .await
+                .unwrap(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn restore_brings_a_soft_deleted_row_back() {
+        let db = connect_memory().await;
+        create_tables(&db).await;
+        let a = soft("a").save(&db).await.unwrap();
+
+        a.delete(&db).await.unwrap();
+        assert_eq!(SoftDeleteModel::objects().count(&db).await.unwrap(), 0);
+
+        a.restore(&db).await.unwrap();
+        assert_eq!(SoftDeleteModel::objects().count(&db).await.unwrap(), 1);
+
+        // Restoring a live row and deleting an already deleted row match nothing.
+        let restore_again = a.restore(&db).await;
+        assert!(matches!(restore_again, Err(OrmError::NotFound { .. })));
+        a.delete(&db).await.unwrap();
+        let delete_again = a.delete(&db).await;
+        assert!(matches!(delete_again, Err(OrmError::NotFound { .. })));
+    }
+
+    #[tokio::test]
+    async fn force_delete_really_removes_the_row() {
+        let db = connect_memory().await;
+        create_tables(&db).await;
+        let a = soft("a").save(&db).await.unwrap();
+        let b = soft("b").save(&db).await.unwrap();
+
+        a.force_delete(&db).await.unwrap();
+        assert_eq!(raw_count(&db, "soft_delete_test_model").await, 1);
+
+        // A soft delete leaves the physical row in place...
+        b.delete(&db).await.unwrap();
+        assert_eq!(raw_count(&db, "soft_delete_test_model").await, 1);
+
+        // ...and force_delete removes it.
+        b.force_delete(&db).await.unwrap();
+        assert_eq!(raw_count(&db, "soft_delete_test_model").await, 0);
+    }
+
+    #[tokio::test]
+    async fn bulk_queryset_delete_soft_deletes_and_with_deleted_hard_deletes() {
+        let db = connect_memory().await;
+        create_tables(&db).await;
+        soft("a").save(&db).await.unwrap();
+        soft("b").save(&db).await.unwrap();
+        soft("c").save(&db).await.unwrap();
+
+        let one = SoftDeleteModel::objects()
+            .filter(crate::q!(name = "a"))
+            .unwrap()
+            .delete(&db)
+            .await
+            .unwrap();
+        assert_eq!(one, 1);
+        assert_eq!(SoftDeleteModel::objects().count(&db).await.unwrap(), 2);
+        assert_eq!(raw_count(&db, "soft_delete_test_model").await, 3);
+
+        // Rows that are already soft-deleted are skipped.
+        let rest = SoftDeleteModel::objects().delete(&db).await.unwrap();
+        assert_eq!(rest, 2);
+        assert_eq!(SoftDeleteModel::objects().count(&db).await.unwrap(), 0);
+        assert_eq!(raw_count(&db, "soft_delete_test_model").await, 3);
+
+        // with_deleted() turns the bulk delete into a real DELETE.
+        let purged = SoftDeleteModel::objects()
+            .with_deleted()
+            .delete(&db)
+            .await
+            .unwrap();
+        assert_eq!(purged, 3);
+        assert_eq!(raw_count(&db, "soft_delete_test_model").await, 0);
+
+        soft("d").save(&db).await.unwrap();
+        let forced = SoftDeleteModel::objects().force_delete(&db).await.unwrap();
+        assert_eq!(forced, 1);
+        assert_eq!(raw_count(&db, "soft_delete_test_model").await, 0);
+    }
+
+    #[tokio::test]
+    async fn update_and_aggregate_skip_soft_deleted_rows() {
+        let db = connect_memory().await;
+        create_tables(&db).await;
+        let a = soft("a").save(&db).await.unwrap();
+        soft("b").save(&db).await.unwrap();
+        a.delete(&db).await.unwrap();
+
+        let updated = SoftDeleteModel::objects()
+            .update(
+                &db,
+                vec![("name", SetExpr::Literal(Value::Text("x".to_string())))],
+            )
+            .await
+            .unwrap();
+        assert_eq!(updated, 1);
+
+        let renamed = SoftDeleteModel::objects()
+            .with_deleted()
+            .filter(crate::q!(name = "x"))
+            .unwrap()
+            .count(&db)
+            .await
+            .unwrap();
+        assert_eq!(renamed, 1);
+        let untouched = SoftDeleteModel::objects()
+            .with_deleted()
+            .filter(crate::q!(name = "a"))
+            .unwrap()
+            .count(&db)
+            .await
+            .unwrap();
+        assert_eq!(untouched, 1);
+
+        let agg = SoftDeleteModel::objects()
+            .aggregate(&db, vec![AggExpr::Count { field: "*" }])
+            .await
+            .unwrap();
+        assert_eq!(agg, vec![AggResult::I64(1)]);
+
+        assert!(SoftDeleteModel::objects().exists(&db).await.unwrap());
+        let first = SoftDeleteModel::objects().first(&db).await.unwrap();
+        assert_eq!(first.unwrap().name, "x");
+    }
+
+    #[tokio::test]
+    async fn exists_subqueries_ignore_soft_deleted_rows() {
+        let db = connect_memory().await;
+        create_tables(&db).await;
+        let a = soft("a").save(&db).await.unwrap();
+        let b = soft("b").save(&db).await.unwrap();
+        a.delete(&db).await.unwrap();
+        b.delete(&db).await.unwrap();
+
+        // Every row is soft-deleted, so the uncorrelated EXISTS over live rows is false.
+        let exists_count = SoftDeleteModel::objects()
+            .with_deleted()
+            .filter(Exists::<SoftDeleteModel>::new())
+            .unwrap()
+            .count(&db)
+            .await
+            .unwrap();
+        assert_eq!(exists_count, 0);
+
+        let not_exists_count = SoftDeleteModel::objects()
+            .with_deleted()
+            .filter(NotExists::<SoftDeleteModel>::new())
+            .unwrap()
+            .count(&db)
+            .await
+            .unwrap();
+        assert_eq!(not_exists_count, 2);
+    }
+
+    #[test]
+    fn soft_delete_predicate_is_in_every_where_clause() {
+        let sql = SoftDeleteModel::objects().debug_sql();
+        assert!(sql.contains(" WHERE \"deleted_at\" IS NULL"), "{sql}");
+
+        let filtered = SoftDeleteModel::objects()
+            .filter(crate::q!(name = "a"))
+            .unwrap()
+            .debug_sql();
+        assert!(filtered.contains("\"deleted_at\" IS NULL"), "{filtered}");
+
+        let with_deleted = SoftDeleteModel::objects().with_deleted().debug_sql();
+        assert!(!with_deleted.contains("IS NULL"), "{with_deleted}");
+
+        let only_deleted = SoftDeleteModel::objects().only_deleted().debug_sql();
+        assert!(
+            only_deleted.contains("\"deleted_at\" IS NOT NULL"),
+            "{only_deleted}"
+        );
+        assert!(
+            !only_deleted.contains("\"deleted_at\" IS NULL"),
+            "{only_deleted}"
+        );
+    }
+
+    #[tokio::test]
+    async fn models_without_soft_delete_still_hard_delete() {
+        let db = connect_memory().await;
+        create_tables(&db).await;
+        let a = hard("a").save(&db).await.unwrap();
+        hard("b").save(&db).await.unwrap();
+
+        assert!(HardDeleteModel::soft_delete_column().is_none());
+        assert_eq!(SoftDeleteModel::soft_delete_column(), Some("deleted_at"));
+
+        a.delete(&db).await.unwrap();
+        assert_eq!(raw_count(&db, "hard_delete_test_model").await, 1);
+
+        let removed = HardDeleteModel::objects().delete(&db).await.unwrap();
+        assert_eq!(removed, 1);
+        assert_eq!(raw_count(&db, "hard_delete_test_model").await, 0);
+
+        let sql = HardDeleteModel::objects().debug_sql();
+        assert!(!sql.contains("IS NULL"), "{sql}");
+        // only_deleted() on a model without soft delete matches nothing.
+        let none = HardDeleteModel::objects()
+            .only_deleted()
+            .count(&db)
+            .await
+            .unwrap();
+        assert_eq!(none, 0);
+        let sql = HardDeleteModel::objects().only_deleted().debug_sql();
+        assert!(sql.contains("FALSE"), "{sql}");
+    }
+}

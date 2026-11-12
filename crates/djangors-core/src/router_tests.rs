@@ -618,3 +618,164 @@ fn test_duplicate_route_name_mount_panics() {
         .name("poll-detail")
         .mount("/sub", sub);
 }
+
+/// `IdempotencyLayer` hands the router a buffered `Full<Bytes>` body, so `RouterService`
+/// must accept any body type and the wrapped service must still be servable.
+#[cfg(feature = "cache")]
+#[tokio::test]
+async fn idempotency_layer_wraps_router_service() {
+    use djangors_cache::{IdempotencyLayer, InMemoryCache};
+    use http_body_util::Full;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tower::{Layer, ServiceExt};
+
+    fn assert_servable<S>(_: &S)
+    where
+        S: tower::Service<
+                hyper::Request<hyper::body::Incoming>,
+                Response = hyper::Response<Full<Bytes>>,
+                Error = std::convert::Infallible,
+            > + Clone
+            + Send
+            + 'static,
+        S::Future: Send + 'static,
+    {
+    }
+
+    static CHARGES: AtomicUsize = AtomicUsize::new(0);
+    async fn charge(_: Request, _: PathParams) -> Result<Response, DjangorsError> {
+        CHARGES.fetch_add(1, Ordering::SeqCst);
+        Ok(Response::text(StatusCode::CREATED, "charged"))
+    }
+
+    let service =
+        IdempotencyLayer::new(Arc::new(InMemoryCache::new(100)), Duration::from_secs(60)).layer(
+            RouterService::new(Router::new().post("/charge", charge), false),
+        );
+    assert_servable(&service);
+
+    let request = || {
+        hyper::Request::builder()
+            .method("POST")
+            .uri("/charge")
+            .header("idempotency-key", "charge-1")
+            .body(Full::new(Bytes::from_static(b"amount=500")))
+            .unwrap()
+    };
+    let first = service.clone().oneshot(request()).await.unwrap();
+    let retry = service.clone().oneshot(request()).await.unwrap();
+    assert_eq!(first.status(), StatusCode::CREATED);
+    assert_eq!(retry.status(), StatusCode::CREATED);
+    assert_eq!(retry.headers().get("idempotent-replayed").unwrap(), "true");
+    assert_eq!(CHARGES.load(Ordering::SeqCst), 1);
+}
+
+async fn body_len_fn(req: Request, _: PathParams) -> Result<Response, DjangorsError> {
+    let len = req.body_bytes().await.len();
+    Ok(Response::text(StatusCode::OK, &len.to_string()))
+}
+
+fn post_with_body(body: Vec<u8>) -> hyper::Request<http_body_util::Full<Bytes>> {
+    hyper::Request::builder()
+        .method("POST")
+        .uri("/upload")
+        .body(http_body_util::Full::new(Bytes::from(body)))
+        .unwrap()
+}
+
+async fn collect_text<B>(resp: hyper::Response<B>) -> String
+where
+    B: hyper::body::Body<Data = Bytes>,
+    B::Error: std::fmt::Debug,
+{
+    let bytes = http_body_util::BodyExt::collect(resp.into_body())
+        .await
+        .unwrap()
+        .to_bytes();
+    String::from_utf8(bytes.to_vec()).unwrap()
+}
+
+/// A body that fails the test if anything polls it.
+struct NeverRead;
+
+impl hyper::body::Body for NeverRead {
+    type Data = Bytes;
+    type Error = std::convert::Infallible;
+
+    fn poll_frame(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<hyper::body::Frame<Bytes>, Self::Error>>> {
+        panic!("request body must not be read when Content-Length exceeds the limit");
+    }
+}
+
+#[tokio::test]
+async fn body_over_limit_gets_413_and_handler_is_not_called() {
+    let router = Router::new()
+        .max_body_bytes(10)
+        .post("/upload", body_len_fn);
+    let resp = router.dispatch(post_with_body(vec![b'a'; 11])).await;
+    assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    let text = collect_text(resp).await;
+    assert!(text.contains("\"code\":\"payload_too_large\""));
+}
+
+#[tokio::test]
+async fn body_at_limit_is_handled() {
+    let router = Router::new()
+        .max_body_bytes(10)
+        .post("/upload", body_len_fn);
+    let resp = router.dispatch(post_with_body(vec![b'a'; 10])).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(collect_text(resp).await, "10");
+}
+
+#[tokio::test]
+async fn declared_content_length_over_limit_gets_413_without_reading_body() {
+    let router = Router::new()
+        .max_body_bytes(10)
+        .post("/upload", body_len_fn);
+    let hyper_req = hyper::Request::builder()
+        .method("POST")
+        .uri("/upload")
+        .header("content-length", "11")
+        .body(NeverRead)
+        .unwrap();
+    let resp = router.dispatch(hyper_req).await;
+    assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+#[tokio::test]
+async fn body_limit_applies_to_debug_and_boxed_dispatch() {
+    let router = Router::new().max_body_bytes(4).post("/upload", body_len_fn);
+
+    let debug_resp = router
+        .dispatch_debug(post_with_body(vec![b'a'; 5]), false)
+        .await;
+    assert_eq!(debug_resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+
+    let boxed_resp = router
+        .dispatch_boxed(post_with_body(vec![b'a'; 5]), true)
+        .await;
+    assert_eq!(boxed_resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+
+    let boxed_ok = router
+        .dispatch_boxed(post_with_body(vec![b'a'; 4]), true)
+        .await;
+    assert_eq!(boxed_ok.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn router_without_limit_uses_default_ten_mib() {
+    let limit = crate::settings::DEFAULT_MAX_BODY_BYTES;
+    let router = Router::new().post("/upload", body_len_fn);
+
+    let over = router.dispatch(post_with_body(vec![0u8; limit + 1])).await;
+    assert_eq!(over.status(), StatusCode::PAYLOAD_TOO_LARGE);
+
+    let at_limit = router.dispatch(post_with_body(vec![0u8; limit])).await;
+    assert_eq!(at_limit.status(), StatusCode::OK);
+}

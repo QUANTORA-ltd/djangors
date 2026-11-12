@@ -273,3 +273,17 @@ async fn real_socket_sse_streaming_groups_broadcast() {
 
     server_task.abort();
 }
+
+#[test]
+fn djangors_new_applies_settings_body_limit_when_router_has_none() {
+    let settings = DjangorsSettings::new().with_max_body_bytes(2048);
+    let app = Djangors::new(settings, Router::new());
+    assert_eq!(app.router.configured_max_body_bytes(), Some(2048));
+}
+
+#[test]
+fn djangors_new_keeps_explicit_router_body_limit() {
+    let settings = DjangorsSettings::new().with_max_body_bytes(2048);
+    let app = Djangors::new(settings, Router::new().max_body_bytes(64));
+    assert_eq!(app.router.configured_max_body_bytes(), Some(64));
+}

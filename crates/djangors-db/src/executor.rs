@@ -6,6 +6,8 @@ use sqlx::{PgConnection, PgPool};
 #[cfg(feature = "sqlite")]
 use sqlx::{SqliteConnection, SqlitePool};
 
+use tracing::Instrument;
+
 use crate::bind::{BindValue, NullKind};
 use crate::database::Database;
 use crate::dialect::Dialect;
@@ -89,6 +91,15 @@ impl<'a> Conn<'a> {
         sql: &str,
         params: &[BindValue],
     ) -> Result<Vec<DbRow>, sqlx::Error> {
+        let span = tracing::info_span!("sql", statement = sql);
+        self.fetch_all_traced(sql, params).instrument(span).await
+    }
+
+    async fn fetch_all_traced(
+        &mut self,
+        sql: &str,
+        params: &[BindValue],
+    ) -> Result<Vec<DbRow>, sqlx::Error> {
         let start = crate::query_log::is_logging_active().then(std::time::Instant::now);
         let res = match self {
             #[cfg(feature = "postgres")]
@@ -124,6 +135,15 @@ impl<'a> Conn<'a> {
 
     /// Execute the query, requiring exactly one row.
     pub async fn fetch_one(
+        &mut self,
+        sql: &str,
+        params: &[BindValue],
+    ) -> Result<DbRow, sqlx::Error> {
+        let span = tracing::info_span!("sql", statement = sql);
+        self.fetch_one_traced(sql, params).instrument(span).await
+    }
+
+    async fn fetch_one_traced(
         &mut self,
         sql: &str,
         params: &[BindValue],
@@ -167,6 +187,17 @@ impl<'a> Conn<'a> {
         sql: &str,
         params: &[BindValue],
     ) -> Result<Option<DbRow>, sqlx::Error> {
+        let span = tracing::info_span!("sql", statement = sql);
+        self.fetch_optional_traced(sql, params)
+            .instrument(span)
+            .await
+    }
+
+    async fn fetch_optional_traced(
+        &mut self,
+        sql: &str,
+        params: &[BindValue],
+    ) -> Result<Option<DbRow>, sqlx::Error> {
         let start = crate::query_log::is_logging_active().then(std::time::Instant::now);
         let res = match self {
             #[cfg(feature = "postgres")]
@@ -202,6 +233,15 @@ impl<'a> Conn<'a> {
 
     /// Execute the query for its side effect, returning the affected-row count.
     pub async fn execute(&mut self, sql: &str, params: &[BindValue]) -> Result<u64, sqlx::Error> {
+        let span = tracing::info_span!("sql", statement = sql);
+        self.execute_traced(sql, params).instrument(span).await
+    }
+
+    async fn execute_traced(
+        &mut self,
+        sql: &str,
+        params: &[BindValue],
+    ) -> Result<u64, sqlx::Error> {
         let start = crate::query_log::is_logging_active().then(std::time::Instant::now);
         let res = match self {
             #[cfg(feature = "postgres")]

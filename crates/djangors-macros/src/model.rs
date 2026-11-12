@@ -14,6 +14,7 @@ struct ModelField {
     null_bind_tok: proc_macro2::TokenStream,
     auto_now_add: bool,
     auto_now: bool,
+    encrypted: bool,
 }
 
 fn field_value_expr(f: &ModelField) -> TokenStream {
@@ -192,6 +193,7 @@ pub fn expand_derive_model(input: DeriveInput) -> syn::Result<TokenStream> {
     let mut unique_together = None;
     let mut indexes = None;
     let mut manager = None;
+    let mut soft_delete = false;
 
     let struct_name_ident = &input.ident;
     let struct_name = struct_name_ident.to_string();
@@ -339,6 +341,8 @@ pub fn expand_derive_model(input: DeriveInput) -> syn::Result<TokenStream> {
                             ));
                         }
                     }
+                } else if meta.path.is_ident("soft_delete") {
+                    soft_delete = true;
                 }
                 Ok(())
             })?;
@@ -420,6 +424,7 @@ pub fn expand_derive_model(input: DeriveInput) -> syn::Result<TokenStream> {
         // 2a. Parse field attributes
         let mut primary_key = false;
         let mut auto = false;
+        let mut encrypted = false;
         let mut max_length = None;
         let mut file_field = false;
         let mut default = None;
@@ -498,6 +503,8 @@ pub fn expand_derive_model(input: DeriveInput) -> syn::Result<TokenStream> {
                             }
                             Ok(())
                         })?;
+                    } else if meta.path.is_ident("encrypted") {
+                        encrypted = true;
                     } else if meta.path.is_ident("auto_now_add") {
                         if meta.input.peek(syn::Token![=]) {
                             let value = meta.value()?;
@@ -549,6 +556,12 @@ pub fn expand_derive_model(input: DeriveInput) -> syn::Result<TokenStream> {
 
         // 2b. Check if ForeignKey/OneToOne relation
         if let Some(relation_field) = get_relation_field(&field.ty) {
+            if encrypted {
+                return Err(syn::Error::new_spanned(
+                    &field.ty,
+                    "encrypted is only valid on String and Option<String> fields",
+                ));
+            }
             let target_ty = relation_field.target_ty;
 
             // ManyToMany is a relation but NOT a column: it lives in a join table.
@@ -646,6 +659,7 @@ pub fn expand_derive_model(input: DeriveInput) -> syn::Result<TokenStream> {
                 null_bind_tok: quote! { i64 },
                 auto_now_add: false,
                 auto_now: false,
+                encrypted: false,
             });
             form_names.push(field_name_str.clone());
             form_idents.push(field_ident.clone());
@@ -669,6 +683,12 @@ pub fn expand_derive_model(input: DeriveInput) -> syn::Result<TokenStream> {
                 return Err(syn::Error::new_spanned(
                     &field.ty,
                     "file_field is only valid on String fields",
+                ));
+            }
+            if encrypted && !is_string {
+                return Err(syn::Error::new_spanned(
+                    &field.ty,
+                    "encrypted is only valid on String and Option<String> fields",
                 ));
             }
 
@@ -882,6 +902,19 @@ pub fn expand_derive_model(input: DeriveInput) -> syn::Result<TokenStream> {
                     quote! { row.try_string_by_name(#final_column).map_err(djangors_orm::OrmError::from)?.ok_or_else(|| djangors_orm::OrmError::Query(djangors_orm::sqlx::Error::RowNotFound))? }
                 }
             };
+            let from_row_code = if encrypted {
+                if nullable {
+                    quote! {
+                        (#from_row_code)
+                            .map(|s| djangors_orm::encryption::decrypt_str(&s))
+                            .transpose()?
+                    }
+                } else {
+                    quote! { djangors_orm::encryption::decrypt_str(&(#from_row_code))? }
+                }
+            } else {
+                from_row_code
+            };
             from_row_assignments.push(quote! {
                 #field_ident: #from_row_code
             });
@@ -897,6 +930,7 @@ pub fn expand_derive_model(input: DeriveInput) -> syn::Result<TokenStream> {
                 null_bind_tok: quote! { #null_bind_ty },
                 auto_now_add,
                 auto_now,
+                encrypted,
             });
             if !auto
                 && !primary_key
@@ -962,6 +996,24 @@ pub fn expand_derive_model(input: DeriveInput) -> syn::Result<TokenStream> {
             }
         }
     }
+
+    // 3a. Validation: soft-delete models need a nullable `deleted_at` DateTime field
+    let soft_delete_col: Option<String> = if soft_delete {
+        let deleted_field = model_fields.iter().find(|f| f.ident == "deleted_at");
+        match deleted_field {
+            Some(f) if f.is_nullable && f.last_ident.as_deref() == Some("DateTime") => {
+                Some(f.column_name.clone())
+            }
+            _ => {
+                return Err(syn::Error::new_spanned(
+                    struct_name_ident,
+                    "#[djangors(soft_delete)] requires a field `deleted_at: Option<chrono::DateTime<chrono::Utc>>`",
+                ));
+            }
+        }
+    } else {
+        None
+    };
 
     // 3. Validation: exactly one primary key field
     let pk_fields: Vec<&Ident> = parsed_fields
@@ -1048,6 +1100,11 @@ pub fn expand_derive_model(input: DeriveInput) -> syn::Result<TokenStream> {
         } else {
             field_value_expr(f)
         };
+        let val_expr = if f.encrypted {
+            quote! { djangors_orm::encryption::encrypt_value(#val_expr)? }
+        } else {
+            val_expr
+        };
         let null_kind_tok = match f.null_bind_tok.to_string().as_str() {
             "String" => quote! { djangors_orm::NullKind::Text },
             "f64" | "f32" => quote! { djangors_orm::NullKind::F64 },
@@ -1085,6 +1142,11 @@ pub fn expand_derive_model(input: DeriveInput) -> syn::Result<TokenStream> {
             } else {
                 field_value_expr(f)
             };
+            let val_expr = if f.encrypted {
+                quote! { djangors_orm::encryption::encrypt_value(#val_expr)? }
+            } else {
+                val_expr
+            };
             let null_kind_tok = match f.null_bind_tok.to_string().as_str() {
                 "String" => quote! { djangors_orm::NullKind::Text },
                 "f64" | "f32" => quote! { djangors_orm::NullKind::F64 },
@@ -1103,6 +1165,160 @@ pub fn expand_derive_model(input: DeriveInput) -> syn::Result<TokenStream> {
         });
 
     let delete_bind = field_value_expr(pk_field);
+
+    // Hard delete by primary key: the body of `delete` for ordinary models, and of
+    // `force_delete` for soft-delete models.
+    let hard_delete_method = |name: &str, doc: &str| {
+        let name_ident = Ident::new(name, proc_macro2::Span::call_site());
+        quote! {
+            #[doc = #doc]
+            pub async fn #name_ident(&self, db: &djangors_orm::djangors_db::Database) -> Result<(), djangors_orm::OrmError> {
+                use djangors_orm::djangors_db::DbExecutor;
+                let payload = djangors_orm::Model::field_values(self);
+                Self::pre_delete_signal().send(payload.clone()).await;
+                let mut db_ref = db;
+                let dialect = db_ref.dialect();
+                let sql = format!(
+                    "DELETE FROM {} WHERE \"{}\" = {}",
+                    #table_name,
+                    #pk_col_str,
+                    dialect.placeholder(1)
+                );
+                let val = #delete_bind;
+                let bind_val = djangors_orm::BindValue::from(val);
+                let rows_affected = db_ref.conn().execute(&sql, &[bind_val]).await?;
+                if rows_affected == 0 {
+                    Err(djangors_orm::OrmError::NotFound {
+                        model: Self::meta().struct_name,
+                    })
+                } else {
+                    djangors_orm::query_cache::invalidate_table(#table_name);
+                    Self::post_delete_signal().send(payload).await;
+                    Ok(())
+                }
+            }
+        }
+    };
+
+    let delete_methods = match &soft_delete_col {
+        Some(deleted_col) => {
+            let soft_delete_method = quote! {
+                /// Soft-deletes the row: sets `deleted_at` to the current time instead of
+                /// removing it. Returns `OrmError::NotFound` if no live row matches the primary key.
+                pub async fn delete(&self, db: &djangors_orm::djangors_db::Database) -> Result<(), djangors_orm::OrmError> {
+                    use djangors_orm::djangors_db::DbExecutor;
+                    let payload = djangors_orm::Model::field_values(self);
+                    Self::pre_delete_signal().send(payload.clone()).await;
+                    let mut db_ref = db;
+                    let dialect = db_ref.dialect();
+                    let sql = format!(
+                        "UPDATE {} SET \"{}\" = {} WHERE \"{}\" = {} AND \"{}\" IS NULL",
+                        #table_name,
+                        #deleted_col,
+                        dialect.placeholder(1),
+                        #pk_col_str,
+                        dialect.placeholder(2),
+                        #deleted_col
+                    );
+                    let now = djangors_orm::expr::Value::DateTime(chrono::Utc::now());
+                    let val = #delete_bind;
+                    let bind_values = vec![
+                        djangors_orm::BindValue::from(now),
+                        djangors_orm::BindValue::from(val),
+                    ];
+                    let rows_affected = db_ref.conn().execute(&sql, &bind_values).await?;
+                    if rows_affected == 0 {
+                        Err(djangors_orm::OrmError::NotFound {
+                            model: Self::meta().struct_name,
+                        })
+                    } else {
+                        djangors_orm::query_cache::invalidate_table(#table_name);
+                        Self::post_delete_signal().send(payload).await;
+                        Ok(())
+                    }
+                }
+            };
+            let force = hard_delete_method(
+                "force_delete",
+                "Permanently deletes the row matching the primary key, ignoring soft delete. \
+                 Returns `OrmError::NotFound` if no row was deleted.",
+            );
+            let restore = quote! {
+                /// Restores a soft-deleted row by setting `deleted_at` back to `NULL`. Returns
+                /// `OrmError::NotFound` if no soft-deleted row matches the primary key.
+                pub async fn restore(&self, db: &djangors_orm::djangors_db::Database) -> Result<(), djangors_orm::OrmError> {
+                    use djangors_orm::djangors_db::DbExecutor;
+                    Self::pre_save_signal().send(djangors_orm::Model::field_values(self)).await;
+                    let mut db_ref = db;
+                    let dialect = db_ref.dialect();
+                    let sql = format!(
+                        "UPDATE {} SET \"{}\" = NULL WHERE \"{}\" = {} AND \"{}\" IS NOT NULL",
+                        #table_name,
+                        #deleted_col,
+                        #pk_col_str,
+                        dialect.placeholder(1),
+                        #deleted_col
+                    );
+                    let val = #delete_bind;
+                    let bind_val = djangors_orm::BindValue::from(val);
+                    let rows_affected = db_ref.conn().execute(&sql, &[bind_val]).await?;
+                    if rows_affected == 0 {
+                        Err(djangors_orm::OrmError::NotFound {
+                            model: Self::meta().struct_name,
+                        })
+                    } else {
+                        djangors_orm::query_cache::invalidate_table(#table_name);
+                        let select_sql = format!(
+                            "SELECT * FROM {} WHERE \"{}\" = {}",
+                            #table_name,
+                            #pk_col_str,
+                            dialect.placeholder(1)
+                        );
+                        let val = #delete_bind;
+                        let row = db_ref
+                            .conn()
+                            .fetch_one(&select_sql, &[djangors_orm::BindValue::from(val)])
+                            .await?;
+                        let restored = Self::from_row(&row)?;
+                        Self::post_save_signal().send(djangors_orm::Model::field_values(&restored)).await;
+                        Ok(())
+                    }
+                }
+            };
+            quote! {
+                #soft_delete_method
+                #force
+                #restore
+            }
+        }
+        None => hard_delete_method(
+            "delete",
+            "Deletes the row matching the primary key. Returns `OrmError::NotFound` if no row was deleted.",
+        ),
+    };
+
+    let soft_delete_fn = match &soft_delete_col {
+        Some(deleted_col) => quote! {
+            fn soft_delete_column() -> Option<&'static str> {
+                Some(#deleted_col)
+            }
+        },
+        None => quote! {},
+    };
+
+    let encrypted_names: Vec<String> = model_fields
+        .iter()
+        .filter(|f| f.encrypted)
+        .map(|f| f.ident.to_string())
+        .collect();
+    let encrypted_fields_fn = quote! {
+        fn encrypted_fields() -> &'static [&'static str]
+        where
+            Self: Sized,
+        {
+            &[#(#encrypted_names),*]
+        }
+    };
 
     let field_value_pairs = model_fields.iter().map(|f| {
         let name_str = f.ident.to_string();
@@ -1246,12 +1462,18 @@ pub fn expand_derive_model(input: DeriveInput) -> syn::Result<TokenStream> {
                 let save_cols: Vec<&str> = vec![#(#save_cols_vec),*];
                 let placeholders: Vec<String> = (1..=save_cols.len()).map(|i| dialect.placeholder(i)).collect();
                 let save_cols_quoted: Vec<String> = save_cols.iter().map(|c| format!("\"{}\"", c)).collect();
-                let sql = format!(
-                    "INSERT INTO {} ({}) VALUES ({}) RETURNING *",
-                    #table_name,
-                    save_cols_quoted.join(", "),
-                    placeholders.join(", ")
-                );
+                // A model whose only field is an auto primary key has no columns to insert;
+                // `INSERT INTO t () VALUES ()` is invalid SQL on PostgreSQL and SQLite.
+                let sql = if save_cols.is_empty() {
+                    format!("INSERT INTO {} DEFAULT VALUES RETURNING *", #table_name)
+                } else {
+                    format!(
+                        "INSERT INTO {} ({}) VALUES ({}) RETURNING *",
+                        #table_name,
+                        save_cols_quoted.join(", "),
+                        placeholders.join(", ")
+                    )
+                };
                 let mut bind_values = Vec::new();
                 #(#save_bind_stmts)*
                 let row = db_ref.conn().fetch_one(&sql, &bind_values).await?;
@@ -1298,34 +1520,7 @@ pub fn expand_derive_model(input: DeriveInput) -> syn::Result<TokenStream> {
                 }
             }
 
-            /// Delete an existing row from the database.
-            ///
-            /// Deletes the row matching the primary key. Returns `OrmError::NotFound` if no row was deleted.
-            pub async fn delete(&self, db: &djangors_orm::djangors_db::Database) -> Result<(), djangors_orm::OrmError> {
-                use djangors_orm::djangors_db::DbExecutor;
-                let payload = djangors_orm::Model::field_values(self);
-                Self::pre_delete_signal().send(payload.clone()).await;
-                let mut db_ref = db;
-                let dialect = db_ref.dialect();
-                let sql = format!(
-                    "DELETE FROM {} WHERE \"{}\" = {}",
-                    #table_name,
-                    #pk_col_str,
-                    dialect.placeholder(1)
-                );
-                let val = #delete_bind;
-                let bind_val = djangors_orm::BindValue::from(val);
-                let rows_affected = db_ref.conn().execute(&sql, &[bind_val]).await?;
-                if rows_affected == 0 {
-                    Err(djangors_orm::OrmError::NotFound {
-                        model: Self::meta().struct_name,
-                    })
-                } else {
-                    djangors_orm::query_cache::invalidate_table(#table_name);
-                    Self::post_delete_signal().send(payload).await;
-                    Ok(())
-                }
-            }
+            #delete_methods
         }
 
         #[allow(missing_docs)]
@@ -1367,6 +1562,10 @@ pub fn expand_derive_model(input: DeriveInput) -> syn::Result<TokenStream> {
             }
 
             #objects_override
+
+            #soft_delete_fn
+
+            #encrypted_fields_fn
         }
 
         #[allow(missing_docs)]

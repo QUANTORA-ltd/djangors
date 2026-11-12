@@ -88,8 +88,28 @@ pub fn routes(groups: Groups) -> Router {
 ```
 
 `Groups` lives in one process. If you run several instances behind a load balancer,
-each one only reaches its own clients; send the message to every instance (for example
-through Postgres `LISTEN/NOTIFY` or Redis) and let each one broadcast locally.
+each one only reaches its own clients unless you connect them with `PgGroups`. It sends
+every message through Postgres `NOTIFY` and each instance delivers what it hears to its
+local `Groups`:
+
+```rust,illustrative
+use djangors_core::{DjangorsError, Groups, PgGroups};
+use djangors_orm::djangors_db::Database;
+
+async fn start_groups(db: &Database) -> Result<PgGroups, DjangorsError> {
+    // Every instance listens on the same channel with its own local `Groups`.
+    let groups = Groups::new();
+    PgGroups::start(db, groups, "app_events").await
+}
+
+// Any instance, including the one that sends:
+// pg_groups.send("notifications", "new order").await?;
+```
+
+The sending instance also receives its own message through `LISTEN`, so call sites use only
+`send`. `PgGroups` needs a PostgreSQL database; it returns an error on SQLite. Each started
+`PgGroups` holds one connection from the pool for its `LISTEN`. Payloads must be under 8000
+bytes, and larger messages return an error instead of being truncated.
 
 ## Cross-origin protection
 

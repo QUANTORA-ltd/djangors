@@ -93,18 +93,28 @@ pub fn new(name: &str) -> Result<(), String> {
 
     validate_project_name(name)?;
 
+    // The seed script is built as a second binary named `seed`, which would collide with a
+    // project of the same name.
+    if crate_name == "seed" {
+        return Err("project name 'seed' is reserved: it clashes with the seed binary".into());
+    }
+
     if target_dir.exists() {
         return Err(format!("destination '{name}' already exists"));
     }
 
-    let djangors_core_dep = match resolve_core_dependency() {
-        CoreDependency::Path(crates_dir) => {
+    let (djangors_core_dep, djangors_db_dep) = match resolve_core_dependency() {
+        CoreDependency::Path(crates_dir) => (
             format!(
                 "{{ path = \"{}/djangors-core\" }}",
                 crates_dir.to_string_lossy()
-            )
-        }
-        CoreDependency::Version(version) => format!("\"{version}\""),
+            ),
+            format!(
+                "{{ path = \"{}/djangors-db\" }}",
+                crates_dir.to_string_lossy()
+            ),
+        ),
+        CoreDependency::Version(version) => (format!("\"{version}\""), format!("\"{version}\"")),
     };
 
     let cargo_toml = format!(
@@ -113,6 +123,7 @@ name = "{crate_name}"
 version = "0.1.0"
 edition = "2021"
 publish = false
+default-run = "{crate_name}"
 
 [[bin]]
 name = "{crate_name}"
@@ -120,6 +131,7 @@ path = "src/main.rs"
 
 [dependencies]
 djangors-core = {djangors_core_dep}
+djangors-db = {djangors_db_dep}
 tokio = {{ version = "1", features = ["full"] }}
 tower = {{ version = "0.5", features = ["util"] }}
 
@@ -130,9 +142,18 @@ codegen-units = 1
 "#
     );
 
+    // App code lives in the library crate (src/lib.rs) so the server binary and the
+    // seed binary (src/bin/seed.rs) can both use it.
+    let lib_ident = crate_name.replace('-', "_");
+    let lib_rs = r#"//! The application: models, views and anything else both binaries need.
+//! `src/main.rs` (the server) and `src/bin/seed.rs` (`dj seed`) import from here.
+
+pub mod views;
+"#;
+
     let main_rs = r#"use djangors_core::{Djangors, DjangorsError, DjangorsSettings, Router};
 
-mod views;
+use __LIB__::views;
 
 #[tokio::main]
 async fn main() -> Result<(), DjangorsError> {
@@ -156,7 +177,32 @@ async fn main() -> Result<(), DjangorsError> {
 
     Djangors::new(settings, Router::new()).run_service(service).await
 }
-"#;
+"#
+    .replace("__LIB__", &lib_ident);
+
+    let seed_rs = r#"//! Seed data for development databases. Run it with `dj seed`.
+//!
+//! This is an ordinary binary. It connects to the database named by `DATABASE_URL` and
+//! creates the rows a development environment needs. `dj seed` refuses to run when
+//! `DJANGORS_DEBUG=false` unless you pass `--force`.
+//!
+//! Your models are in the library crate: import them with `use __LIB__::...`.
+
+use djangors_db::config::DatabaseConfig;
+use djangors_db::Database;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let url = std::env::var("DATABASE_URL")
+        .map_err(|_| "DATABASE_URL environment variable is not set")?;
+    // Rename to `db` once you create rows with it.
+    let _db = Database::connect(&DatabaseConfig::new(url)).await?;
+
+    println!("Nothing to seed yet");
+    Ok(())
+}
+"#
+    .replace("__LIB__", &lib_ident);
 
     let views_rs = r#"use djangors_core::{DjangorsError, PathParams, Request, Response, StatusCode};
 
@@ -256,8 +302,17 @@ Then visit http://127.0.0.1:8000/.
     std::fs::write(target_dir.join("src/main.rs"), main_rs)
         .map_err(|e| format!("failed to write '{name}/src/main.rs': {e}"))?;
 
+    std::fs::write(target_dir.join("src/lib.rs"), lib_rs)
+        .map_err(|e| format!("failed to write '{name}/src/lib.rs': {e}"))?;
+
     std::fs::write(target_dir.join("src/views.rs"), views_rs)
         .map_err(|e| format!("failed to write '{name}/src/views.rs': {e}"))?;
+
+    std::fs::create_dir_all(target_dir.join("src/bin"))
+        .map_err(|e| format!("failed to create directory '{name}/src/bin': {e}"))?;
+
+    std::fs::write(target_dir.join(SEED_SCRIPT), seed_rs)
+        .map_err(|e| format!("failed to write '{name}/{SEED_SCRIPT}': {e}"))?;
 
     std::fs::write(target_dir.join(".gitignore"), gitignore)
         .map_err(|e| format!("failed to write '{name}/.gitignore': {e}"))?;
@@ -376,7 +431,11 @@ pub async fn index(_req: Request, _params: PathParams) -> Result<Response, Djang
             .map_err(|e| format!("failed to write 'src/{name}/{file}': {e}"))?;
     }
     println!("[dj new-app] created 'src/{name}/'");
-    println!("[dj new-app] next: add 'mod {name};' to src/main.rs, and mount its routes");
+    println!(
+        "[dj new-app] next: add '{}' to {}, and mount its routes",
+        module_declaration(name),
+        module_root()
+    );
     Ok(())
 }
 
@@ -1388,6 +1447,65 @@ pub fn test() -> Result<(), String> {
     Ok(())
 }
 
+/// The file app modules are declared in: `src/lib.rs` for projects that have one (all
+/// projects made by `dj new` since 0.11, so the seed binary can use them), else `src/main.rs`.
+fn module_root() -> &'static str {
+    if Path::new("src/lib.rs").is_file() {
+        "src/lib.rs"
+    } else {
+        "src/main.rs"
+    }
+}
+
+/// `pub mod name;` in a library crate (so binaries can reach it), `mod name;` in main.rs.
+fn module_declaration(name: &str) -> String {
+    if module_root() == "src/lib.rs" {
+        format!("pub mod {name};")
+    } else {
+        format!("mod {name};")
+    }
+}
+
+/// Project-relative path of the seed script that `dj seed` runs.
+const SEED_SCRIPT: &str = "src/bin/seed.rs";
+
+/// Returns true when `DJANGORS_DEBUG` turns debug mode off (`false` or `0`, in any case).
+fn seed_blocked_by_debug_env(value: Option<&str>) -> bool {
+    value.is_some_and(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "false" | "0"))
+}
+
+/// Run the project's seed script (`src/bin/seed.rs`) with `cargo run --bin seed`.
+///
+/// The seed binary inherits the current environment, so `DATABASE_URL` applies. Seeding is
+/// refused when `DJANGORS_DEBUG` is `false` unless `force` is set, so development data does
+/// not land in a production database by accident.
+pub fn seed(force: bool) -> Result<(), String> {
+    require_project_root()?;
+    if !Path::new(SEED_SCRIPT).is_file() {
+        return Err(format!(
+            "no seed script at '{SEED_SCRIPT}': create it, then run 'dj seed' again \
+             (see 'Seeding a development database' in the testing guide)"
+        ));
+    }
+    let debug_env = std::env::var("DJANGORS_DEBUG").ok();
+    if !force && seed_blocked_by_debug_env(debug_env.as_deref()) {
+        return Err(
+            "refusing to seed: DJANGORS_DEBUG is false, so this looks like a production \
+             environment. Pass --force to seed anyway"
+                .to_string(),
+        );
+    }
+    let status = std::process::Command::new("cargo")
+        .args(["run", "--bin", "seed"])
+        .status()
+        .map_err(|e| format!("failed to run cargo run --bin seed: {e}"))?;
+
+    if !status.success() {
+        std::process::exit(status.code().unwrap_or(1));
+    }
+    Ok(())
+}
+
 /// Collect static files from source directories into one output directory.
 pub fn collectstatic(source: Vec<PathBuf>, output: PathBuf) {
     let sources = if source.is_empty() {
@@ -1419,10 +1537,19 @@ pub fn openapi(
     output: Option<PathBuf>,
     title: &str,
     api_version: &str,
+    api_prefix: &str,
+    model_filter: &[String],
 ) -> Result<(), String> {
     require_project_root()?;
     let models = introspect_models()?;
-    let rendered = render_openapi_from_snapshots(&models, typescript, title, api_version);
+    let rendered = render_openapi_from_snapshots(
+        &models,
+        typescript,
+        title,
+        api_version,
+        api_prefix,
+        model_filter,
+    )?;
     if let Some(path) = output {
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
@@ -1445,19 +1572,49 @@ pub fn render_openapi_from_snapshots(
     typescript: bool,
     title: &str,
     api_version: &str,
-) -> String {
+    api_prefix: &str,
+    model_filter: &[String],
+) -> Result<String, String> {
+    let available = models
+        .iter()
+        .map(|m| m.struct_name.clone())
+        .collect::<Vec<_>>();
+    let unknown = model_filter
+        .iter()
+        .filter(|name| !available.contains(name))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !unknown.is_empty() {
+        return Err(format!(
+            "unknown model(s): {}; available models: {}",
+            unknown.join(", "),
+            available.join(", ")
+        ));
+    }
+    let prefix = format!("/{}", api_prefix.trim_matches('/'));
+    let prefix = if prefix == "/" { String::new() } else { prefix };
+    let assumption = format!(
+        "Paths assume each model is mounted at {}/<plural>/.",
+        prefix
+    );
     let mut builder = djangors_rest::OpenApiBuilder::new(title, api_version);
     for model in models {
+        if !model_filter.is_empty() && !model_filter.contains(&model.struct_name) {
+            continue;
+        }
         let base_path = format!(
-            "/api/{}",
+            "{}/{}",
+            prefix,
             pluralize_snake(&to_snake_case(&model.struct_name))
         );
         builder.register_snapshot(model, &base_path);
     }
     if typescript {
-        builder.to_typescript()
+        Ok(format!("// {assumption}\n{}", builder.to_typescript()))
     } else {
-        serde_json::to_string_pretty(&builder.build()).expect("OpenAPI spec is serializable")
+        let mut spec = builder.build();
+        spec["info"]["description"] = serde_json::Value::String(assumption);
+        Ok(serde_json::to_string_pretty(&spec).expect("OpenAPI spec is serializable"))
     }
 }
 
@@ -1838,13 +1995,15 @@ pub fn generate_resource_in_dir(
         "[dj generate resource] created src/{app_name}/ (models, serializers, views, admin, tests) and migrations/{mig_filename}\n\
          \n\
          Next steps:\n\
-         \x20 1. Add `mod {app_name};` to src/main.rs.\n\
+         \x20 1. Add `{decl}` to {root}.\n\
          \x20 2. Make sure Cargo.toml depends on djangors-macros, djangors-orm, djangors-rest,\n\
          \x20    djangors-admin, serde (with \"derive\"), serde_json, and any of chrono / uuid /\n\
          \x20    rust_decimal your field types use (or on the `djangors` facade crate).\n\
          \x20 3. Mount the routes: `let router = {app_name}::views::register_routes(router);`\n\
          \x20 4. Register the admin: `{app_name}::admin::register_admin(&site);`\n\
-         \x20 5. Run `dj migrate`."
+         \x20 5. Run `dj migrate`.",
+        decl = module_declaration(&app_name),
+        root = module_root(),
     );
     Ok(())
 }

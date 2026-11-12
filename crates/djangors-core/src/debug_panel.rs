@@ -27,6 +27,10 @@ use crate::html_escape;
 #[derive(Clone, Debug)]
 pub struct DebugPanelLayer {
     inject_html: bool,
+    enabled: bool,
+    /// True when the caller did not say whether this is a debug build (`new()`), so
+    /// `layer()` falls back to checking `DJANGORS_DEBUG` before warning.
+    debug_unknown: bool,
 }
 
 impl Default for DebugPanelLayer {
@@ -38,7 +42,20 @@ impl Default for DebugPanelLayer {
 impl DebugPanelLayer {
     /// Creates a new [`DebugPanelLayer`] with HTML toolbar injection enabled.
     pub fn new() -> Self {
-        Self { inject_html: true }
+        Self {
+            inject_html: true,
+            enabled: true,
+            debug_unknown: true,
+        }
+    }
+
+    /// Creates a panel layer whose enabled state follows the application debug setting.
+    pub fn for_settings(settings: &crate::DjangorsSettings) -> Self {
+        Self {
+            enabled: settings.debug,
+            debug_unknown: false,
+            ..Self::new()
+        }
     }
 
     /// Configures whether the collapsible HTML debug toolbar is injected into `text/html` responses.
@@ -57,9 +74,17 @@ impl<S> Layer<S> for DebugPanelLayer {
     type Service = DebugPanelService<S>;
 
     fn layer(&self, inner: S) -> Self::Service {
+        let debug_env = std::env::var("DJANGORS_DEBUG").is_ok_and(|v| v == "true" || v == "1");
+        if self.enabled && self.debug_unknown && !debug_env {
+            tracing::warn!(
+                "debug panel enabled without DebugPanelLayer::for_settings and DJANGORS_DEBUG \
+                 is not set; it exposes SQL to every visitor, so never run it in production"
+            );
+        }
         DebugPanelService {
             inner,
             inject_html: self.inject_html,
+            enabled: self.enabled,
         }
     }
 }
@@ -69,6 +94,7 @@ impl<S> Layer<S> for DebugPanelLayer {
 pub struct DebugPanelService<S> {
     inner: S,
     inject_html: bool,
+    enabled: bool,
 }
 
 impl<S, ReqBody> Service<hyper::Request<ReqBody>> for DebugPanelService<S>
@@ -94,10 +120,14 @@ where
     fn call(&mut self, req: hyper::Request<ReqBody>) -> Self::Future {
         let mut inner = self.inner.clone();
         let inject_html = self.inject_html;
+        let enabled = self.enabled;
         let method = req.method().as_str().to_string();
         let path = req.uri().path().to_string();
 
         Box::pin(async move {
+            if !enabled {
+                return inner.call(req).await;
+            }
             let req_start = Instant::now();
             let (res, stats) = with_query_log(inner.call(req)).await;
             let req_micros = req_start.elapsed().as_micros() as u64;
@@ -235,6 +265,7 @@ pub fn render_debug_panel_html(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::DjangorsSettings;
     use crate::{PathParams, Request, Response, Router, StatusCode};
     use djangors_orm::djangors_db::{Database, DatabaseConfig};
     use tower::ServiceExt;
@@ -303,5 +334,39 @@ mod tests {
         assert!(html.contains("Potential N+1 Query Warning:"));
         assert!(html.contains("3x"));
         assert!(html.contains("SELECT id, name FROM items WHERE id = 1"));
+    }
+
+    #[tokio::test]
+    async fn disabled_debug_panel_leaves_response_unchanged() {
+        let router = Router::new().get("/", |_req: Request, _params: PathParams| async {
+            Ok(Response::html(
+                StatusCode::OK,
+                "<html><body>plain</body></html>",
+            ))
+        });
+        let mut layer = DebugPanelLayer::new();
+        layer.enabled = false;
+        let svc = layer.layer(router);
+        let req = hyper::Request::builder()
+            .uri("/")
+            .body(Full::new(Bytes::new()))
+            .unwrap();
+        let resp = svc.oneshot(req).await.unwrap();
+        assert!(resp.headers().get("x-djangors-query-count").is_none());
+        assert_eq!(
+            resp.into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .as_ref(),
+            b"<html><body>plain</body></html>"
+        );
+    }
+
+    #[test]
+    fn for_settings_follows_debug_setting() {
+        assert!(!DebugPanelLayer::for_settings(&DjangorsSettings::new().with_debug(false)).enabled);
+        assert!(DebugPanelLayer::for_settings(&DjangorsSettings::new().with_debug(true)).enabled);
     }
 }

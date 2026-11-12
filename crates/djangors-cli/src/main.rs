@@ -20,6 +20,7 @@ fn builtin_command_names() -> std::collections::HashSet<&'static str> {
         "createpermissions",
         "shell",
         "test",
+        "seed",
         "collectstatic",
         "openapi",
         "generate",
@@ -149,6 +150,12 @@ async fn main() {
                 std::process::exit(1);
             }
         }
+        Commands::Seed { force } => {
+            if let Err(e) = commands::seed(force) {
+                eprintln!("[dj seed] error: {e}");
+                std::process::exit(1);
+            }
+        }
         Commands::Collectstatic { source, output } => {
             commands::collectstatic(source, output);
         }
@@ -157,8 +164,17 @@ async fn main() {
             output,
             title,
             api_version,
+            api_prefix,
+            model,
         } => {
-            if let Err(e) = commands::openapi(typescript, output, &title, &api_version) {
+            if let Err(e) = commands::openapi(
+                typescript,
+                output,
+                &title,
+                &api_version,
+                &api_prefix,
+                &model,
+            ) {
                 eprintln!("[dj openapi] error: {e}");
                 std::process::exit(1);
             }

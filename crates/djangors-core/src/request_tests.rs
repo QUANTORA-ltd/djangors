@@ -29,6 +29,49 @@ async fn header_access() {
     assert!(req.header("missing").is_none());
 }
 
+#[test]
+fn is_htmx_checks_request_header() {
+    let mut h = HeaderMap::new();
+    h.insert("hx-request", HeaderValue::from_static("true"));
+    assert!(Request::new(Method::GET, Uri::from_static("/"), h, Bytes::new()).is_htmx());
+}
+#[test]
+fn is_htmx_boosted_checks_header() {
+    let mut h = HeaderMap::new();
+    h.insert("hx-boosted", HeaderValue::from_static("true"));
+    assert!(Request::new(Method::GET, Uri::from_static("/"), h, Bytes::new()).is_htmx_boosted());
+}
+#[test]
+fn htmx_target_reads_header() {
+    let mut h = HeaderMap::new();
+    h.insert("hx-target", HeaderValue::from_static("results"));
+    assert_eq!(
+        Request::new(Method::GET, Uri::from_static("/"), h, Bytes::new()).htmx_target(),
+        Some("results")
+    );
+}
+#[test]
+fn htmx_trigger_reads_header() {
+    let mut h = HeaderMap::new();
+    h.insert("hx-trigger", HeaderValue::from_static("search"));
+    assert_eq!(
+        Request::new(Method::GET, Uri::from_static("/"), h, Bytes::new()).htmx_trigger(),
+        Some("search")
+    );
+}
+#[test]
+fn htmx_current_url_reads_header() {
+    let mut h = HeaderMap::new();
+    h.insert(
+        "hx-current-url",
+        HeaderValue::from_static("https://example.test/"),
+    );
+    assert_eq!(
+        Request::new(Method::GET, Uri::from_static("/"), h, Bytes::new()).htmx_current_url(),
+        Some("https://example.test/")
+    );
+}
+
 #[tokio::test]
 async fn query_params() {
     let req = Request::new(

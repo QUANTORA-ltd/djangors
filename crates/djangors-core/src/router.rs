@@ -2,13 +2,16 @@ use std::fmt;
 use std::sync::Arc;
 
 use bytes::Bytes;
+use http_body_util::{BodyExt, LengthLimitError, Limited};
 use hyper::http::Method;
+use tracing::Instrument;
 
 use crate::error::DjangorsError;
 use crate::handler::{Handler, StreamingHandler};
 use crate::path_params::PathParams;
 use crate::request::Request;
 use crate::response::Response;
+use crate::settings::DEFAULT_MAX_BODY_BYTES;
 use crate::sse::StreamingResponse;
 use crate::state::AppState;
 
@@ -97,6 +100,7 @@ pub enum ReverseError {
 pub struct Router {
     routes: Arc<Vec<Route>>,
     state: AppState,
+    max_body_bytes: Option<usize>,
 }
 
 impl Default for Router {
@@ -111,7 +115,39 @@ impl Router {
         Router {
             routes: Arc::new(Vec::new()),
             state: AppState::new(),
+            max_body_bytes: None,
         }
+    }
+
+    /// Set the largest request body, in bytes, this router will read.
+    ///
+    /// A request whose body is larger than the limit, or whose `Content-Length`
+    /// header declares a larger body, gets `413 Payload Too Large` and its handler
+    /// is not called. When no limit is set here, [`Djangors::new`](crate::app::Djangors::new)
+    /// applies [`DjangorsSettings::max_body_bytes`](crate::settings::DjangorsSettings::max_body_bytes);
+    /// a router used without `Djangors` falls back to 10 MiB.
+    pub fn max_body_bytes(mut self, bytes: usize) -> Self {
+        self.max_body_bytes = Some(bytes);
+        self
+    }
+
+    /// The body limit set on this router, if any.
+    #[cfg(test)]
+    pub(crate) fn configured_max_body_bytes(&self) -> Option<usize> {
+        self.max_body_bytes
+    }
+
+    /// Use `bytes` as the body limit unless this router already has one.
+    pub(crate) fn with_default_max_body_bytes(mut self, bytes: usize) -> Self {
+        if self.max_body_bytes.is_none() {
+            self.max_body_bytes = Some(bytes);
+        }
+        self
+    }
+
+    /// The body limit that dispatch enforces.
+    fn body_limit(&self) -> usize {
+        self.max_body_bytes.unwrap_or(DEFAULT_MAX_BODY_BYTES)
     }
 
     /// Attach a piece of shared state (e.g. a database connection pool) that
@@ -487,7 +523,16 @@ impl Router {
     /// and isolate any panics. A panicking handler must not take down other
     /// in-flight requests or crash the whole server process.
     /// Dispatch a request to the matching handler (standard or streaming).
+    ///
+    /// The whole dispatch runs inside a `request` tracing span carrying the
+    /// method and path, so every log line and `sql` span emitted while handling
+    /// the request is attributed to it (and exported when `otel` is enabled).
     pub async fn handle_dispatch(&self, req: Request) -> Result<ResponseKind, DjangorsError> {
+        let span = tracing::info_span!("request", method = %req.method(), path = req.path());
+        self.handle_dispatch_inner(req).instrument(span).await
+    }
+
+    async fn handle_dispatch_inner(&self, req: Request) -> Result<ResponseKind, DjangorsError> {
         let path = req.path().to_string();
         let method = req.method().clone();
 
@@ -504,13 +549,17 @@ impl Router {
                     let handler = handler.clone();
                     let query_log =
                         djangors_orm::djangors_db::query_log::current_query_log_handle();
-                    let join_handle = tokio::spawn(async move {
-                        djangors_orm::djangors_db::query_log::with_inherited_query_log(
-                            query_log,
-                            handler.call(req, params),
-                        )
-                        .await
-                    });
+                    let span = tracing::Span::current();
+                    let join_handle = tokio::spawn(
+                        async move {
+                            djangors_orm::djangors_db::query_log::with_inherited_query_log(
+                                query_log,
+                                handler.call(req, params),
+                            )
+                            .await
+                        }
+                        .instrument(span),
+                    );
                     match join_handle.await {
                         Ok(Ok(resp)) => Ok(ResponseKind::Standard(resp)),
                         Ok(Err(e)) => Err(e),
@@ -535,7 +584,10 @@ impl Router {
                 }
                 HandlerKind::Streaming(handler) => {
                     let handler = handler.clone();
-                    let join_handle = tokio::spawn(async move { handler.call(req, params).await });
+                    let span = tracing::Span::current();
+                    let join_handle = tokio::spawn(
+                        async move { handler.call(req, params).await }.instrument(span),
+                    );
                     match join_handle.await {
                         Ok(Ok(resp)) => Ok(ResponseKind::Streaming(resp)),
                         Ok(Err(e)) => Err(e),
@@ -625,10 +677,11 @@ impl Router {
             parts.extensions.insert(slot);
         }
 
-        let body_bytes = match http_body_util::BodyExt::collect(body).await {
-            Ok(collected) => collected.to_bytes(),
-            Err(e) => {
-                let err = DjangorsError::Internal(format!("failed to read request body: {e}"));
+        let limit = self.body_limit();
+        let content_length = declared_content_length(&parts.headers);
+        let body_bytes = match read_limited_body(content_length, body, limit).await {
+            Ok(bytes) => bytes,
+            Err(err) => {
                 let req = Request::new(parts.method, parts.uri, parts.headers, Bytes::new())
                     .with_state(self.state.clone());
                 return err.render_basic(&req).into_hyper();
@@ -696,10 +749,11 @@ impl Router {
             parts.extensions.insert(slot);
         }
 
-        let body_bytes = match http_body_util::BodyExt::collect(body).await {
-            Ok(collected) => collected.to_bytes(),
-            Err(e) => {
-                let err = DjangorsError::Internal(format!("failed to read request body: {e}"));
+        let limit = self.body_limit();
+        let content_length = declared_content_length(&parts.headers);
+        let body_bytes = match read_limited_body(content_length, body, limit).await {
+            Ok(bytes) => bytes,
+            Err(err) => {
                 let dummy_req = Request::new(parts.method, parts.uri, parts.headers, Bytes::new())
                     .with_state(self.state.clone());
                 let resp = err.render(&dummy_req, debug);
@@ -773,10 +827,11 @@ impl Router {
             parts.extensions.insert(slot);
         }
 
-        let body_bytes = match http_body_util::BodyExt::collect(body).await {
-            Ok(collected) => collected.to_bytes(),
-            Err(e) => {
-                let err = DjangorsError::Internal(format!("failed to read request body: {e}"));
+        let limit = self.body_limit();
+        let content_length = declared_content_length(&parts.headers);
+        let body_bytes = match read_limited_body(content_length, body, limit).await {
+            Ok(bytes) => bytes,
+            Err(err) => {
                 let dummy_req = Request::new(parts.method, parts.uri, parts.headers, Bytes::new())
                     .with_state(self.state.clone());
                 let resp = err.render(&dummy_req, debug);
@@ -851,7 +906,13 @@ impl RouterService {
     }
 }
 
-impl tower::Service<hyper::Request<hyper::body::Incoming>> for RouterService {
+/// Generic over the request body so middleware that buffers the body (for example
+/// `djangors_cache::IdempotencyLayer`, which hands on `Full<Bytes>`) can wrap it.
+impl<B> tower::Service<hyper::Request<B>> for RouterService
+where
+    B: hyper::body::Body<Data = Bytes> + Send + 'static,
+    B::Error: fmt::Display,
+{
     type Response = hyper::Response<http_body_util::Full<Bytes>>;
     type Error = std::convert::Infallible;
     type Future = std::pin::Pin<
@@ -865,13 +926,60 @@ impl tower::Service<hyper::Request<hyper::body::Incoming>> for RouterService {
         std::task::Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, req: hyper::Request<hyper::body::Incoming>) -> Self::Future {
+    fn call(&mut self, req: hyper::Request<B>) -> Self::Future {
         let router = self.router.clone();
         let debug = self.debug;
         Box::pin(async move {
             let resp = router.dispatch_debug(req, debug).await;
             Ok(resp)
         })
+    }
+}
+
+/// The `Content-Length` a client declared, when the header is present and valid.
+fn declared_content_length(headers: &hyper::HeaderMap) -> Option<usize> {
+    headers
+        .get(hyper::http::header::CONTENT_LENGTH)?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse::<usize>()
+        .ok()
+}
+
+/// The error returned when a request body exceeds the configured limit.
+fn payload_too_large() -> DjangorsError {
+    DjangorsError::api(
+        hyper::StatusCode::PAYLOAD_TOO_LARGE,
+        "payload_too_large",
+        "Request body exceeds the configured limit",
+    )
+}
+
+/// Collect a request body, refusing anything larger than `limit` bytes.
+///
+/// A declared `Content-Length` above the limit is rejected before any body byte
+/// is read. Otherwise the body is read through [`Limited`], which stops as soon
+/// as the limit is passed.
+async fn read_limited_body<B>(
+    content_length: Option<usize>,
+    body: B,
+    limit: usize,
+) -> Result<Bytes, DjangorsError>
+where
+    B: hyper::body::Body<Data = Bytes> + Send,
+    B::Error: fmt::Display,
+{
+    if content_length.is_some_and(|len| len > limit) {
+        return Err(payload_too_large());
+    }
+    let limited = Limited::new(body.map_err(|e| e.to_string()), limit);
+    match limited.collect().await {
+        Ok(collected) => Ok(collected.to_bytes()),
+        Err(err) if err.is::<LengthLimitError>() => Err(payload_too_large()),
+        Err(err) => Err(DjangorsError::Internal(format!(
+            "failed to read request body: {err}"
+        ))),
     }
 }
 

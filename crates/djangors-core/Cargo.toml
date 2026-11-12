@@ -20,10 +20,26 @@ cache = ["dep:djangors-cache"]
 ws = []
 debug-panel = []
 sentry = ["dep:sentry", "dep:sentry-tracing"]
+otel = [
+    "dep:opentelemetry",
+    "dep:opentelemetry_sdk",
+    "dep:opentelemetry-otlp",
+    "dep:tracing-opentelemetry",
+    "dep:otel-reqwest",
+    "dep:otel-rustls",
+]
 
 [dependencies]
 sentry = { version = "0.34", optional = true, default-features = false, features = ["backtrace", "contexts", "panic", "reqwest", "rustls"] }
 sentry-tracing = { version = "0.34", optional = true }
+opentelemetry = { version = "0.33", optional = true, default-features = false, features = ["trace"] }
+opentelemetry_sdk = { version = "0.33", optional = true, default-features = false, features = ["trace"] }
+opentelemetry-otlp = { version = "0.33", optional = true, default-features = false, features = ["trace", "http-proto", "reqwest-blocking-client"] }
+tracing-opentelemetry = { version = "0.34", optional = true }
+# HTTPS for the OTLP exporter through rustls with the `ring` provider (the one sqlx already
+# uses), instead of `reqwest-rustls`, which pulls in aws-lc-rs and needs a C toolchain.
+otel-reqwest = { package = "reqwest", version = "0.13.5", optional = true, default-features = false, features = ["rustls-no-provider"] }
+otel-rustls = { package = "rustls", version = "0.23.42", optional = true, default-features = false, features = ["ring", "std", "tls12", "logging"] }
 hyper = { version = "1.10.1", features = ["http1", "server"] }
 hyper-util = { version = "0.1.20", features = ["server-auto", "tokio", "service"] }
 http-body-util = "0.1.4"
