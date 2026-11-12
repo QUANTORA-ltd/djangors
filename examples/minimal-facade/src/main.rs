@@ -2,6 +2,7 @@
 //! Minimal Postgres-only Djangors application built against the `djangors` facade
 //! with `default-features = false, features = ["postgres"]`.
 
+use djangors::core::health::{DatabaseCheck, HealthChecks};
 use djangors::core::{
     Djangors, DjangorsError, DjangorsSettings, PathParams, Request, Response, Router, StatusCode,
 };
@@ -19,10 +20,6 @@ pub struct Item {
     /// Item label.
     #[djangors(max_length = 120)]
     pub title: String,
-}
-
-async fn healthz(_req: Request, _params: PathParams) -> Result<Response, DjangorsError> {
-    Ok(Response::text(StatusCode::OK, "ok"))
 }
 
 async fn list_items(req: Request, _params: PathParams) -> Result<Response, DjangorsError> {
@@ -55,7 +52,7 @@ async fn main() -> Result<(), DjangorsError> {
         .map_err(|e| DjangorsError::Internal(e.to_string()))?;
 
     let router = Router::new()
-        .get("/healthz", healthz)
+        .health(HealthChecks::new().with(DatabaseCheck::new(db.clone())))
         .get("/items", list_items)
         .with_state(db);
 

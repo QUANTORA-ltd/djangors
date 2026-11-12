@@ -196,15 +196,16 @@ fn test_new_generates_expected_files() {
     let readme_content = std::fs::read_to_string(project_path.join("README.md")).unwrap();
     assert!(readme_content.contains("## Deploying"));
 
+    // `/healthz` and `/readyz` come from `Router::health`, not a hand-written view.
     let views_content = std::fs::read_to_string(project_path.join("src/views.rs")).unwrap();
-    assert!(views_content.contains("pub async fn healthz"));
+    assert!(!views_content.contains("pub async fn healthz"));
 
     let seed_content = std::fs::read_to_string(project_path.join("src/bin/seed.rs")).unwrap();
     assert!(seed_content.contains("DATABASE_URL"));
     assert!(seed_content.contains("Nothing to seed yet"));
 
     let main_content = std::fs::read_to_string(project_path.join("src/main.rs")).unwrap();
-    assert!(main_content.contains("/healthz"));
+    assert!(main_content.contains(".health("));
     // App code is in the library crate so the seed binary can use it.
     assert!(main_content.contains("use my_test_proj::views;"));
     let lib_content = std::fs::read_to_string(project_path.join("src/lib.rs")).unwrap();
@@ -419,13 +420,29 @@ allowed_hosts = ["example.com"]
     .unwrap();
 
     let clean_issues = check(true).unwrap();
-    std::env::set_current_dir(old).unwrap();
-    let _ = std::fs::remove_dir_all(root);
     assert!(
         clean_issues.is_empty(),
         "Expected zero deploy issues, got: {:?}",
         clean_issues
     );
+
+    std::fs::write(
+        "djangors.toml",
+        r#"
+debug = false
+secret_key = "123456789012345678901234567890123"
+allowed_hosts = ["example.com"]
+cors_allowed_origins = ["*"]
+"#,
+    )
+    .unwrap();
+    let cors_issues = check(true).unwrap();
+    assert!(cors_issues
+        .iter()
+        .any(|issue| issue.contains("CORS_ALLOWED_ORIGINS")));
+
+    std::env::set_current_dir(old).unwrap();
+    let _ = std::fs::remove_dir_all(root);
 }
 
 #[test]

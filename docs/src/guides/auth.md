@@ -286,3 +286,30 @@ the cause rather than string-matching:
 | `AuthError::AccountLocked { retry_after_secs }` | `PersistentLockoutBackend` rejected with a locked account |
 | `AuthError::InvalidToken` | Reset token missing, malformed, or expired |
 | `AuthError::Mail` | `request_password_reset` failed to send |
+| `AuthError::WeakPassword(Vec<String>)` | New password failed one or more password validators |
+
+## Password validation
+
+`djangors-auth` ships four built-in `PasswordValidator` implementations:
+
+- `MinimumLength(8)` — requires at least 8 characters.
+- `NumericPassword` — rejects passwords made only of digits.
+- `UserAttributeSimilarity` — rejects passwords containing the username or email local-part (or their reverse) for parts of 3+ characters.
+- `StrengthValidator` (enabled by the default `password-strength` feature, powered by `zxcvbn`) — requires a strength score of at least 3 out of 4 and catches common passwords.
+
+Validate a password with `default_validators()` and `validate_password`, which collects **every** failing rule rather than stopping at the first:
+
+```rust,compile
+# use djangors_auth::{default_validators, validate_password, UserAttributes};
+# fn example() {
+let attrs = UserAttributes::new("alice", "alice@example.com");
+let validators = default_validators();
+if let Err(messages) = validate_password("1234", Some(&attrs), &validators) {
+    for msg in messages {
+        eprintln!("{msg}");
+    }
+}
+# }
+```
+
+`confirm_password_reset` runs `default_validators()` automatically before hashing and returns `AuthError::WeakPassword` if any rule fails. `dj createsuperuser` also validates the password unless `--skip-validation` is passed.

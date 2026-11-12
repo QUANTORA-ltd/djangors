@@ -1,16 +1,11 @@
 use djangors_auth::AuthBackend;
 use djangors_core::extract::{Form, FromRequest};
-use djangors_core::{DjangorsError, PathParams, Request, Response, StatusCode};
+use djangors_core::{DjangorsError, PathParams, Request, Response};
 
 #[derive(serde::Deserialize)]
 pub struct LoginForm {
     pub username: String,
     pub password: String,
-}
-
-/// Liveness/readiness probe for deployment platforms (e.g. Render's health check).
-pub async fn healthz(_req: Request, _params: PathParams) -> Result<Response, DjangorsError> {
-    Ok(Response::text(StatusCode::OK, "ok"))
 }
 
 pub async fn login_view(req: Request, _params: PathParams) -> Result<Response, DjangorsError> {

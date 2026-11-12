@@ -252,6 +252,7 @@ fn test_custom_debug_redacts_secret_key() {
         host: "127.0.0.1".to_string(),
         port: 8000,
         max_body_bytes: 1024,
+        cors_allowed_origins: vec![],
     };
 
     let debug_str = format!("{:?}", settings);
@@ -300,4 +301,36 @@ fn toml_sets_max_body_bytes() {
     assert_eq!(settings.max_body_bytes, 2048);
     let defaults = DjangorsSettings::from_toml_str("debug = true\n").unwrap();
     assert_eq!(defaults.max_body_bytes, 10 * 1024 * 1024);
+}
+
+#[test]
+fn test_from_env_cors_allowed_origins() {
+    let _guard = EnvGuard::new(vec!["DJANGORS_CORS_ALLOWED_ORIGINS"]);
+
+    std::env::set_var(
+        "DJANGORS_CORS_ALLOWED_ORIGINS",
+        "https://app.example.com, https://admin.example.com ",
+    );
+    let (settings, warnings) = DjangorsSettings::from_env();
+    assert!(warnings.is_empty());
+    assert_eq!(
+        settings.cors_allowed_origins,
+        vec![
+            "https://app.example.com".to_string(),
+            "https://admin.example.com".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn toml_sets_cors_allowed_origins_and_appears_in_debug() {
+    let settings =
+        DjangorsSettings::from_toml_str("cors_allowed_origins = [\"https://app.example.com\"]\n")
+            .unwrap();
+    assert_eq!(
+        settings.cors_allowed_origins,
+        vec!["https://app.example.com".to_string()]
+    );
+    let debug_str = format!("{:?}", settings);
+    assert!(debug_str.contains("cors_allowed_origins"));
 }

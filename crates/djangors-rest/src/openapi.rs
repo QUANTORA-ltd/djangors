@@ -171,6 +171,7 @@ pub struct OpenApiBuilder {
     version: String,
     schemas: HashMap<String, serde_json::Value>,
     paths: serde_json::Map<String, serde_json::Value>,
+    security_schemes: serde_json::Map<String, serde_json::Value>,
 }
 
 impl OpenApiBuilder {
@@ -181,7 +182,28 @@ impl OpenApiBuilder {
             version: version.to_string(),
             schemas: HashMap::new(),
             paths: serde_json::Map::new(),
+            security_schemes: serde_json::Map::new(),
         }
+    }
+
+    /// Overrides the `info.version` field in the generated OpenAPI specification.
+    pub fn version(&mut self, v: &str) -> &mut Self {
+        self.version = v.to_string();
+        self
+    }
+
+    /// Registers an `apiKey` security scheme in `components.securitySchemes`
+    /// reading from the `X-Api-Key` header.
+    pub fn api_key_security(&mut self) -> &mut Self {
+        self.security_schemes.insert(
+            "ApiKeyAuth".to_string(),
+            serde_json::json!({
+                "type": "apiKey",
+                "in": "header",
+                "name": "X-Api-Key"
+            }),
+        );
+        self
     }
 
     /// Registers model `M` mounted at `base_path` into the OpenAPI specification,
@@ -389,6 +411,13 @@ impl OpenApiBuilder {
 
     /// Builds and returns the complete OpenAPI 3.1 specification JSON Value.
     pub fn build(&self) -> serde_json::Value {
+        let mut components = serde_json::json!({
+            "schemas": self.schemas
+        });
+        if !self.security_schemes.is_empty() {
+            components["securitySchemes"] =
+                serde_json::Value::Object(self.security_schemes.clone());
+        }
         serde_json::json!({
             "openapi": "3.1.0",
             "info": {
@@ -396,9 +425,7 @@ impl OpenApiBuilder {
                 "version": self.version
             },
             "paths": self.paths,
-            "components": {
-                "schemas": self.schemas
-            }
+            "components": components
         })
     }
 

@@ -478,3 +478,106 @@ async fn test_csrf_secure_flag() {
     let set_cookie2 = resp2.headers().get(SET_COOKIE).unwrap().to_str().unwrap();
     assert!(set_cookie2.contains("; Secure"));
 }
+
+#[tokio::test]
+async fn test_cors_preflight_allowed_and_disallowed_origins() {
+    let inner_svc = service_fn(move |_req: hyper::Request<Full<Bytes>>| {
+        let resp = hyper::Response::builder()
+            .status(200)
+            .body(Full::new(Bytes::from("ok")))
+            .unwrap();
+        async move { Ok::<_, Infallible>(resp) }
+    });
+
+    let config = CorsConfig::new()
+        .allowed_origins(["https://app.example.com"])
+        .allow_credentials(true);
+    let layer = cors_layer(&config).unwrap();
+    let mut svc = layer.layer(inner_svc);
+
+    // Allowed origin preflight
+    let req_allowed = hyper::Request::builder()
+        .method("OPTIONS")
+        .uri("/api/items")
+        .header("origin", "https://app.example.com")
+        .header("access-control-request-method", "POST")
+        .body(Full::new(Bytes::new()))
+        .unwrap();
+    let resp_allowed = svc.ready().await.unwrap().call(req_allowed).await.unwrap();
+    assert_eq!(resp_allowed.status(), 200);
+    assert_eq!(
+        resp_allowed
+            .headers()
+            .get("access-control-allow-origin")
+            .unwrap(),
+        "https://app.example.com"
+    );
+    assert!(resp_allowed
+        .headers()
+        .get("access-control-allow-methods")
+        .is_some());
+    assert_eq!(
+        resp_allowed
+            .headers()
+            .get("access-control-allow-credentials")
+            .unwrap(),
+        "true"
+    );
+
+    // Disallowed origin preflight gets no CORS headers
+    let req_disallowed = hyper::Request::builder()
+        .method("OPTIONS")
+        .uri("/api/items")
+        .header("origin", "https://evil.example.com")
+        .header("access-control-request-method", "POST")
+        .body(Full::new(Bytes::new()))
+        .unwrap();
+    let resp_disallowed = svc
+        .ready()
+        .await
+        .unwrap()
+        .call(req_disallowed)
+        .await
+        .unwrap();
+    assert!(resp_disallowed
+        .headers()
+        .get("access-control-allow-origin")
+        .is_none());
+}
+
+#[test]
+fn test_cors_wildcard_with_credentials_rejected() {
+    let config = CorsConfig::new()
+        .allowed_origins(["*"])
+        .allow_credentials(true);
+    assert!(cors_layer(&config).is_err());
+
+    let invalid_origin = CorsConfig::new().allowed_origins(["not a valid origin"]);
+    assert!(cors_layer(&invalid_origin).is_err());
+}
+
+#[test]
+fn test_cors_origin_must_not_have_a_path() {
+    for origin in [
+        "https://app.example.com/",
+        "https://app.example.com/path",
+        "https://app.example.com?x=1",
+        "app.example.com",
+    ] {
+        let config = CorsConfig::new().allowed_origins([origin]);
+        assert!(cors_layer(&config).is_err(), "{origin} should be rejected");
+    }
+    let ok = CorsConfig::new().allowed_origins(["https://app.example.com:8443"]);
+    assert!(cors_layer(&ok).is_ok());
+}
+
+#[test]
+fn test_cors_config_from_settings_uses_configured_origins() {
+    let settings = crate::settings::DjangorsSettings::default()
+        .with_cors_allowed_origins(["https://app.example.com"]);
+    let config = CorsConfig::from_settings(&settings);
+    assert_eq!(
+        config.allowed_origins,
+        vec!["https://app.example.com".to_string()]
+    );
+}

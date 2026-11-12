@@ -132,8 +132,12 @@ async fn main() {
                 std::process::exit(1);
             }
         }
-        Commands::Createsuperuser { username, email } => {
-            commands::createsuperuser(username, email).await;
+        Commands::Createsuperuser {
+            username,
+            email,
+            skip_validation,
+        } => {
+            commands::createsuperuser(username, email, skip_validation).await;
         }
         Commands::Createpermissions => {
             commands::createpermissions().await;

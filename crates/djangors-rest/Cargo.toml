@@ -14,9 +14,10 @@ authors.workspace = true
 
 [features]
 default = ["postgres", "sqlite"]
-postgres = ["djangors-orm/postgres", "djangors-core/postgres", "djangors-cache/postgres", "djangors-db/postgres", "djangors-auth/postgres", "djangors-sessions/postgres"]
-sqlite = ["djangors-orm/sqlite", "djangors-core/sqlite", "djangors-cache/sqlite", "djangors-db/sqlite", "djangors-auth/sqlite", "djangors-sessions/sqlite"]
+postgres = ["djangors-orm/postgres", "djangors-core/postgres", "djangors-cache/postgres", "djangors-db/postgres", "djangors-auth/postgres", "djangors-sessions/postgres", "djangors-admin?/postgres"]
+sqlite = ["djangors-orm/sqlite", "djangors-core/sqlite", "djangors-cache/sqlite", "djangors-db/sqlite", "djangors-auth/sqlite", "djangors-sessions/sqlite", "djangors-admin?/sqlite"]
 jwt = ["dep:jsonwebtoken"]
+admin = ["dep:djangors-admin"]
 
 [dependencies]
 djangors-orm = { path = "../djangors-orm", version = "0.11.0", default-features = false }
@@ -26,6 +27,7 @@ djangors-db = { path = "../djangors-db", version = "0.11.0", default-features = 
 djangors-macros = { path = "../djangors-macros", version = "0.11.0" }
 djangors-auth = { path = "../djangors-auth", version = "0.11.0", default-features = false }
 djangors-sessions = { path = "../djangors-sessions", version = "0.11.0", default-features = false }
+djangors-admin = { path = "../djangors-admin", version = "0.11.0", default-features = false, optional = true }
 async-trait = "0.1.86"
 rand = "0.8.7"
 serde = { version = "1.0.228", features = ["derive"] }
@@ -34,6 +36,9 @@ chrono = { version = "0.4.45", features = ["std", "serde"] }
 hyper = { version = "1.10.1", features = ["http1"] }
 jsonwebtoken = { version = "10.4.0", default-features = false, features = ["rust_crypto"], optional = true }
 base64 = "0.22.1"
+sha2 = "0.10.9"
+subtle = "2.6.1"
+tracing = "0.1.44"
 
 [dev-dependencies]
 djangors-test = { path = "../djangors-test" }

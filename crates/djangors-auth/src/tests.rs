@@ -1078,6 +1078,20 @@ async fn test_db_password_reset_flow() {
         .unwrap();
     let final_user = &final_users[0];
     assert!(verify_password("new_shiny_password", final_user.password_hash()).unwrap());
+
+    // 9. confirm_password_reset with a weak password rejects with WeakPassword and leaves the old hash unchanged
+    let fresh_token =
+        generate_password_reset_token(final_user, secret, std::time::Duration::from_secs(3600));
+    let weak_res =
+        confirm_password_reset::<TestUser>(db, user.id, &fresh_token, "1234", secret).await;
+    assert!(matches!(weak_res, Err(AuthError::WeakPassword(ref errs)) if !errs.is_empty()));
+    let after_weak = TestUser::objects()
+        .filter(q!(id = user.id))
+        .unwrap()
+        .all(db)
+        .await
+        .unwrap();
+    assert!(verify_password("new_shiny_password", after_weak[0].password_hash()).unwrap());
     assert!(!verify_password("another_password", final_user.password_hash()).unwrap());
 }
 

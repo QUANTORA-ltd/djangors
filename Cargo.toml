@@ -4,6 +4,7 @@ members = [
     "crates/*",
     "examples/minimal-facade",
     "examples/polls",
+    "examples/rest-api",
     "examples/school",
     "tools/doc-code-check",
 ]

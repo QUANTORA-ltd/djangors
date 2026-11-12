@@ -127,6 +127,11 @@ pub struct DjangorsSettings {
     /// Defaults to 10 MiB. Set with `max_body_bytes` in `djangors.toml` or the
     /// `DJANGORS_MAX_BODY_BYTES` environment variable (which wins).
     pub max_body_bytes: usize,
+
+    /// Allowed CORS origins (e.g. `https://app.example.com` or `*`). Empty by
+    /// default (CORS disabled). Set with `cors_allowed_origins` in `djangors.toml`
+    /// or the comma-separated `DJANGORS_CORS_ALLOWED_ORIGINS` environment variable.
+    pub cors_allowed_origins: Vec<String>,
 }
 
 impl fmt::Debug for DjangorsSettings {
@@ -138,6 +143,7 @@ impl fmt::Debug for DjangorsSettings {
             .field("host", &self.host)
             .field("port", &self.port)
             .field("max_body_bytes", &self.max_body_bytes)
+            .field("cors_allowed_origins", &self.cors_allowed_origins)
             .finish()
     }
 }
@@ -151,6 +157,7 @@ impl Default for DjangorsSettings {
             host: "127.0.0.1".into(),
             port: 8000,
             max_body_bytes: DEFAULT_MAX_BODY_BYTES,
+            cors_allowed_origins: Vec::new(),
         }
     }
 }
@@ -199,6 +206,15 @@ impl DjangorsSettings {
         self.max_body_bytes = bytes;
         self
     }
+
+    /// Sets the allowed CORS origins.
+    pub fn with_cors_allowed_origins(
+        mut self,
+        origins: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.cors_allowed_origins = origins.into_iter().map(Into::into).collect();
+        self
+    }
 }
 
 #[derive(Deserialize)]
@@ -209,6 +225,7 @@ struct PartialSettings {
     host: Option<String>,
     port: Option<u16>,
     max_body_bytes: Option<usize>,
+    cors_allowed_origins: Option<Vec<String>>,
 }
 
 impl DjangorsSettings {
@@ -260,6 +277,14 @@ impl DjangorsSettings {
             }
         }
 
+        if let Ok(val) = std::env::var("DJANGORS_CORS_ALLOWED_ORIGINS") {
+            self.cors_allowed_origins = val
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+        }
+
         warnings
     }
 
@@ -295,6 +320,9 @@ impl DjangorsSettings {
         }
         if let Some(max_body_bytes) = partial.max_body_bytes {
             settings.max_body_bytes = max_body_bytes;
+        }
+        if let Some(cors_allowed_origins) = partial.cors_allowed_origins {
+            settings.cors_allowed_origins = cors_allowed_origins;
         }
 
         Ok(settings)

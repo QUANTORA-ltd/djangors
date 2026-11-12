@@ -40,7 +40,12 @@ async fn main() -> Result<(), DjangorsError> {
         settings.secret_key.clone()
     };
 
+    let cors = djangors_core::middleware::cors_layer(
+        &djangors_core::middleware::CorsConfig::from_settings(&settings),
+    )?;
+
     let service = tower::ServiceBuilder::new()
+        .layer(cors)
         .layer(djangors_core::middleware::security_headers_layer())
         .layer(djangors_sessions::SessionLayer::new(
             djangors_sessions::SignedCookieStore::new(secret_key.as_bytes())
