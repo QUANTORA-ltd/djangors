@@ -235,6 +235,25 @@ pub trait Model {
     {
         crate::queryset::QuerySet::new()
     }
+
+    /// The column that marks a soft-deleted row, or `None` for models that
+    /// hard-delete. Overridden by `#[derive(Model)]` with `#[djangors(soft_delete)]`.
+    fn soft_delete_column() -> Option<&'static str>
+    where
+        Self: Sized,
+    {
+        None
+    }
+
+    /// Names of the fields stored encrypted (`#[djangors(encrypted)]`). Writes encrypt
+    /// these fields; filters, ordering and search on them are rejected. Overridden by
+    /// `#[derive(Model)]`.
+    fn encrypted_fields() -> &'static [&'static str]
+    where
+        Self: Sized,
+    {
+        &[]
+    }
 }
 
 /// A custom manager for a model — Django's custom `Manager`.

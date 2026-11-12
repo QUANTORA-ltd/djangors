@@ -7,6 +7,8 @@
 
 /// Aggregate function definitions and result types.
 pub mod aggregate;
+/// Transparent AES-256-GCM encryption for `#[djangors(encrypted)]` fields.
+pub mod encryption;
 /// Error types and row-mapping trait for ORM operations.
 pub mod error;
 /// Query expression tree nodes, operators, and macros.

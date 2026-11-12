@@ -49,6 +49,7 @@ pub struct Choice {
 - **`unique_together = [["field1", "field2"]]`** *(optional)*: Defines composite unique constraints.
 - **`indexes = ["index_name", ("index_name", ["field1", "field2"])]`** *(optional)*: Defines custom or composite database indexes. Can be a simple index name or a tuple of `(name, [fields])`.
 - **`manager = "ManagerStruct"`** *(optional)*: Overrides the default model manager with a custom manager struct.
+- **`soft_delete`** *(optional)*: Makes deletes soft: rows get a `deleted_at` timestamp instead of being removed, and normal queries hide them. The struct must have a `deleted_at: Option<DateTime<Utc>>` field. See [Soft deletes](#soft-deletes).
 
 #### Field-Level Attributes
 - **`primary_key`**: Marks the single primary key field. Automatically implies `unique` and `db_index`. Every model must have exactly one primary key field.
@@ -159,8 +160,8 @@ as `OrmError::FieldNotFound` rather than silently becoming an equality test.
 - **`.count(db).await`**: Returns `Result<i64, OrmError>` count (`SELECT COUNT(*) ...`).
 - **`.aggregate(db, vec![AggExpr::...]).await`**: Evaluates aggregate functions: `AggExpr::Count`, `AggExpr::Sum`, `AggExpr::Avg`, `AggExpr::Min`, `AggExpr::Max`.
 - **`.update(db, set!(...)).await`**: Performs bulk updates. Returns `Result<u64, OrmError>` (rows affected count).
-- **`.delete(db).await`**: Deletes all rows matching the queryset's filters. Returns `Result<u64, OrmError>` (rows affected count). **Warning**: calling `.delete()` on an unfiltered queryset (e.g. `Model::objects().delete(db)`) will delete every row in the table.
-- **`QuerySet::<T>::delete_by_pk(db, pk).await`**: Static helper deleting a row by its primary key.
+- **`.delete(db).await`**: Deletes all rows matching the queryset's filters. Returns `Result<u64, OrmError>` (rows affected count). On a soft-delete model it sets `deleted_at` instead (see [Soft deletes](#soft-deletes)). **Warning**: calling `.delete()` on an unfiltered queryset (e.g. `Model::objects().delete(db)`) will delete every row in the table.
+- **`QuerySet::<T>::delete_by_pk(db, pk).await`**: Static helper deleting a row by its primary key. On a soft-delete model it sets `deleted_at`; `force_delete_by_pk` always removes the row.
 
 ### Eager-loading relations: `select_related` and `prefetch_related`
 
@@ -245,6 +246,80 @@ db.transaction(|conn| {
 > SQLite rejects them with `UnsupportedOnDialect`.
 
 ---
+
+## Soft deletes
+
+Add `soft_delete` to a model to keep deleted rows in the table. Deleting sets
+`deleted_at` to the current time; normal queries then skip those rows. The
+model needs a nullable timestamp field with that name:
+
+```rust,compile
+# use djangors_orm::Model;
+use chrono::{DateTime, Utc};
+use djangors_macros::Model;
+use djangors_orm::q;
+
+#[derive(Model, Debug, Clone)]
+#[djangors(app = "shop", table_name = "shop_product", soft_delete)]
+pub struct Product {
+    #[djangors(primary_key, auto)]
+    pub id: i64,
+
+    pub name: String,
+
+    pub deleted_at: Option<DateTime<Utc>>,
+}
+
+# async fn run(db: &djangors_db::Database, product: Product) -> Result<(), Box<dyn std::error::Error>> {
+// Sets deleted_at; the row stays in the table.
+product.delete(db).await?;
+
+// Hidden from count, all, first, get, exists and aggregates.
+let _ = Product::objects().count(db).await?;
+let _ = Product::objects().filter(q!(name = "Widget"))?.first(db).await?;
+
+// Include deleted rows, or select only them.
+let _ = Product::objects().with_deleted().count(db).await?;
+let _ = Product::objects().only_deleted().all(db).await?;
+
+// Clear deleted_at again.
+product.restore(db).await?;
+
+// Soft-delete again, then remove the row for real.
+product.delete(db).await?;
+product.force_delete(db).await?;
+
+// Querysets work the same way: delete() soft-deletes every matching live row.
+let _ = Product::objects().filter(q!(name = "Old"))?.delete(db).await?;
+
+// with_deleted().delete() and force_delete() are real DELETE statements.
+let _ = Product::objects().only_deleted().force_delete(db).await?;
+# Ok(())
+# }
+```
+
+The methods on a soft-delete model are:
+
+- **`instance.delete(db)`**: sets `deleted_at` by primary key. Returns `OrmError::NotFound` if no live row matches, so deleting an already deleted row is an error. The delete signals still fire.
+- **`instance.restore(db)`**: sets `deleted_at` back to `NULL`. Returns `OrmError::NotFound` if the row is not soft-deleted.
+- **`instance.force_delete(db)`**: removes the row from the table.
+- **`QuerySet::delete(db)`**: soft-deletes the matching live rows and returns how many it changed. Rows that are already deleted are not touched.
+- **`QuerySet::force_delete(db)`**: removes the matching live rows from the table.
+- **`with_deleted()`**: includes deleted rows in the queryset. Calling `delete(db)` on it is a real `DELETE`.
+- **`only_deleted()`**: restricts the queryset to deleted rows. On a model without `soft_delete` it matches nothing.
+
+- **`QuerySet::<T>::delete_by_pk(db, pk)`**: soft-deletes by primary key, so the admin, REST viewsets and generic delete views soft-delete too. **`force_delete_by_pk`** removes the row.
+
+Soft-deleted rows are hidden everywhere rows are loaded: `EXISTS` / `NOT EXISTS`
+subqueries, `select_related` (a deleted related row comes back as `None`),
+`prefetch_related`, and `m2m_related`. Raw SQL is not filtered.
+
+> [!NOTE]
+> Unique constraints still apply to soft-deleted rows. A deleted row keeps its
+> values, so inserting a new row with the same value in a `unique` column fails
+> until the old row is removed with `force_delete`.
+
+Models without `soft_delete` are unchanged: `delete` removes the row.
 
 ## Expressions & Macros
 

@@ -338,6 +338,9 @@ pub enum UnresolvedExpr {
         negated: bool,
         /// Subquery model metadata getter function.
         subquery_meta: fn() -> &'static crate::meta::ModelMeta,
+        /// Soft-delete column of the subquery model, if it is a soft-delete model.
+        /// Rows where this column is set are excluded from the subquery.
+        soft_delete_col: Option<&'static str>,
         /// Subquery's unresolved filter expressions.
         filters: Vec<UnresolvedExpr>,
     },
@@ -356,16 +359,19 @@ impl PartialEq for UnresolvedExpr {
                 Self::Exists {
                     negated: l_neg,
                     subquery_meta: l_meta,
+                    soft_delete_col: l_sd,
                     filters: l_f,
                 },
                 Self::Exists {
                     negated: r_neg,
                     subquery_meta: r_meta,
+                    soft_delete_col: r_sd,
                     filters: r_f,
                 },
             ) => {
                 l_neg == r_neg
                     && std::ptr::eq(*l_meta as *const (), *r_meta as *const ())
+                    && l_sd == r_sd
                     && l_f == r_f
             }
             _ => false,
@@ -473,6 +479,7 @@ impl<S: crate::meta::Model> From<Exists<S>> for UnresolvedExpr {
         UnresolvedExpr::Exists {
             negated: e.negated,
             subquery_meta: S::meta,
+            soft_delete_col: S::soft_delete_column(),
             filters: e.filters,
         }
     }
