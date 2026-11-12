@@ -5,6 +5,8 @@
 //! ViewSet routes require an authenticated user by default. Public routes must opt into
 //! [`AllowAny`] explicitly through [`viewset_routes_with_permission`].
 
+/// Machine-to-machine API key authentication, scopes, and admin registration.
+pub mod api_keys;
 /// API authentication: database-backed tokens and JWT.
 pub mod auth;
 
@@ -26,6 +28,7 @@ pub mod throttling;
 /// Generic ViewSet controllers and route mounting.
 pub mod viewsets;
 
+pub use api_keys::*;
 pub use auth::*;
 pub use filters::*;
 pub use openapi::*;
@@ -71,3 +74,7 @@ mod serializer_tests;
 #[cfg(test)]
 #[path = "filter_backend_tests.rs"]
 mod filter_backend_tests;
+
+#[cfg(test)]
+#[path = "api_keys_tests.rs"]
+mod api_keys_tests;
