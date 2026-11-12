@@ -396,6 +396,30 @@ struct FactoryArticle {
     pub subtitle: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, djangors_macros::Model, djangors_macros::Factory)]
+#[djangors(app = "test")]
+struct FactoryParent { #[djangors(primary_key, auto)] pub id: i64 }
+
+#[derive(Debug, Clone, PartialEq, djangors_macros::Model, djangors_macros::Factory)]
+#[djangors(app = "test")]
+struct FactoryChild {
+    #[djangors(primary_key, auto)] pub id: i64,
+    pub parent: djangors_orm::ForeignKey<FactoryParent>,
+    pub name: String,
+}
+
+#[tokio::test]
+async fn factory_create_requires_relation_overrides() {
+    use djangors_orm::Model;
+    let db = Database::connect(&DatabaseConfig::new("sqlite::memory:")).await.unwrap();
+    db.conn().execute("CREATE TABLE test_factory_parent (id INTEGER PRIMARY KEY AUTOINCREMENT)", &[]).await.unwrap();
+    db.conn().execute("CREATE TABLE test_factory_child (id INTEGER PRIMARY KEY AUTOINCREMENT, parent BIGINT NOT NULL, name TEXT NOT NULL)", &[]).await.unwrap();
+    let error = FactoryChild::factory().create(&db).await.unwrap_err();
+    match error { djangors_orm::OrmError::InvalidQuery(msg) => assert!(msg.contains("with_parent_id")), other => panic!("unexpected error: {other:?}") }
+    let parent = FactoryParent::factory().create(&db).await.unwrap();
+    FactoryChild::factory().with_parent_id(parent.id).create(&db).await.unwrap();
+}
+
 #[tokio::test]
 async fn factory_derive_builds_and_persists_records() {
     use djangors_orm::Model;

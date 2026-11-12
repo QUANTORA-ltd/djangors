@@ -85,6 +85,7 @@ pub fn expand_derive_factory(input: DeriveInput) -> syn::Result<TokenStream> {
     let mut factory_inits = Vec::new();
     let mut builder_methods = Vec::new();
     let mut build_assignments = Vec::new();
+    let mut create_relation_checks = Vec::new();
 
     for field in &named_fields.named {
         let field_ident = field
@@ -151,6 +152,13 @@ pub fn expand_derive_factory(input: DeriveInput) -> syn::Result<TokenStream> {
                 RelationKind::ForeignKey => {
                     let with_fn = format_ident!("with_{}", field_ident);
                     let with_id_fn = format_ident!("with_{}_id", field_ident);
+                    create_relation_checks.push(quote! {
+                        if self.#field_ident.is_none() {
+                            return ::std::result::Result::Err(djangors_orm::OrmError::InvalidQuery(
+                                format!("{}Factory: set `.with_{}_id(..)` before create(); factories do not create related rows", stringify!(#struct_ident), stringify!(#field_ident))
+                            ));
+                        }
+                    });
                     factory_fields.push(quote! {
                         #field_ident: ::std::option::Option<#field_ty>
                     });
@@ -178,6 +186,13 @@ pub fn expand_derive_factory(input: DeriveInput) -> syn::Result<TokenStream> {
                 RelationKind::OneToOne => {
                     let with_fn = format_ident!("with_{}", field_ident);
                     let with_id_fn = format_ident!("with_{}_id", field_ident);
+                    create_relation_checks.push(quote! {
+                        if self.#field_ident.is_none() {
+                            return ::std::result::Result::Err(djangors_orm::OrmError::InvalidQuery(
+                                format!("{}Factory: set `.with_{}_id(..)` before create(); factories do not create related rows", stringify!(#struct_ident), stringify!(#field_ident))
+                            ));
+                        }
+                    });
                     factory_fields.push(quote! {
                         #field_ident: ::std::option::Option<#field_ty>
                     });
@@ -339,6 +354,7 @@ pub fn expand_derive_factory(input: DeriveInput) -> syn::Result<TokenStream> {
                 &self,
                 db: &djangors_orm::djangors_db::Database,
             ) -> ::std::result::Result<#struct_ident, djangors_orm::OrmError> {
+                #(#create_relation_checks)*
                 let instance = self.build();
                 instance.save(db).await
             }

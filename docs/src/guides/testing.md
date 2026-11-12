@@ -256,9 +256,9 @@ async fn example(db: &Database) -> Result<(), djangors_orm::OrmError> {
 The sequence number `n` is shared by all factories of a model and increases with every
 `build`, so unique columns don't collide.
 
-Relation fields default to ID `1` because the factory doesn't create related rows.
-Unless that row exists, `create` fails with a foreign-key error, so create the parent
-first and pass its ID with `.with_<field>_id(id)`:
+`build` still uses ID `1` for relation fields. `create` and `create_many` require each
+`ForeignKey` or `OneToOne` to be set explicitly; otherwise they return an `InvalidQuery`
+that names the missing `.with_<field>_id(..)` call. Create the parent first and pass its ID:
 
 ```rust,illustrative
 let author = Author::factory().create(&db).await?;
