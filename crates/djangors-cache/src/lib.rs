@@ -21,6 +21,9 @@ use std::{convert::Infallible, future::Future, sync::Arc, time::Duration};
 use thiserror::Error;
 use tower::{Layer, Service};
 
+mod idempotency;
+pub use idempotency::{IdempotencyLayer, IdempotencyService};
+
 /// Errors encountered during cache access or value serialization.
 #[derive(Debug, Error)]
 pub enum CacheError {
@@ -30,6 +33,9 @@ pub enum CacheError {
     /// An error serializing or deserializing cached values.
     #[error("cache serialization error: {0}")]
     Serialization(String),
+    /// The selected backend does not support atomic insert-if-absent.
+    #[error("cache backend does not support atomic add")]
+    Unsupported(&'static str),
 }
 
 /// An object-safe cache of raw byte values.
@@ -42,6 +48,10 @@ pub trait Cache: Send + Sync {
         -> Result<(), CacheError>;
     /// Deletes any entry associated with `key`.
     async fn delete(&self, key: &str) -> Result<(), CacheError>;
+    /// Atomically stores `value` only when `key` is absent. Returns `true` when stored.
+    async fn add(&self, _key: &str, _value: Vec<u8>, _ttl: Option<Duration>) -> Result<bool, CacheError> {
+        Err(CacheError::Unsupported("add"))
+    }
 }
 
 /// Extension trait providing convenient `get_or_set` helpers on any [`Cache`].
@@ -107,6 +117,7 @@ where
 #[derive(Clone)]
 pub struct InMemoryCache {
     inner: MokaCache<String, MemoryEntry>,
+    add_lock: Arc<tokio::sync::Mutex<()>>,
 }
 // Internally wraps cached bytes and their absolute expiration timestamp inside the Moka cache backend.
 #[derive(Clone)]
@@ -121,6 +132,7 @@ impl InMemoryCache {
     pub fn new(max_capacity: u64) -> Self {
         Self {
             inner: MokaCache::builder().max_capacity(max_capacity).build(),
+            add_lock: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 }
@@ -163,6 +175,16 @@ impl Cache for InMemoryCache {
     async fn delete(&self, key: &str) -> Result<(), CacheError> {
         self.inner.invalidate(key).await;
         Ok(())
+    }
+    async fn add(&self, key: &str, value: Vec<u8>, ttl: Option<Duration>) -> Result<bool, CacheError> {
+        let _guard = self.add_lock.lock().await;
+        if self.inner.get(key).await.is_some_and(|entry| entry.expires_at.is_some_and(|e| e <= std::time::Instant::now())) {
+            self.inner.invalidate(key).await;
+        }
+        let entry = self.inner.entry(key.to_owned()).or_insert_with(|| async move {
+            MemoryEntry { value, expires_at: ttl.map(|t| std::time::Instant::now() + t) }
+        }).await;
+        Ok(entry.is_fresh())
     }
 }
 
@@ -261,6 +283,19 @@ impl Cache for DatabaseCache {
             .map(|_| ())
             .map_err(|e| CacheError::Backend(e.to_string()))
     }
+    async fn add(&self, key: &str, value: Vec<u8>, ttl: Option<Duration>) -> Result<bool, CacheError> {
+        self.ensure_table().await?;
+        let expires = ttl.map(|t| Utc::now() + chrono::Duration::from_std(t).unwrap_or_default());
+        let mut conn = self.db.conn();
+        let dialect = conn.dialect();
+        let p1 = dialect.placeholder(1); let p2 = dialect.placeholder(2); let p3 = dialect.placeholder(3);
+        let cleanup = format!("DELETE FROM djangors_cache_entries WHERE key = {p1} AND expires_at IS NOT NULL AND expires_at <= {p2}");
+        conn.execute(&cleanup, &[djangors_db::BindValue::Text(key.to_string()), djangors_db::BindValue::DateTime(Utc::now())]).await.map_err(|e| CacheError::Backend(e.to_string()))?;
+        let insert = format!("INSERT INTO djangors_cache_entries (key, value, expires_at) VALUES ({p1}, {p2}, {p3}) ON CONFLICT (key) DO NOTHING");
+        let expiry = expires.map(djangors_db::BindValue::DateTime).unwrap_or(djangors_db::BindValue::Null(djangors_db::NullKind::DateTime));
+        let rows = conn.execute(&insert, &[djangors_db::BindValue::Text(key.to_string()), djangors_db::BindValue::Bytes(value), expiry]).await.map_err(|e| CacheError::Backend(e.to_string()))?;
+        Ok(rows > 0)
+    }
 }
 
 #[cfg(feature = "redis")]
@@ -318,6 +353,13 @@ impl Cache for RedisCache {
             .query_async::<()>(&mut c)
             .await
             .map_err(|e| CacheError::Backend(e.to_string()))
+    }
+    async fn add(&self, key: &str, value: Vec<u8>, ttl: Option<Duration>) -> Result<bool, CacheError> {
+        let mut c = self.connection().await?;
+        let mut cmd = redis::cmd("SET"); cmd.arg(key).arg(value).arg("NX");
+        if let Some(ttl) = ttl { cmd.arg("PX").arg(ttl.as_millis().max(1) as u64); }
+        let result: Option<String> = cmd.query_async(&mut c).await.map_err(|e| CacheError::Backend(e.to_string()))?;
+        Ok(result.is_some())
     }
 }
 
