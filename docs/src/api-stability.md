@@ -29,7 +29,7 @@ apply from `1.0` onward.
 
 ## `CHANGELOG.md`
 
-A root [`CHANGELOG.md`](https://github.com/Chidi09/djangors/blob/main/CHANGELOG.md) is maintained
+A root [`CHANGELOG.md`](https://github.com/QUANTORA-ltd/djangors/blob/main/CHANGELOG.md) is maintained
 in the [Keep a Changelog](https://keepachangelog.com/) format (`Added`/`Changed`/`Deprecated`/`Removed`/`Fixed`/`Security` sections per tagged release, plus `[Unreleased]`), alongside a historical summary of earlier pre-release development phases.
 
 ## Release cadence

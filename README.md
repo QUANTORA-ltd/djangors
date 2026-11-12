@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Chidi09/djangors/blob/main/PLAN.md">Roadmap</a> ·
+  <a href="https://github.com/QUANTORA-ltd/djangors/blob/main/PLAN.md">Roadmap</a> ·
   <a href="docs/src/tutorial/01-requests-and-responses.md">Tutorial</a> ·
   <a href="docs/src/django-comparison.md">Djangors for Django developers</a> ·
   <a href="docs/src/guides/">Topic guides</a>
@@ -152,7 +152,7 @@ Contributing to Djangors itself, or want a `dj` build with unreleased fixes? Clo
 instead of installing from crates.io:
 
 ```bash
-git clone https://github.com/Chidi09/djangors.git
+git clone https://github.com/QUANTORA-ltd/djangors.git
 cd djangors
 cargo build --workspace
 cargo run -p djangors-cli -- new mysite
