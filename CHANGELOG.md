@@ -60,6 +60,27 @@ All notable changes to Djangors are documented here. Format loosely follows
 - Session keys are now 256-bit (were 128-bit).
 - `DjangorsSettings` gained `session_remember_age` and `require_verified_email_for_login`;
   struct literals need `..Default::default()`.
+- **OAuth consent form integrity** (`djangors_contrib_oauth::provider`): `GET /o/authorize`
+  now embeds a 10-minute `TimestampSigner`-signed `consent_token` binding the user ID and
+  validated request parameters (`client_id`, `redirect_uri`, `scope`, `state`,
+  `code_challenge`, `nonce`), and `POST /o/authorize` verifies it in constant time for both
+  approve and deny submissions (returning 403 on failure).
+- **OAuth ID tokens default to ES256** (`djangors_contrib_oauth::provider`):
+  `OAuthProviderConfig` now defaults `id_token_signing_alg` to `"ES256"` (instead of selecting
+  any newest active key); `"RS256"` remains opt-in via `.id_token_signing_alg("RS256")`
+  due to RUSTSEC-2023-0071 in the `rsa` crate. Discovery advertises `[cfg.id_token_signing_alg]`.
+- **Remote secrets providers opt-in** (`djangors_core`, `djangors`): moved `VaultProvider`,
+  `GcpSecretManagerProvider`, and `AwsSecretsManagerProvider` (and the `reqwest` dependency)
+  behind the opt-in `secrets-remote` feature; default `secrets` now includes only local
+  providers (`EnvProvider`, `DotenvProvider`, `ChainSecretsProvider`, `CachedSecretsProvider`)
+  and placeholder interpolation.
+
+### Tests
+
+- **SAML fixture verification** (`djangors-contrib-saml`): added tests verifying `RSA-SHA256`,
+  `RSA-SHA512`, `ECDSA-P256`, response-only, response-and-assertion, rogue `KeyInfo`,
+  comment-injection `NameID`, tampering, replay, `InResponseTo`, and wrapped-base64 handling
+  against independently signed `signxml` (`libxml2` exc-c14n) fixtures.
 
 ## [0.12.0]
 

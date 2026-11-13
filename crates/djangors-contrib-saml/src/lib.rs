@@ -1078,3 +1078,6 @@ fn escape_xml(raw: &str) -> String {
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod fixture_tests;

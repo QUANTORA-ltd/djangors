@@ -2,7 +2,7 @@ use super::*;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use djangors_auth::email_verification::{create_email_address_table, EmailAddress};
 use djangors_auth::{hash_password, SESSION_USER_ID_KEY};
-use djangors_core::AppState;
+use djangors_core::{AppState, DjangorsSettings};
 use djangors_db::config::DatabaseConfig;
 use djangors_sessions::Session;
 use hyper::body::Bytes;
@@ -92,6 +92,16 @@ fn build_state(db: Database, issuer: &str) -> AppState {
     AppState::new()
         .insert(db)
         .insert(OAuthProviderConfig::new(issuer))
+        .insert(DjangorsSettings::new().with_secret_key("test-oauth-provider-secret-key"))
+}
+
+fn extract_consent_token(html: &str) -> String {
+    let marker = "name=\"consent_token\" value=\"";
+    let start = html.find(marker).expect("missing consent_token input") + marker.len();
+    let end = html[start..]
+        .find('"')
+        .expect("unterminated consent_token value");
+    html[start..start + end].to_string()
 }
 
 fn session_extensions(user: Option<&User>) -> Extensions {
@@ -205,6 +215,10 @@ async fn signing_keys_encrypt_at_rest_and_publish_jwks_and_discovery() {
         "https://auth.example.com/o/token"
     );
     assert_eq!(disc_json["jwks_uri"], "https://auth.example.com/o/jwks");
+    assert_eq!(
+        disc_json["id_token_signing_alg_values_supported"],
+        serde_json::json!(["ES256"])
+    );
 
     // /o/jwks must only include public keys.
     let jwks_req = Request::new(
@@ -246,7 +260,10 @@ async fn authorization_code_pkce_oidc_id_token_and_userinfo_flow() {
     .await
     .unwrap();
 
-    let state = build_state(db.clone(), "https://auth.example.com");
+    let state = AppState::new()
+        .insert(db.clone())
+        .insert(OAuthProviderConfig::new("https://auth.example.com").id_token_signing_alg("RS256"))
+        .insert(DjangorsSettings::new().with_secret_key("test-oauth-provider-secret-key"));
     let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk-abcdef";
     let challenge = pkce_challenge(verifier);
 
@@ -345,6 +362,7 @@ async fn authorization_code_pkce_oidc_id_token_and_userinfo_flow() {
     let consent_html = std::str::from_utf8(consent_resp.body()).unwrap();
     assert!(consent_html.contains("Example SPA"));
     assert!(consent_html.contains("alice"));
+    let consent_token = extract_consent_token(consent_html);
 
     // 5. Consent approval POST mints single-use code (stored hashed).
     let approve_req = form_request(
@@ -359,6 +377,7 @@ async fn authorization_code_pkce_oidc_id_token_and_userinfo_flow() {
             ("code_challenge", &challenge),
             ("code_challenge_method", "S256"),
             ("decision", "approve"),
+            ("consent_token", &consent_token),
         ],
         HeaderMap::new(),
         state.clone(),
@@ -407,6 +426,25 @@ async fn authorization_code_pkce_oidc_id_token_and_userinfo_flow() {
     assert_eq!(err_json["error"], "invalid_grant");
 
     // 7. Re-approve a fresh code and exchange with valid PKCE verifier.
+    let consent_req2 = Request::new(
+        Method::GET,
+        format!(
+            "/o/authorize?response_type=code&client_id={}&redirect_uri=https://app.example.com/cb&scope=openid%20profile%20email&state=xyz2&nonce=n-456&code_challenge={challenge}&code_challenge_method=S256",
+            spa_app.client_id
+        )
+        .parse()
+        .unwrap(),
+        HeaderMap::new(),
+        Bytes::new(),
+    )
+    .with_extensions(session_extensions(Some(&alice)))
+    .with_state(state.clone());
+    let consent_resp2 = authorize_get_view(consent_req2, PathParams::new())
+        .await
+        .unwrap();
+    assert_eq!(consent_resp2.status(), StatusCode::OK);
+    let consent_token2 = extract_consent_token(std::str::from_utf8(consent_resp2.body()).unwrap());
+
     let approve_req2 = form_request(
         "/o/authorize",
         &[
@@ -419,6 +457,7 @@ async fn authorization_code_pkce_oidc_id_token_and_userinfo_flow() {
             ("code_challenge", &challenge),
             ("code_challenge_method", "S256"),
             ("decision", "approve"),
+            ("consent_token", &consent_token2),
         ],
         HeaderMap::new(),
         state.clone(),
@@ -897,4 +936,474 @@ async fn revoke_introspect_and_revoke_app_tokens_work() {
     )
     .with_state(state);
     assert!(OAuthBearer::from_request(&bearer_req).await.is_err());
+}
+
+#[tokio::test]
+async fn consent_post_without_token_is_forbidden_and_issues_no_code() {
+    let db = setup_provider_db().await;
+    let alice = seed_user(&db, "alice", "alice@example.com", true).await;
+    let app = OAuthApplication::create_public(
+        &db,
+        "Test App",
+        &["https://app.example.com/cb"],
+        &["authorization_code"],
+        &["openid"],
+        false,
+        Some(alice.id),
+    )
+    .await
+    .unwrap();
+    let state = build_state(db.clone(), "https://auth.example.com");
+    let challenge = pkce_challenge("verifier-0123456789012345678901234567890123456789");
+
+    // GET without DjangorsSettings or with empty secret_key must fail closed (500 Internal).
+    let no_settings_state = AppState::new()
+        .insert(db.clone())
+        .insert(OAuthProviderConfig::new("https://auth.example.com"));
+    let get_uri: hyper::Uri = format!(
+        "/o/authorize?response_type=code&client_id={}&redirect_uri=https://app.example.com/cb&scope=openid&code_challenge={challenge}&code_challenge_method=S256",
+        app.client_id
+    )
+    .parse()
+    .unwrap();
+    let no_settings_resp = authorize_get_view(
+        Request::new(Method::GET, get_uri.clone(), HeaderMap::new(), Bytes::new())
+            .with_extensions(session_extensions(Some(&alice)))
+            .with_state(no_settings_state),
+        PathParams::new(),
+    )
+    .await;
+    assert!(matches!(no_settings_resp, Err(DjangorsError::Internal(_))));
+
+    let empty_secret_state = AppState::new()
+        .insert(db.clone())
+        .insert(OAuthProviderConfig::new("https://auth.example.com"))
+        .insert(DjangorsSettings::new());
+    let empty_secret_resp = authorize_get_view(
+        Request::new(Method::GET, get_uri, HeaderMap::new(), Bytes::new())
+            .with_extensions(session_extensions(Some(&alice)))
+            .with_state(empty_secret_state),
+        PathParams::new(),
+    )
+    .await;
+    assert!(matches!(empty_secret_resp, Err(DjangorsError::Internal(_))));
+
+    // POST approve without consent_token -> 403, no redirect, no code row.
+    let req = form_request(
+        "/o/authorize",
+        &[
+            ("response_type", "code"),
+            ("client_id", &app.client_id),
+            ("redirect_uri", "https://app.example.com/cb"),
+            ("scope", "openid"),
+            ("code_challenge", &challenge),
+            ("code_challenge_method", "S256"),
+            ("decision", "approve"),
+        ],
+        HeaderMap::new(),
+        state,
+        session_extensions(Some(&alice)),
+    );
+    let resp = authorize_post_view(req, PathParams::new()).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert!(resp.headers().get("location").is_none());
+    assert!(AuthorizationCode::objects()
+        .all(&db)
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
+async fn consent_post_with_token_for_different_user_is_forbidden() {
+    let db = setup_provider_db().await;
+    let alice = seed_user(&db, "alice", "alice@example.com", true).await;
+    let bob = seed_user(&db, "bob", "bob@example.com", true).await;
+    let app = OAuthApplication::create_public(
+        &db,
+        "Test App",
+        &["https://app.example.com/cb"],
+        &["authorization_code"],
+        &["openid"],
+        false,
+        None,
+    )
+    .await
+    .unwrap();
+    let state = build_state(db.clone(), "https://auth.example.com");
+    let challenge = pkce_challenge("verifier-0123456789012345678901234567890123456789");
+
+    let get_resp = authorize_get_view(
+        Request::new(
+            Method::GET,
+            format!(
+                "/o/authorize?response_type=code&client_id={}&redirect_uri=https://app.example.com/cb&scope=openid&code_challenge={challenge}&code_challenge_method=S256",
+                app.client_id
+            )
+            .parse()
+            .unwrap(),
+            HeaderMap::new(),
+            Bytes::new(),
+        )
+        .with_extensions(session_extensions(Some(&alice)))
+        .with_state(state.clone()),
+        PathParams::new(),
+    )
+    .await
+    .unwrap();
+    let token = extract_consent_token(std::str::from_utf8(get_resp.body()).unwrap());
+
+    let post_req = form_request(
+        "/o/authorize",
+        &[
+            ("response_type", "code"),
+            ("client_id", &app.client_id),
+            ("redirect_uri", "https://app.example.com/cb"),
+            ("scope", "openid"),
+            ("code_challenge", &challenge),
+            ("code_challenge_method", "S256"),
+            ("decision", "approve"),
+            ("consent_token", &token),
+        ],
+        HeaderMap::new(),
+        state,
+        session_extensions(Some(&bob)),
+    );
+    let post_resp = authorize_post_view(post_req, PathParams::new())
+        .await
+        .unwrap();
+    assert_eq!(post_resp.status(), StatusCode::FORBIDDEN);
+    assert!(post_resp.headers().get("location").is_none());
+    assert!(AuthorizationCode::objects()
+        .all(&db)
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
+async fn consent_post_with_tampered_scope_redirect_uri_or_challenge_is_forbidden() {
+    let db = setup_provider_db().await;
+    let alice = seed_user(&db, "alice", "alice@example.com", true).await;
+    let app = OAuthApplication::create_public(
+        &db,
+        "Test App",
+        &["https://app.example.com/cb", "https://app.example.com/cb2"],
+        &["authorization_code"],
+        &["openid", "profile", "email"],
+        false,
+        None,
+    )
+    .await
+    .unwrap();
+    let state = build_state(db.clone(), "https://auth.example.com");
+    let ch1 = pkce_challenge("verifier-1111111111111111111111111111111111111111");
+    let ch2 = pkce_challenge("verifier-2222222222222222222222222222222222222222");
+
+    let get_resp = authorize_get_view(
+        Request::new(
+            Method::GET,
+            format!(
+                "/o/authorize?response_type=code&client_id={}&redirect_uri=https://app.example.com/cb&scope=openid&code_challenge={ch1}&code_challenge_method=S256",
+                app.client_id
+            )
+            .parse()
+            .unwrap(),
+            HeaderMap::new(),
+            Bytes::new(),
+        )
+        .with_extensions(session_extensions(Some(&alice)))
+        .with_state(state.clone()),
+        PathParams::new(),
+    )
+    .await
+    .unwrap();
+    let token = extract_consent_token(std::str::from_utf8(get_resp.body()).unwrap());
+
+    let cases = [
+        ("openid profile", "https://app.example.com/cb", ch1.as_str()),
+        ("openid", "https://app.example.com/cb2", ch1.as_str()),
+        ("openid", "https://app.example.com/cb", ch2.as_str()),
+    ];
+    for (scope, redir, challenge) in cases {
+        let post_req = form_request(
+            "/o/authorize",
+            &[
+                ("response_type", "code"),
+                ("client_id", &app.client_id),
+                ("redirect_uri", redir),
+                ("scope", scope),
+                ("code_challenge", challenge),
+                ("code_challenge_method", "S256"),
+                ("decision", "approve"),
+                ("consent_token", &token),
+            ],
+            HeaderMap::new(),
+            state.clone(),
+            session_extensions(Some(&alice)),
+        );
+        let resp = authorize_post_view(post_req, PathParams::new())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+        assert!(resp.headers().get("location").is_none());
+    }
+    assert!(AuthorizationCode::objects()
+        .all(&db)
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
+async fn consent_post_deny_requires_valid_token_and_redirects_access_denied() {
+    let db = setup_provider_db().await;
+    let alice = seed_user(&db, "alice", "alice@example.com", true).await;
+    let app = OAuthApplication::create_public(
+        &db,
+        "Test App",
+        &["https://app.example.com/cb"],
+        &["authorization_code"],
+        &["openid"],
+        false,
+        None,
+    )
+    .await
+    .unwrap();
+    let state = build_state(db.clone(), "https://auth.example.com");
+    let challenge = pkce_challenge("verifier-0123456789012345678901234567890123456789");
+
+    // Deny without consent_token -> 403, no redirect.
+    let bad_deny_req = form_request(
+        "/o/authorize",
+        &[
+            ("response_type", "code"),
+            ("client_id", &app.client_id),
+            ("redirect_uri", "https://app.example.com/cb"),
+            ("scope", "openid"),
+            ("state", "st-deny"),
+            ("code_challenge", &challenge),
+            ("code_challenge_method", "S256"),
+            ("decision", "deny"),
+        ],
+        HeaderMap::new(),
+        state.clone(),
+        session_extensions(Some(&alice)),
+    );
+    let bad_deny_resp = authorize_post_view(bad_deny_req, PathParams::new())
+        .await
+        .unwrap();
+    assert_eq!(bad_deny_resp.status(), StatusCode::FORBIDDEN);
+    assert!(bad_deny_resp.headers().get("location").is_none());
+
+    // Deny with valid consent_token -> 302 redirect with error=access_denied.
+    let get_resp = authorize_get_view(
+        Request::new(
+            Method::GET,
+            format!(
+                "/o/authorize?response_type=code&client_id={}&redirect_uri=https://app.example.com/cb&scope=openid&state=st-deny&code_challenge={challenge}&code_challenge_method=S256",
+                app.client_id
+            )
+            .parse()
+            .unwrap(),
+            HeaderMap::new(),
+            Bytes::new(),
+        )
+        .with_extensions(session_extensions(Some(&alice)))
+        .with_state(state.clone()),
+        PathParams::new(),
+    )
+    .await
+    .unwrap();
+    let token = extract_consent_token(std::str::from_utf8(get_resp.body()).unwrap());
+
+    let deny_req = form_request(
+        "/o/authorize",
+        &[
+            ("response_type", "code"),
+            ("client_id", &app.client_id),
+            ("redirect_uri", "https://app.example.com/cb"),
+            ("scope", "openid"),
+            ("state", "st-deny"),
+            ("code_challenge", &challenge),
+            ("code_challenge_method", "S256"),
+            ("decision", "deny"),
+            ("consent_token", &token),
+        ],
+        HeaderMap::new(),
+        state,
+        session_extensions(Some(&alice)),
+    );
+    let deny_resp = authorize_post_view(deny_req, PathParams::new())
+        .await
+        .unwrap();
+    assert_eq!(deny_resp.status(), StatusCode::FOUND);
+    let loc = deny_resp
+        .headers()
+        .get("location")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert_eq!(query_param(loc, "error").as_deref(), Some("access_denied"));
+    assert_eq!(query_param(loc, "state").as_deref(), Some("st-deny"));
+    assert!(AuthorizationCode::objects()
+        .all(&db)
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
+async fn id_token_defaults_to_es256_even_when_newer_rs256_key_exists() {
+    let db = setup_provider_db().await;
+    let alice = seed_user(&db, "alice", "alice@example.com", true).await;
+
+    // Only an RS256 key active with default config (ES256) -> id_token issuance must fail.
+    let _rsa_first = SigningKey::generate_rs256()
+        .unwrap()
+        .save(&db)
+        .await
+        .unwrap();
+    let (app, secret) = OAuthApplication::create_confidential(
+        &db,
+        "OIDC Client",
+        &["https://app.example.com/cb"],
+        &["authorization_code"],
+        &["openid", "profile"],
+        true,
+        None,
+    )
+    .await
+    .unwrap();
+    let state = build_state(db.clone(), "https://auth.example.com");
+
+    let verifier = "verifier-0123456789012345678901234567890123456789";
+    let challenge = pkce_challenge(verifier);
+
+    let auth_req = Request::new(
+        Method::GET,
+        format!(
+            "/o/authorize?response_type=code&client_id={}&redirect_uri=https://app.example.com/cb&scope=openid%20profile&code_challenge={challenge}&code_challenge_method=S256",
+            app.client_id
+        )
+        .parse()
+        .unwrap(),
+        HeaderMap::new(),
+        Bytes::new(),
+    )
+    .with_extensions(session_extensions(Some(&alice)))
+    .with_state(state.clone());
+    let auth_resp = authorize_get_view(auth_req, PathParams::new())
+        .await
+        .unwrap();
+    let code1 = query_param(
+        auth_resp
+            .headers()
+            .get("location")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "code",
+    )
+    .unwrap();
+
+    let tok_fail_req = form_request(
+        "/o/token",
+        &[
+            ("grant_type", "authorization_code"),
+            ("client_id", &app.client_id),
+            ("client_secret", &secret),
+            ("code", &code1),
+            ("redirect_uri", "https://app.example.com/cb"),
+            ("code_verifier", verifier),
+        ],
+        HeaderMap::new(),
+        state.clone(),
+        Extensions::new(),
+    );
+    let tok_fail = token_view(tok_fail_req, PathParams::new()).await;
+    assert!(matches!(tok_fail, Err(DjangorsError::Internal(_))));
+
+    // Now seed an ES256 key AND a newer RS256 key; default config must still pick ES256.
+    let ec_key = SigningKey::generate_es256()
+        .unwrap()
+        .save(&db)
+        .await
+        .unwrap();
+    let _rsa_newer = SigningKey::generate_rs256()
+        .unwrap()
+        .save(&db)
+        .await
+        .unwrap();
+
+    let auth_req2 = Request::new(
+        Method::GET,
+        format!(
+            "/o/authorize?response_type=code&client_id={}&redirect_uri=https://app.example.com/cb&scope=openid%20profile&code_challenge={challenge}&code_challenge_method=S256",
+            app.client_id
+        )
+        .parse()
+        .unwrap(),
+        HeaderMap::new(),
+        Bytes::new(),
+    )
+    .with_extensions(session_extensions(Some(&alice)))
+    .with_state(state.clone());
+    let auth_resp2 = authorize_get_view(auth_req2, PathParams::new())
+        .await
+        .unwrap();
+    let code2 = query_param(
+        auth_resp2
+            .headers()
+            .get("location")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "code",
+    )
+    .unwrap();
+
+    let tok_ok_req = form_request(
+        "/o/token",
+        &[
+            ("grant_type", "authorization_code"),
+            ("client_id", &app.client_id),
+            ("client_secret", &secret),
+            ("code", &code2),
+            ("redirect_uri", "https://app.example.com/cb"),
+            ("code_verifier", verifier),
+        ],
+        HeaderMap::new(),
+        state.clone(),
+        Extensions::new(),
+    );
+    let tok_ok_resp = token_view(tok_ok_req, PathParams::new()).await.unwrap();
+    assert_eq!(tok_ok_resp.status(), StatusCode::OK);
+    let tok_json: serde_json::Value = serde_json::from_slice(tok_ok_resp.body()).unwrap();
+    let id_token = tok_json["id_token"].as_str().unwrap();
+
+    let hdr = decode_header(id_token).unwrap();
+    assert_eq!(hdr.alg, jsonwebtoken::Algorithm::ES256);
+    assert_eq!(hdr.kid.as_deref(), Some(ec_key.kid.as_str()));
+
+    // Verify signature against JWKS.
+    let jwks_resp = jwks_view(
+        Request::new(
+            Method::GET,
+            "/o/jwks".parse().unwrap(),
+            HeaderMap::new(),
+            Bytes::new(),
+        )
+        .with_state(state),
+        PathParams::new(),
+    )
+    .await
+    .unwrap();
+    let jwk_set: JwkSet = serde_json::from_slice(jwks_resp.body()).unwrap();
+    let dec_key = DecodingKey::from_jwk(jwk_set.find(&ec_key.kid).unwrap()).unwrap();
+    let mut val = Validation::new(jsonwebtoken::Algorithm::ES256);
+    val.set_audience(&[&app.client_id]);
+    val.set_issuer(&["https://auth.example.com"]);
+    let verified = decode::<DecodedIdToken>(id_token, &dec_key, &val).unwrap();
+    assert_eq!(verified.claims.sub, alice.id.to_string());
 }

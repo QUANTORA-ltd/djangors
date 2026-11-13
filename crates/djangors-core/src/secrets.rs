@@ -4,15 +4,22 @@
 //! are zeroized on drop and never printed by `Debug`.
 
 use crate::error::DjangorsError;
+#[cfg(feature = "secrets-remote")]
 use hmac::{Hmac, Mac};
 pub use secrecy::{ExposeSecret, SecretString};
+#[cfg(feature = "secrets-remote")]
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tokio::sync::{Mutex, RwLock};
+use std::time::{Duration, Instant};
+#[cfg(feature = "secrets-remote")]
+use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(feature = "secrets-remote")]
+use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 
+#[cfg(feature = "secrets-remote")]
 type HmacSha256 = Hmac<Sha256>;
 
 /// Errors returned by [`SecretsProvider`] implementations and placeholder interpolation.
@@ -253,6 +260,7 @@ impl SecretsProvider for CachedSecretsProvider {
     }
 }
 
+#[cfg(feature = "secrets-remote")]
 fn default_http_client() -> Result<reqwest::Client, SecretsError> {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
@@ -261,6 +269,7 @@ fn default_http_client() -> Result<reqwest::Client, SecretsError> {
 }
 
 /// Authentication method for [`VaultProvider`].
+#[cfg(feature = "secrets-remote")]
 #[derive(Clone)]
 pub enum VaultAuth {
     /// Static or renewable Vault token.
@@ -276,6 +285,7 @@ pub enum VaultAuth {
     },
 }
 
+#[cfg(feature = "secrets-remote")]
 impl std::fmt::Debug for VaultAuth {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -290,6 +300,7 @@ impl std::fmt::Debug for VaultAuth {
     }
 }
 
+#[cfg(feature = "secrets-remote")]
 #[derive(Default)]
 struct VaultState {
     token: Option<SecretString>,
@@ -305,6 +316,7 @@ struct VaultState {
 ///
 /// Lookup names accept `"path/to/secret#field"` or `"path/to/secret"` (which reads
 /// the `"value"` key in `data.data`).
+#[cfg(feature = "secrets-remote")]
 pub struct VaultProvider {
     addr: String,
     mount: String,
@@ -314,6 +326,7 @@ pub struct VaultProvider {
     state: Mutex<VaultState>,
 }
 
+#[cfg(feature = "secrets-remote")]
 impl std::fmt::Debug for VaultProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("VaultProvider")
@@ -325,6 +338,7 @@ impl std::fmt::Debug for VaultProvider {
     }
 }
 
+#[cfg(feature = "secrets-remote")]
 impl VaultProvider {
     /// Creates a [`VaultProvider`] authenticated with a Vault token.
     pub fn with_token(
@@ -558,6 +572,7 @@ impl VaultProvider {
     }
 }
 
+#[cfg(feature = "secrets-remote")]
 #[async_trait::async_trait]
 impl SecretsProvider for VaultProvider {
     async fn get(&self, name: &str) -> Result<Option<SecretString>, SecretsError> {
@@ -638,6 +653,7 @@ impl SecretsProvider for VaultProvider {
 }
 
 /// Google Cloud Secret Manager REST provider using GCE/Cloud Run metadata-server tokens.
+#[cfg(feature = "secrets-remote")]
 pub struct GcpSecretManagerProvider {
     project: String,
     endpoint: String,
@@ -647,6 +663,7 @@ pub struct GcpSecretManagerProvider {
     client: reqwest::Client,
 }
 
+#[cfg(feature = "secrets-remote")]
 impl std::fmt::Debug for GcpSecretManagerProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("GcpSecretManagerProvider")
@@ -656,6 +673,7 @@ impl std::fmt::Debug for GcpSecretManagerProvider {
     }
 }
 
+#[cfg(feature = "secrets-remote")]
 impl GcpSecretManagerProvider {
     /// Creates a GCP Secret Manager provider for `project`.
     pub fn new(project: impl Into<String>) -> Result<Self, SecretsError> {
@@ -740,6 +758,7 @@ impl GcpSecretManagerProvider {
     }
 }
 
+#[cfg(feature = "secrets-remote")]
 #[async_trait::async_trait]
 impl SecretsProvider for GcpSecretManagerProvider {
     async fn get(&self, name: &str) -> Result<Option<SecretString>, SecretsError> {
@@ -791,6 +810,7 @@ impl SecretsProvider for GcpSecretManagerProvider {
 }
 
 /// AWS Secrets Manager provider using pure-Rust SigV4 signing over `reqwest`.
+#[cfg(feature = "secrets-remote")]
 pub struct AwsSecretsManagerProvider {
     region: String,
     access_key_id: String,
@@ -800,6 +820,7 @@ pub struct AwsSecretsManagerProvider {
     client: reqwest::Client,
 }
 
+#[cfg(feature = "secrets-remote")]
 impl std::fmt::Debug for AwsSecretsManagerProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AwsSecretsManagerProvider")
@@ -810,6 +831,7 @@ impl std::fmt::Debug for AwsSecretsManagerProvider {
     }
 }
 
+#[cfg(feature = "secrets-remote")]
 impl AwsSecretsManagerProvider {
     /// Creates an [`AwsSecretsManagerProvider`] for `region` using explicit credentials.
     pub fn new(
@@ -852,14 +874,17 @@ impl AwsSecretsManagerProvider {
     }
 }
 
+#[cfg(feature = "secrets-remote")]
 fn hex_lower(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+#[cfg(feature = "secrets-remote")]
 fn sha256_hex(bytes: &[u8]) -> String {
     hex_lower(&Sha256::digest(bytes))
 }
 
+#[cfg(feature = "secrets-remote")]
 fn hmac_sha256_raw(key: &[u8], msg: &[u8]) -> Vec<u8> {
     let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts any key length");
     mac.update(msg);
@@ -867,6 +892,7 @@ fn hmac_sha256_raw(key: &[u8], msg: &[u8]) -> Vec<u8> {
 }
 
 /// Formats `unix_secs` as `(YYYYMMDDTHHMMSSZ, YYYYMMDD)` in UTC.
+#[cfg(feature = "secrets-remote")]
 pub(crate) fn format_amz_timestamps(unix_secs: u64) -> (String, String) {
     let days = (unix_secs / 86_400) as i64;
     let secs_of_day = unix_secs % 86_400;
@@ -894,6 +920,7 @@ pub(crate) fn format_amz_timestamps(unix_secs: u64) -> (String, String) {
 /// Computes an AWS Signature Version 4 `Authorization` header value.
 ///
 /// `headers` must be lowercase `(name, trimmed_value)` pairs sorted by `name`.
+#[cfg(feature = "secrets-remote")]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn sign_aws_sigv4(
     method: &str,
@@ -948,6 +975,7 @@ pub(crate) fn sign_aws_sigv4(
     )
 }
 
+#[cfg(feature = "secrets-remote")]
 fn host_header_from_url(url: &str) -> Result<String, SecretsError> {
     let rest = url
         .strip_prefix("https://")
@@ -962,6 +990,7 @@ fn host_header_from_url(url: &str) -> Result<String, SecretsError> {
     Ok(host_port.to_string())
 }
 
+#[cfg(feature = "secrets-remote")]
 #[async_trait::async_trait]
 impl SecretsProvider for AwsSecretsManagerProvider {
     async fn get(&self, name: &str) -> Result<Option<SecretString>, SecretsError> {

@@ -1,6 +1,14 @@
 # Secrets providers
 
-`djangors_core::secrets` (enabled by the default `secrets` feature) loads secrets from environment variables, `.env` files, HashiCorp Vault, GCP Secret Manager, and AWS Secrets Manager, and interpolates `${secret:NAME}` placeholders in settings.
+`djangors_core::secrets` (enabled by the default `secrets` feature) loads secrets from environment variables and `.env` files, and interpolates `${secret:NAME}` placeholders in settings without pulling in an HTTP client.
+
+Remote secret backends (`VaultProvider`, `GcpSecretManagerProvider`, and `AwsSecretsManagerProvider`) are opt-in behind the `secrets-remote` feature (which adds `reqwest`):
+
+```toml
+djangors = { version = "0.13", features = ["secrets-remote"] }
+# or directly on djangors-core:
+# djangors-core = { version = "0.13", features = ["secrets-remote"] }
+```
 
 All secret values are returned as `SecretString` (`secrecy::SecretString`), which redacts `Debug` output and zeroizes memory on drop.
 
@@ -8,9 +16,9 @@ All secret values are returned as `SecretString` (`secrecy::SecretString`), whic
 
 - `EnvProvider`: reads `std::env::var`, optionally with a prefix (`EnvProvider::with_prefix("MYAPP_")`).
 - `DotenvProvider`: parses a `.env` file with `dotenvy` without mutating process-wide environment variables.
-- `VaultProvider`: reads HashiCorp Vault KV v2 secrets (`/v1/{mount}/data/{path}`) with token or AppRole authentication and automatic token/lease renewal.
-- `GcpSecretManagerProvider`: reads GCP Secret Manager versions using GCE/Cloud Run metadata-server tokens.
-- `AwsSecretsManagerProvider`: calls AWS Secrets Manager (`GetSecretValue`) using pure-Rust SigV4 signing (`hmac`/`sha2`).
+- `VaultProvider` *(requires `features = ["secrets-remote"]`)*: reads HashiCorp Vault KV v2 secrets (`/v1/{mount}/data/{path}`) with token or AppRole authentication and automatic token/lease renewal.
+- `GcpSecretManagerProvider` *(requires `features = ["secrets-remote"]`)*: reads GCP Secret Manager versions using GCE/Cloud Run metadata-server tokens.
+- `AwsSecretsManagerProvider` *(requires `features = ["secrets-remote"]`)*: calls AWS Secrets Manager (`GetSecretValue`) using pure-Rust SigV4 signing (`hmac`/`sha2`).
 - `ChainSecretsProvider`: tries multiple providers in order.
 - `CachedSecretsProvider`: caches lookups in memory for a configurable TTL.
 

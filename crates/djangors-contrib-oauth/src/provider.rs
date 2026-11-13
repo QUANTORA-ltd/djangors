@@ -3,7 +3,9 @@
 //! Provides RFC 6749 (`authorization_code` + PKCE S256, `client_credentials`,
 //! `refresh_token` with rotation & reuse detection), RFC 7009 token revocation,
 //! RFC 7662 token introspection, OIDC Discovery, JWKS, UserInfo, database-backed
-//! [`SigningKey`] pairs (RS256/ES256, private PEM protected with
+//! [`SigningKey`] pairs (`ES256` default and recommended; `RS256` also supported
+//! via [`OAuthProviderConfig::id_token_signing_alg`], though `RS256` uses the `rsa`
+//! crate which has RUSTSEC-2023-0071, private PEM protected with
 //! `#[djangors(encrypted)]`), and [`OAuthBearer`] / [`HasOAuthScope`] request guards.
 
 use crate::error::OAuthError;
@@ -13,7 +15,10 @@ use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use djangors_auth::email_verification::has_verified_email;
 use djangors_auth::{Auth, User};
 use djangors_core::extract::FromRequest;
-use djangors_core::{DjangorsError, PathParams, Request, Response, Router, StatusCode};
+use djangors_core::signing::TimestampSigner;
+use djangors_core::{
+    DjangorsError, DjangorsSettings, PathParams, Request, Response, Router, StatusCode,
+};
 use djangors_db::{BindValue, Database};
 use djangors_macros::Model;
 use djangors_orm::{ForeignKey, Model as _};
@@ -35,6 +40,8 @@ use url::Url;
 const DEFAULT_ACCESS_TOKEN_TTL_SECS: u64 = 3600;
 const DEFAULT_REFRESH_TOKEN_TTL_SECS: u64 = 30 * 24 * 3600;
 const DEFAULT_AUTH_CODE_TTL_SECS: u64 = 120;
+const CONSENT_SALT: &str = "djangors.oauth.consent";
+const CONSENT_TOKEN_MAX_AGE_SECS: u64 = 600;
 
 /// Configuration for the Djangors OAuth 2.0 / OIDC provider endpoints.
 #[derive(Debug, Clone)]
@@ -53,6 +60,8 @@ pub struct OAuthProviderConfig {
     pub supported_scopes: Vec<String>,
     /// Require PKCE S256 for confidential clients too (public clients always require PKCE S256).
     pub require_pkce_for_all_clients: bool,
+    /// JWS algorithm used to sign OIDC ID tokens (`"ES256"` or `"RS256"`, default: `"ES256"`).
+    pub id_token_signing_alg: String,
 }
 
 impl OAuthProviderConfig {
@@ -74,6 +83,7 @@ impl OAuthProviderConfig {
                 "write".to_string(),
             ],
             require_pkce_for_all_clients: false,
+            id_token_signing_alg: "ES256".to_string(),
         }
     }
 
@@ -110,6 +120,16 @@ impl OAuthProviderConfig {
     /// Forces PKCE `S256` even for confidential clients.
     pub fn require_pkce_for_all_clients(mut self, require: bool) -> Self {
         self.require_pkce_for_all_clients = require;
+        self
+    }
+
+    /// Sets the JWS algorithm used to sign OIDC ID tokens (`"ES256"` or `"RS256"`, default: `"ES256"`).
+    ///
+    /// `"RS256"` is allowed for relying parties that require RSA, but it uses the `rsa` crate,
+    /// which has RUSTSEC-2023-0071 (Marvin timing side channel in private-key operations),
+    /// so prefer `"ES256"`.
+    pub fn id_token_signing_alg(mut self, alg: impl Into<String>) -> Self {
+        self.id_token_signing_alg = alg.into();
         self
     }
 }
@@ -365,6 +385,10 @@ pub struct SigningKey {
 
 impl SigningKey {
     /// Generates a new 2048-bit RSA (`RS256`) signing key (not yet saved to the database).
+    ///
+    /// Prefer [`SigningKey::generate_es256`] (the default for ID tokens): `RS256` uses the
+    /// `rsa` crate, which has RUSTSEC-2023-0071 (Marvin timing side channel in private-key
+    /// operations).
     pub fn generate_rs256() -> Result<Self, OAuthError> {
         let mut rng = OsRng;
         let private_key = RsaPrivateKey::new(&mut rng, 2048)
@@ -794,6 +818,7 @@ struct AuthorizeParams {
     code_challenge_method: Option<String>,
     nonce: Option<String>,
     decision: Option<String>,
+    consent_token: Option<String>,
 }
 
 /// `GET /o/authorize`: validates parameters and renders consent (or auto-approves when `skip_consent`).
@@ -847,8 +872,25 @@ pub async fn authorize_get_view(
         return Ok(redirect_found(&location));
     }
 
+    let settings = req
+        .state::<DjangorsSettings>()
+        .ok_or_else(|| DjangorsError::Internal("DjangorsSettings state absent".to_string()))?;
+    let signer = TimestampSigner::from_settings(
+        settings,
+        CONSENT_SALT,
+        Duration::from_secs(CONSENT_TOKEN_MAX_AGE_SECS),
+    )
+    .map_err(|e| DjangorsError::Internal(e.to_string()))?;
+    let Some(payload_hash) = consent_payload_hash(user.id, &validated) else {
+        return Ok(Response::html(
+            StatusCode::BAD_REQUEST,
+            render_error_html("Invalid authorization request parameters."),
+        ));
+    };
+    let consent_token = signer.sign(&payload_hash);
+
     let csrf_token = extract_csrf_cookie(&req);
-    let html = render_consent_html(&validated, &user, csrf_token.as_deref());
+    let html = render_consent_html(&validated, &user, csrf_token.as_deref(), &consent_token);
     Ok(Response::html(StatusCode::OK, html))
 }
 
@@ -882,6 +924,13 @@ pub async fn authorize_post_view(
             ));
         }
     };
+
+    if !verify_consent_token(&req, user.id, &validated, params.consent_token.as_deref()) {
+        return Ok(Response::html(
+            StatusCode::FORBIDDEN,
+            render_error_html("Invalid or expired consent form. Please try again."),
+        ));
+    }
 
     let approved = params.decision.as_deref() == Some("approve");
     if !approved {
@@ -1064,7 +1113,7 @@ pub async fn openid_configuration_view(
             "refresh_token"
         ],
         "subject_types_supported": ["public"],
-        "id_token_signing_alg_values_supported": ["RS256", "ES256"],
+        "id_token_signing_alg_values_supported": [cfg.id_token_signing_alg],
         "scopes_supported": cfg.supported_scopes,
         "token_endpoint_auth_methods_supported": [
             "client_secret_basic",
@@ -1819,8 +1868,15 @@ async fn sign_id_token(
     access_token: &str,
     nonce: Option<&str>,
 ) -> Result<String, DjangorsError> {
+    let alg = cfg.id_token_signing_alg.as_str();
+    if !matches!(alg, "ES256" | "RS256") {
+        return Err(DjangorsError::Internal(format!(
+            "unsupported id_token_signing_alg '{alg}'; expected \"ES256\" or \"RS256\""
+        )));
+    }
+
     let keys = SigningKey::objects()
-        .filter(djangors_orm::q!(is_active = true))
+        .filter(djangors_orm::q!(is_active = true, algorithm = alg))
         .map_err(|e| DjangorsError::Internal(e.to_string()))?
         .order_by("-id")
         .map_err(|e| DjangorsError::Internal(e.to_string()))?
@@ -1829,7 +1885,9 @@ async fn sign_id_token(
         .map_err(|e| DjangorsError::Internal(e.to_string()))?;
 
     let signing_key = keys.into_iter().next().ok_or_else(|| {
-        DjangorsError::Internal("no active OAuth signing key configured".to_string())
+        DjangorsError::Internal(format!(
+            "no active {alg} OAuth signing key configured; create one with SigningKey::generate_es256()"
+        ))
     })?;
     let (header, enc_key) = signing_key.encoding_key().map_err(DjangorsError::from)?;
 
@@ -2273,10 +2331,64 @@ fn render_error_html(message: &str) -> String {
     )
 }
 
+fn consent_payload(user_id: i64, v: &ValidatedAuthorizeRequest) -> Option<String> {
+    let uid = user_id.to_string();
+    let scopes = v.scopes.join(" ");
+    let fields = [
+        uid.as_str(),
+        v.app.client_id.as_str(),
+        v.redirect_uri.as_str(),
+        scopes.as_str(),
+        v.state.as_deref().unwrap_or(""),
+        v.code_challenge.as_deref().unwrap_or(""),
+        v.nonce.as_deref().unwrap_or(""),
+    ];
+    if fields.iter().any(|f| f.contains('\n')) {
+        return None;
+    }
+    Some(fields.join("\n"))
+}
+
+fn consent_payload_hash(user_id: i64, v: &ValidatedAuthorizeRequest) -> Option<String> {
+    consent_payload(user_id, v).map(|p| sha256_hex(&p))
+}
+
+fn verify_consent_token(
+    req: &Request,
+    user_id: i64,
+    validated: &ValidatedAuthorizeRequest,
+    token: Option<&str>,
+) -> bool {
+    let Some(token) = token.filter(|t| !t.is_empty()) else {
+        return false;
+    };
+    let Some(settings) = req.state::<DjangorsSettings>() else {
+        return false;
+    };
+    let Ok(signer) = TimestampSigner::from_settings(
+        settings,
+        CONSENT_SALT,
+        Duration::from_secs(CONSENT_TOKEN_MAX_AGE_SECS),
+    ) else {
+        return false;
+    };
+    let Ok(signed_hash) = signer.unsign(token) else {
+        return false;
+    };
+    let Some(expected_hash) = consent_payload_hash(user_id, validated) else {
+        return false;
+    };
+    signed_hash
+        .as_bytes()
+        .ct_eq(expected_hash.as_bytes())
+        .into()
+}
+
 fn render_consent_html(
     validated: &ValidatedAuthorizeRequest,
     user: &User,
     csrf_token: Option<&str>,
+    consent_token: &str,
 ) -> String {
     let app_name = escape_html(&validated.app.name);
     let username = escape_html(&user.username);
@@ -2294,6 +2406,10 @@ fn render_consent_html(
         ),
         None => String::new(),
     };
+    let consent_input = format!(
+        "<input type=\"hidden\" name=\"consent_token\" value=\"{}\">",
+        escape_html(consent_token)
+    );
 
     let state_input = match validated.state.as_deref() {
         Some(st) => format!(
@@ -2331,7 +2447,7 @@ fn render_consent_html(
            <p><strong>{app_name}</strong> requests access to:</p>\
            <ul>{scopes_list}</ul>\
            <form method=\"post\" action=\"/o/authorize\">\
-             {csrf_input}\
+             {csrf_input}{consent_input}\
              <input type=\"hidden\" name=\"response_type\" value=\"code\">\
              <input type=\"hidden\" name=\"client_id\" value=\"{client_id}\">\
              <input type=\"hidden\" name=\"redirect_uri\" value=\"{redirect_uri}\">\

@@ -1,7 +1,9 @@
 use super::*;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(feature = "secrets-remote")]
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+#[cfg(feature = "secrets-remote")]
 use tokio::net::TcpListener;
 
 struct MapProvider {
@@ -128,6 +130,7 @@ async fn resolve_placeholders_substitutes_and_fails_closed() {
     ));
 }
 
+#[cfg(feature = "secrets-remote")]
 #[test]
 fn aws_sigv4_matches_official_test_vector() {
     // Official AWS Signature Version 4 test suite (`get-vanilla`):
@@ -154,6 +157,7 @@ fn aws_sigv4_matches_official_test_vector() {
     );
 }
 
+#[cfg(feature = "secrets-remote")]
 #[test]
 fn format_amz_timestamps_matches_known_epoch() {
     // 2015-08-30T12:36:00Z = 1440938160
@@ -163,6 +167,7 @@ fn format_amz_timestamps_matches_known_epoch() {
 }
 
 /// Starts a single-use or multi-request local HTTP mock server returning `(status, json_body)`.
+#[cfg(feature = "secrets-remote")]
 async fn spawn_mock_http(responses: Vec<(u16, String)>) -> (String, tokio::task::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -181,6 +186,7 @@ async fn spawn_mock_http(responses: Vec<(u16, String)>) -> (String, tokio::task:
     (format!("http://{addr}"), handle)
 }
 
+#[cfg(feature = "secrets-remote")]
 #[tokio::test]
 async fn vault_provider_reads_kv_v2_and_gcp_provider_reads_secret() {
     let (vault_url, vh) = spawn_mock_http(vec![(
