@@ -7,10 +7,10 @@ Part of [Djangors](https://github.com/QUANTORA-ltd/djangors), a batteries-includ
 ```toml
 [dependencies]
 # Both PostgreSQL and SQLite enabled by default:
-djangors-db = "0.12"
+djangors-db = "0.13"
 
 # Or select a single backend:
-# djangors-db = { version = "0.12", default-features = false, features = ["postgres"] }
+# djangors-db = { version = "0.13", default-features = false, features = ["postgres"] }
 ```
 
 Provides database backends (PostgreSQL and SQLite, each behind its own Cargo feature flag), connection pool management, dialect-aware SQL execution, savepoints, and transaction handling for Djangors built on SQLx.

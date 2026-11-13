@@ -6,7 +6,7 @@ Part of [Djangors](https://github.com/QUANTORA-ltd/djangors), a batteries-includ
 
 ```toml
 [dependencies]
-djangors-contrib-payments = "0.12"
+djangors-contrib-payments = "0.13"
 ```
 
 Provides payment provider integration for Djangors with a `PaymentProvider` trait and built-in **Paystack** (`PaystackProvider`) and **Bachs** (`BachsProvider`) implementations. Monetary amounts are strictly handled as integer minor units (kobo/cents) with HMAC-SHA512 webhook verification and idempotent transaction recording for reliability.

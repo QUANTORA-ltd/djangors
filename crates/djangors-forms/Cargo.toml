@@ -19,7 +19,7 @@ captcha = ["dep:async-trait", "dep:reqwest", "dep:serde"]
 [dependencies]
 async-trait = { version = "0.1.86", optional = true }
 base64 = "0.22.1"
-djangors-macros = { path = "../djangors-macros", version = "0.12.0" }
+djangors-macros = { path = "../djangors-macros", version = "0.13.0" }
 hmac = "0.12.1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
 serde = { version = "1.0.228", features = ["derive"], optional = true }

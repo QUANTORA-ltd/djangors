@@ -6,7 +6,7 @@ Part of [Djangors](https://github.com/QUANTORA-ltd/djangors), a batteries-includ
 
 ```toml
 [dependencies]
-djangors-test = "0.12"
+djangors-test = "0.13"
 ```
 
 Provides in-process testing helpers and assertions for Djangors applications to unit test routes, views, authentication, sessions, and database operations.

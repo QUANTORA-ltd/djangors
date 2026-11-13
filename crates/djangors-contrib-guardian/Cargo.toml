@@ -18,10 +18,10 @@ postgres = ["djangors-auth/postgres", "djangors-db/postgres", "djangors-orm/post
 sqlite = ["djangors-auth/sqlite", "djangors-db/sqlite", "djangors-orm/sqlite"]
 
 [dependencies]
-djangors-auth = { path = "../djangors-auth", version = "0.12.0", default-features = false }
-djangors-db = { path = "../djangors-db", version = "0.12.0", default-features = false }
-djangors-macros = { path = "../djangors-macros", version = "0.12.0" }
-djangors-orm = { path = "../djangors-orm", version = "0.12.0", default-features = false }
+djangors-auth = { path = "../djangors-auth", version = "0.13.0", default-features = false }
+djangors-db = { path = "../djangors-db", version = "0.13.0", default-features = false }
+djangors-macros = { path = "../djangors-macros", version = "0.13.0" }
+djangors-orm = { path = "../djangors-orm", version = "0.13.0", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
 
 [dev-dependencies]

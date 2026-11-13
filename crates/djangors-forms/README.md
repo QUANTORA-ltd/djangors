@@ -6,7 +6,7 @@ Part of [Djangors](https://github.com/QUANTORA-ltd/djangors), a batteries-includ
 
 ```toml
 [dependencies]
-djangors-forms = "0.12"
+djangors-forms = "0.13"
 ```
 
 Provides forms and validation for Djangors applications. It defines core traits, field types, and error structures to parse, validate, and sanitize user-submitted web form data.

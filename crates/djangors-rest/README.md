@@ -6,7 +6,7 @@ Part of [Djangors](https://github.com/QUANTORA-ltd/djangors), a batteries-includ
 
 ```toml
 [dependencies]
-djangors-rest = "0.12"
+djangors-rest = "0.13"
 ```
 
 Provides a REST framework for Djangors including serializers, compile-time direct JSON streaming (`serialize_to_vec`, `serialize_many_to_vec`), ViewSets (`ScopedViewSet`), token/JWT authentication, permissions, cursor pagination, OpenAPI 3.1 schema generation, and router mounting. ViewSet routes default to requiring authenticated users, with explicit `AllowAny` opt-ins for public routes.

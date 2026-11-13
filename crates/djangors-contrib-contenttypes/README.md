@@ -6,7 +6,7 @@ Part of [Djangors](https://github.com/QUANTORA-ltd/djangors), a batteries-includ
 
 ```toml
 [dependencies]
-djangors-contrib-contenttypes = "0.12"
+djangors-contrib-contenttypes = "0.13"
 ```
 
 Provides stable model identities and generic foreign-key pairs for Djangors. It tracks all registered models by storing unique `(app_label, model_name)` pairs in the database via `ContentType`, enabling `GenericForeignKey` dynamic references linking to any row in any database table.

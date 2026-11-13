@@ -6,7 +6,7 @@ Part of [Djangors](https://github.com/QUANTORA-ltd/djangors), a batteries-includ
 
 ```toml
 [dependencies]
-djangors-contrib-tenancy = "0.12"
+djangors-contrib-tenancy = "0.13"
 ```
 
 Provides multi-tenancy support for Djangors using a shared-schema, row-level-scoping model. It ships a `Tenant` model, a `TenantMembership` join model, a `TenantResolutionLayer` middleware to resolve per-request tenant context, and a `tenant_scope()` helper for REST scoping.

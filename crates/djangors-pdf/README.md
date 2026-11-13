@@ -6,7 +6,7 @@ Part of [Djangors](https://github.com/QUANTORA-ltd/djangors), a batteries-includ
 
 ```toml
 [dependencies]
-djangors-pdf = "0.12"
+djangors-pdf = "0.13"
 ```
 
 Provides typed PDF document generation for Djangors using a structured Rust builder API without browser dependencies like Chromium. It builds report cards, invoices, and receipts with text, tables, and automatic page breaking.

@@ -20,14 +20,14 @@ jwt = ["dep:jsonwebtoken"]
 admin = ["dep:djangors-admin"]
 
 [dependencies]
-djangors-orm = { path = "../djangors-orm", version = "0.12.0", default-features = false }
-djangors-core = { path = "../djangors-core", version = "0.12.0", default-features = false, features = ["cache"] }
-djangors-cache = { path = "../djangors-cache", version = "0.12.0", default-features = false }
-djangors-db = { path = "../djangors-db", version = "0.12.0", default-features = false }
-djangors-macros = { path = "../djangors-macros", version = "0.12.0" }
-djangors-auth = { path = "../djangors-auth", version = "0.12.0", default-features = false }
-djangors-sessions = { path = "../djangors-sessions", version = "0.12.0", default-features = false }
-djangors-admin = { path = "../djangors-admin", version = "0.12.0", default-features = false, optional = true }
+djangors-orm = { path = "../djangors-orm", version = "0.13.0", default-features = false }
+djangors-core = { path = "../djangors-core", version = "0.13.0", default-features = false, features = ["cache"] }
+djangors-cache = { path = "../djangors-cache", version = "0.13.0", default-features = false }
+djangors-db = { path = "../djangors-db", version = "0.13.0", default-features = false }
+djangors-macros = { path = "../djangors-macros", version = "0.13.0" }
+djangors-auth = { path = "../djangors-auth", version = "0.13.0", default-features = false }
+djangors-sessions = { path = "../djangors-sessions", version = "0.13.0", default-features = false }
+djangors-admin = { path = "../djangors-admin", version = "0.13.0", default-features = false, optional = true }
 async-trait = "0.1.86"
 rand = "0.8.7"
 serde = { version = "1.0.228", features = ["derive"] }

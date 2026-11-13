@@ -6,7 +6,7 @@ Part of [Djangors](https://github.com/QUANTORA-ltd/djangors), a batteries-includ
 
 ```toml
 [dependencies]
-djangors-tasks = "0.12"
+djangors-tasks = "0.13"
 ```
 
 Provides a distributed background task queue system, `#[task]` attribute macro, and worker loop for Djangors. Features include database task models (`QueuedTask`, `RecurringTask`), compile-time task registration via `inventory`, and database-level concurrency locking for worker execution.

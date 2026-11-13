@@ -19,7 +19,7 @@ Turn on `otel` on the facade crate:
 
 ```toml
 [dependencies]
-djangors = { version = "0.12", features = ["otel"] }
+djangors = { version = "0.13", features = ["otel"] }
 ```
 
 If you depend on `djangors-core` directly, enable `otel` there instead.

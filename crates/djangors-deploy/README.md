@@ -6,7 +6,7 @@ Part of [Djangors](https://github.com/QUANTORA-ltd/djangors), a batteries-includ
 
 ```toml
 [dependencies]
-djangors-deploy = "0.12"
+djangors-deploy = "0.13"
 ```
 
 Provides `dj deploy` multi-provider deployment support for Djangors. It defines a `DeployProvider` trait covering provision, deploy, status, logs, and destroy operations with built-in support for Render and extensible provider implementations.

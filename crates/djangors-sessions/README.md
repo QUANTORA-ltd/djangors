@@ -6,7 +6,7 @@ Part of [Djangors](https://github.com/QUANTORA-ltd/djangors), a batteries-includ
 
 ```toml
 [dependencies]
-djangors-sessions = "0.12"
+djangors-sessions = "0.13"
 ```
 
 Provides session management engines for Djangors, including signed-cookie sessions. Session state is JSON-serialized, base64-encoded, signed with HMAC-SHA256, and managed in requests via `SessionLayer` middleware and `Session` handles.

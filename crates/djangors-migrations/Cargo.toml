@@ -18,8 +18,8 @@ postgres = ["djangors-orm/postgres", "djangors-db/postgres"]
 sqlite = ["djangors-orm/sqlite", "djangors-db/sqlite"]
 
 [dependencies]
-djangors-orm = { path = "../djangors-orm", version = "0.12.0", default-features = false }
-djangors-db = { path = "../djangors-db", version = "0.12.0", default-features = false }
+djangors-orm = { path = "../djangors-orm", version = "0.13.0", default-features = false }
+djangors-db = { path = "../djangors-db", version = "0.13.0", default-features = false }
 thiserror = "2.0.18"
 sqlx = { version = "0.9.0", default-features = false, features = ["chrono"] }
 serde_json = "1.0.150"
