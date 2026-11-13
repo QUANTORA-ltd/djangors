@@ -5,6 +5,73 @@ All notable changes to Djangors are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.13.0]
+
+New: identity and security. Server-side sessions, email verification, invitations, GDPR export,
+organizations, CAPTCHA, signing and signed URLs, magic links, impersonation, secrets providers,
+encryption key rotation, LDAP, social login, an OAuth 2 / OIDC provider, and SAML SSO.
+
+### Added
+
+- **Server-side sessions** (`djangors_sessions`): a `SessionStore` trait with `DatabaseStore`
+  (`djangors_session` table) and `RedisStore` (`redis` feature). Only a SHA-256 hash of the
+  session key is stored. `SessionLayer` takes any store; `dj clearsessions` deletes expired rows.
+- **Remember me and session management** (`djangors_auth`): `login_with(LoginOptions { remember })`
+  sets a persistent or browser-session cookie; `list_sessions`, `revoke_session`,
+  `logout_other_sessions` and `change_password`. A per-user session generation lets
+  "log out everywhere" work with signed-cookie sessions too; password resets bump it.
+- **Email verification**: `EmailAddress`, signed time-limited links (`send_verification_email`,
+  `verify_email`), the `HasVerifiedEmail` extractor and the `require_verified_email_for_login`
+  setting.
+- **Invitations**: `Invitation` with hashed single-use tokens, `invite`, `resend_invitation`,
+  `revoke_invitation`, `accept_invitation`, and `invitation_router()`.
+- **GDPR tooling** (`djangors_auth::gdpr`): ZIP export of a user's data through a
+  `UserDataRegistry`, signed download links, scheduled account deletion with a grace period,
+  and `AnonymizeHook`.
+- **Organizations and teams** (`djangors-contrib-orgs`, facade feature `orgs`): organizations,
+  memberships, teams, role permissions, the `CurrentOrg` extractor, and a last-owner guard.
+- **CAPTCHA** (feature `captcha`): Turnstile, hCaptcha and reCAPTCHA v2/v3 verifiers,
+  `CaptchaField`, and the `VerifiedCaptcha` extractor (`djangors_core::captcha`). Fails closed.
+- **Bot mitigation** (`djangors_forms::honeypot`): `HoneypotField`, `MinSubmitTime`, user-agent
+  checks, and `BotGuard` to show a CAPTCHA only for suspicious submissions.
+- **Security headers**: `SecurityHeadersLayer` now also sends `Cross-Origin-Opener-Policy` and
+  `Cross-Origin-Resource-Policy`; `SecurityHeadersBuilder` and `PermissionsPolicyBuilder`
+  configure them. `CspBuilder::with_nonce()` adds a per-request nonce (`CspNonce`), exposed to
+  templates as `csp_nonce()`. `dj check --deploy` warns when security headers are missing.
+- **Signing API** (`djangors_core::signing`): `Signer` and `TimestampSigner` with a salt per
+  purpose, optional compression (`dumps`/`loads`), `secret_key_fallbacks` for key rotation, and
+  signed URLs (`sign_url`/`verify_signed_url`). GDPR export links now use it.
+- **Magic-link login** (`djangors_auth::magic_link`): single-use, hashed, 15-minute login links
+  with throttling and a POST confirmation page, so mail scanners can't use them up.
+- **Admin impersonation** (`djangors_auth::impersonation`): superusers can act as a
+  non-superuser, with an audit log, an admin banner, and a way back. `NotImpersonating` blocks
+  sensitive actions; `change_password` refuses while impersonating.
+- **Secrets providers** (`djangors_core::secrets`, default feature `secrets`): environment,
+  `.env`, file (Docker/Kubernetes secrets) and chains of them, plus `${secret:NAME}` settings
+  placeholders. HashiCorp Vault, GCP Secret Manager and AWS Secrets Manager are opt-in through
+  the `secrets-remote` feature, so the default build has no HTTP client.
+- **Encryption key rotation**: `KeyRing` with several keys (`DJANGORS_FIELD_ENCRYPTION_KEYS`);
+  new ciphertexts carry a key id and old ones still decrypt. `dj rotate-encryption-keys`
+  re-encrypts in batches.
+- **LDAP / Active Directory** (feature `ldap`): `LdapBackend` over rustls, with RFC 4514/4515
+  escaping, group mapping, and optional user creation on first login. Empty passwords are refused.
+- **Social login** (`djangors-contrib-oauth`, feature `oauth-client`): Google, Microsoft, Apple,
+  GitHub and generic OIDC, with PKCE, `state`, `nonce` and JWKS-verified ID tokens.
+- **OAuth 2 / OIDC provider** (`djangors-contrib-oauth`, feature `oauth-provider`):
+  authorization code with PKCE, client credentials, rotating refresh tokens with reuse
+  detection, revocation, introspection, UserInfo, JWKS and discovery. ID tokens are signed
+  with ES256 by default (RS256 is opt-in, since the `rsa` crate has RUSTSEC-2023-0071). The
+  consent form carries its own signed token, so it is safe without the CSRF middleware.
+- **SAML 2.0 SSO** (`djangors-contrib-saml`, feature `saml`): pure-Rust signature checks
+  against pinned IdP certificates, with protection against signature wrapping, XXE, comment
+  injection and replay. Tested against responses signed independently with libxml2 (signxml).
+
+### Changed
+
+- Session keys are now 256-bit (were 128-bit).
+- `DjangorsSettings` gained `session_remember_age` and `require_verified_email_for_login`;
+  struct literals need `..Default::default()`.
+
 ## [0.12.0]
 
 New: API keys, CORS, API versioning, health checks, password validation, retries and circuit

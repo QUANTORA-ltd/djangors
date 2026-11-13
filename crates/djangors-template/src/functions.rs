@@ -119,4 +119,14 @@ pub fn register_functions(env: &mut minijinja::Environment<'static>, state: Func
         let now = chrono::Utc::now();
         Ok(now.format(format_str).to_string())
     });
+
+    // Reads `_csp_nonce` (like `csrf_token()` reads `_csrf_token`): a context variable
+    // named `csp_nonce` would shadow this function.
+    env.add_function("csp_nonce", move |state: &State| -> Result<Value, Error> {
+        let nonce = state
+            .lookup("_csp_nonce")
+            .and_then(|v| v.as_str().map(str::to_string))
+            .unwrap_or_default();
+        Ok(Value::from(nonce))
+    });
 }

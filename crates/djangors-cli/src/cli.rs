@@ -177,6 +177,26 @@ pub enum Commands {
         #[arg(long, default_value = "app")]
         app: String,
     },
+    /// Delete expired server-side sessions from `djangors_session`.
+    #[command(name = "clearsessions")]
+    Clearsessions {
+        /// Optional database URL override (defaults to `DATABASE_URL` environment variable).
+        #[arg(long)]
+        database_url: Option<String>,
+    },
+    /// Re-encrypt `#[djangors(encrypted)]` fields using the first key in `DJANGORS_FIELD_ENCRYPTION_KEYS`.
+    #[command(name = "rotate-encryption-keys")]
+    RotateEncryptionKeys {
+        /// Model name as `app.Model` (e.g. `billing.PaymentMethod`).
+        #[arg(long)]
+        model: String,
+        /// Number of rows processed per database transaction (default: 500).
+        #[arg(long, default_value_t = 500)]
+        batch: usize,
+        /// Optional database URL override (defaults to `DATABASE_URL` environment variable).
+        #[arg(long)]
+        database_url: Option<String>,
+    },
 }
 
 /// Subcommands for `dj generate`.

@@ -14,52 +14,276 @@ pub fn logging_layer() -> tower_http::trace::TraceLayer<tower_http::trace::HttpM
 
 /// Sets security-related response headers mimicking Django's `SecurityMiddleware`:
 /// `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
-/// and `Referrer-Policy: same-origin`.
+/// `Referrer-Policy: same-origin`, `Cross-Origin-Opener-Policy: same-origin`,
+/// and `Cross-Origin-Resource-Policy: same-origin`.
+/// (`Cross-Origin-Embedder-Policy` is off by default so third-party embeds keep working;
+/// use [`SecurityHeadersBuilder`] to enable it or set `Permissions-Policy`.)
 #[derive(Clone)]
 pub struct SecurityHeadersLayer;
 
-impl<S> Layer<S> for SecurityHeadersLayer
-where
-    S: Service<
-            hyper::Request<Incoming>,
-            Response = hyper::Response<Full<Bytes>>,
-            Error = Infallible,
-        > + Send
-        + 'static,
-    S::Future: Send + 'static,
-{
-    type Service = tower_http::set_header::SetResponseHeader<
-        tower_http::set_header::SetResponseHeader<
-            tower_http::set_header::SetResponseHeader<S, hyper::http::HeaderValue>,
-            hyper::http::HeaderValue,
-        >,
-        hyper::http::HeaderValue,
-    >;
+impl<S> Layer<S> for SecurityHeadersLayer {
+    type Service = SecurityHeadersService<S>;
 
     fn layer(&self, inner: S) -> Self::Service {
-        tower_http::set_header::SetResponseHeaderLayer::overriding(
-            hyper::http::HeaderName::from_static("x-content-type-options"),
-            hyper::http::HeaderValue::from_static("nosniff"),
-        )
-        .layer(
-            tower_http::set_header::SetResponseHeaderLayer::overriding(
-                hyper::http::HeaderName::from_static("x-frame-options"),
-                hyper::http::HeaderValue::from_static("DENY"),
-            )
-            .layer(
-                tower_http::set_header::SetResponseHeaderLayer::overriding(
-                    hyper::http::HeaderName::from_static("referrer-policy"),
-                    hyper::http::HeaderValue::from_static("same-origin"),
-                )
-                .layer(inner),
-            ),
-        )
+        SecurityHeadersService {
+            inner,
+            headers: default_security_headers(),
+        }
     }
 }
 
 /// Returns a [`SecurityHeadersLayer`].
 pub fn security_headers_layer() -> SecurityHeadersLayer {
     SecurityHeadersLayer
+}
+
+fn default_security_headers() -> Vec<(hyper::http::HeaderName, hyper::http::HeaderValue)> {
+    vec![
+        (
+            hyper::http::HeaderName::from_static("x-content-type-options"),
+            hyper::http::HeaderValue::from_static("nosniff"),
+        ),
+        (
+            hyper::http::HeaderName::from_static("x-frame-options"),
+            hyper::http::HeaderValue::from_static("DENY"),
+        ),
+        (
+            hyper::http::HeaderName::from_static("referrer-policy"),
+            hyper::http::HeaderValue::from_static("same-origin"),
+        ),
+        (
+            hyper::http::HeaderName::from_static("cross-origin-opener-policy"),
+            hyper::http::HeaderValue::from_static("same-origin"),
+        ),
+        (
+            hyper::http::HeaderName::from_static("cross-origin-resource-policy"),
+            hyper::http::HeaderValue::from_static("same-origin"),
+        ),
+    ]
+}
+
+/// Builder for the `Permissions-Policy` response header.
+#[derive(Clone, Default)]
+pub struct PermissionsPolicyBuilder {
+    features: Vec<(String, Vec<String>)>,
+}
+
+impl PermissionsPolicyBuilder {
+    /// Creates an empty [`PermissionsPolicyBuilder`].
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Adds a feature directive, e.g. `.feature("camera", &[])` -> `camera=()`,
+    /// or `.feature("geolocation", &["self"])` -> `geolocation=(self)`.
+    pub fn feature(mut self, name: &str, allowlist: &[&str]) -> Self {
+        let formatted: Vec<String> = allowlist
+            .iter()
+            .map(|item| {
+                let trimmed = item.trim();
+                if trimmed == "self" || trimmed == "'self'" {
+                    "self".to_string()
+                } else if trimmed == "*" {
+                    "*".to_string()
+                } else if trimmed.starts_with('"') && trimmed.ends_with('"') {
+                    trimmed.to_string()
+                } else {
+                    format!("\"{trimmed}\"")
+                }
+            })
+            .collect();
+        self.features.push((name.to_string(), formatted));
+        self
+    }
+
+    /// Formats the `Permissions-Policy` header value.
+    pub fn build(&self) -> String {
+        self.features
+            .iter()
+            .map(|(name, list)| format!("{name}=({})", list.join(" ")))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+/// Configurable builder for [`CustomSecurityHeadersLayer`].
+#[derive(Clone)]
+pub struct SecurityHeadersBuilder {
+    frame_options: String,
+    referrer_policy: String,
+    coop: Option<String>,
+    coep: Option<String>,
+    corp: Option<String>,
+    permissions_policy: Option<String>,
+}
+
+impl Default for SecurityHeadersBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SecurityHeadersBuilder {
+    /// Creates a builder with framework defaults (`COOP: same-origin`, `CORP: same-origin`,
+    /// `COEP` disabled).
+    pub fn new() -> Self {
+        Self {
+            frame_options: "DENY".to_string(),
+            referrer_policy: "same-origin".to_string(),
+            coop: Some("same-origin".to_string()),
+            coep: None,
+            corp: Some("same-origin".to_string()),
+            permissions_policy: None,
+        }
+    }
+
+    /// Sets `Permissions-Policy` from a [`PermissionsPolicyBuilder`].
+    pub fn permissions_policy(mut self, policy: PermissionsPolicyBuilder) -> Self {
+        let val = policy.build();
+        if !val.is_empty() {
+            self.permissions_policy = Some(val);
+        }
+        self
+    }
+
+    /// Sets `Cross-Origin-Opener-Policy` (pass `None` to omit).
+    pub fn coop(mut self, value: Option<&str>) -> Self {
+        self.coop = value.map(str::to_string);
+        self
+    }
+
+    /// Sets `Cross-Origin-Embedder-Policy` (pass `Some("require-corp")` to enable).
+    pub fn coep(mut self, value: Option<&str>) -> Self {
+        self.coep = value.map(str::to_string);
+        self
+    }
+
+    /// Sets `Cross-Origin-Resource-Policy` (pass `None` to omit).
+    pub fn corp(mut self, value: Option<&str>) -> Self {
+        self.corp = value.map(str::to_string);
+        self
+    }
+
+    /// Sets `X-Frame-Options`.
+    pub fn frame_options(mut self, value: &str) -> Self {
+        self.frame_options = value.to_string();
+        self
+    }
+
+    /// Sets `Referrer-Policy`.
+    pub fn referrer_policy(mut self, value: &str) -> Self {
+        self.referrer_policy = value.to_string();
+        self
+    }
+
+    /// Finalizes into a [`CustomSecurityHeadersLayer`].
+    pub fn build(self) -> CustomSecurityHeadersLayer {
+        let mut headers = vec![(
+            hyper::http::HeaderName::from_static("x-content-type-options"),
+            hyper::http::HeaderValue::from_static("nosniff"),
+        )];
+        if let Ok(v) = hyper::http::HeaderValue::from_str(&self.frame_options) {
+            headers.push((hyper::http::HeaderName::from_static("x-frame-options"), v));
+        }
+        if let Ok(v) = hyper::http::HeaderValue::from_str(&self.referrer_policy) {
+            headers.push((hyper::http::HeaderName::from_static("referrer-policy"), v));
+        }
+        if let Some(coop) = &self.coop {
+            if let Ok(v) = hyper::http::HeaderValue::from_str(coop) {
+                headers.push((
+                    hyper::http::HeaderName::from_static("cross-origin-opener-policy"),
+                    v,
+                ));
+            }
+        }
+        if let Some(coep) = &self.coep {
+            if let Ok(v) = hyper::http::HeaderValue::from_str(coep) {
+                headers.push((
+                    hyper::http::HeaderName::from_static("cross-origin-embedder-policy"),
+                    v,
+                ));
+            }
+        }
+        if let Some(corp) = &self.corp {
+            if let Ok(v) = hyper::http::HeaderValue::from_str(corp) {
+                headers.push((
+                    hyper::http::HeaderName::from_static("cross-origin-resource-policy"),
+                    v,
+                ));
+            }
+        }
+        if let Some(pp) = &self.permissions_policy {
+            if let Ok(v) = hyper::http::HeaderValue::from_str(pp) {
+                headers.push((
+                    hyper::http::HeaderName::from_static("permissions-policy"),
+                    v,
+                ));
+            }
+        }
+        CustomSecurityHeadersLayer { headers }
+    }
+}
+
+/// Configurable security-headers middleware built via [`SecurityHeadersBuilder`].
+#[derive(Clone)]
+pub struct CustomSecurityHeadersLayer {
+    headers: Vec<(hyper::http::HeaderName, hyper::http::HeaderValue)>,
+}
+
+impl<S> Layer<S> for CustomSecurityHeadersLayer {
+    type Service = SecurityHeadersService<S>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        SecurityHeadersService {
+            inner,
+            headers: self.headers.clone(),
+        }
+    }
+}
+
+/// Tower service applying security response headers.
+#[derive(Clone)]
+pub struct SecurityHeadersService<S> {
+    inner: S,
+    headers: Vec<(hyper::http::HeaderName, hyper::http::HeaderValue)>,
+}
+
+impl<S, ReqBody> Service<hyper::Request<ReqBody>> for SecurityHeadersService<S>
+where
+    S: Service<
+            hyper::Request<ReqBody>,
+            Response = hyper::Response<Full<Bytes>>,
+            Error = Infallible,
+        > + Clone
+        + Send
+        + 'static,
+    S::Future: Send + 'static,
+    ReqBody: Send + 'static,
+{
+    type Response = hyper::Response<Full<Bytes>>;
+    type Error = Infallible;
+    type Future = std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>> + Send>,
+    >;
+
+    fn poll_ready(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, req: hyper::Request<ReqBody>) -> Self::Future {
+        let mut inner = self.inner.clone();
+        let headers = self.headers.clone();
+        Box::pin(async move {
+            let mut resp = inner.call(req).await?;
+            for (name, val) in headers {
+                resp.headers_mut().insert(name, val);
+            }
+            Ok(resp)
+        })
+    }
 }
 
 /// Strict-Transport-Security (HSTS) header middleware.
@@ -111,6 +335,10 @@ pub fn hsts_layer(max_age_seconds: u64) -> HstsLayer {
     HstsLayer::new(max_age_seconds)
 }
 
+/// Per-request CSP nonce stored in request extensions when [`CspLayer::with_nonce`] is enabled.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CspNonce(pub String);
+
 /// Builds a `Content-Security-Policy` (or `Content-Security-Policy-Report-Only`) header,
 /// mirroring `django-csp`.
 ///
@@ -131,6 +359,7 @@ pub struct CspBuilder {
     directives: Vec<(&'static str, Vec<String>)>,
     upgrade_insecure_requests: bool,
     report_only: bool,
+    use_nonce: bool,
 }
 
 impl CspBuilder {
@@ -203,9 +432,38 @@ impl CspBuilder {
         self
     }
 
+    /// Enables per-request 16-byte cryptographic nonce generation (`CspNonce`),
+    /// adding `'nonce-...'` to `script-src` and `style-src` on each request.
+    pub fn with_nonce(mut self) -> Self {
+        self.use_nonce = true;
+        self
+    }
+
     fn header_value(&self) -> String {
-        let mut parts: Vec<String> = self
-            .directives
+        self.header_value_with_nonce(None)
+    }
+
+    fn header_value_with_nonce(&self, nonce: Option<&str>) -> String {
+        let mut directives = self.directives.clone();
+        if let Some(n) = nonce {
+            let nonce_src = format!("'nonce-{n}'");
+            for dir in ["script-src", "style-src"] {
+                if let Some((_, sources)) = directives.iter_mut().find(|(k, _)| *k == dir) {
+                    sources.push(nonce_src.clone());
+                } else {
+                    // Without its own directive the browser falls back to `default-src`;
+                    // adding a nonce-only `script-src` would silently drop those sources.
+                    let mut sources = directives
+                        .iter()
+                        .find(|(k, _)| *k == "default-src")
+                        .map(|(_, s)| s.clone())
+                        .unwrap_or_default();
+                    sources.push(nonce_src.clone());
+                    directives.push((dir, sources));
+                }
+            }
+        }
+        let mut parts: Vec<String> = directives
             .iter()
             .map(|(name, sources)| format!("{} {}", name, sources.join(" ")))
             .collect();
@@ -222,9 +480,11 @@ impl CspBuilder {
         } else {
             "content-security-policy"
         };
+        let static_value = self.header_value();
         CspLayer {
             header_name,
-            header_value: self.header_value(),
+            header_value: static_value,
+            builder: self,
         }
     }
 }
@@ -234,20 +494,132 @@ impl CspBuilder {
 pub struct CspLayer {
     header_name: &'static str,
     header_value: String,
+    builder: CspBuilder,
+}
+
+impl CspLayer {
+    /// Enables per-request 16-byte cryptographic nonce generation (`CspNonce`),
+    /// adding `'nonce-...'` to `script-src` and `style-src` on each request.
+    pub fn with_nonce(mut self) -> Self {
+        self.builder.use_nonce = true;
+        self
+    }
 }
 
 impl<S> Layer<S> for CspLayer {
-    type Service = tower_http::set_header::SetResponseHeader<S, hyper::http::HeaderValue>;
+    type Service = CspService<S>;
 
     fn layer(&self, inner: S) -> Self::Service {
-        let header_val = hyper::http::HeaderValue::from_str(&self.header_value)
-            .unwrap_or_else(|_| hyper::http::HeaderValue::from_static("default-src 'self'"));
+        CspService {
+            inner,
+            header_name: self.header_name,
+            header_value: self.header_value.clone(),
+            builder: self.builder.clone(),
+        }
+    }
+}
 
-        tower_http::set_header::SetResponseHeaderLayer::overriding(
-            hyper::http::HeaderName::from_static(self.header_name),
-            header_val,
-        )
-        .layer(inner)
+/// Tower service applying `Content-Security-Policy` headers and optional per-request nonces.
+#[derive(Clone)]
+pub struct CspService<S> {
+    inner: S,
+    header_name: &'static str,
+    header_value: String,
+    builder: CspBuilder,
+}
+
+fn generate_csp_nonce() -> String {
+    use base64::Engine as _;
+    use rand::RngCore;
+    let mut bytes = [0u8; 16];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+}
+
+impl<S, ReqBody> Service<hyper::Request<ReqBody>> for CspService<S>
+where
+    S: Service<
+            hyper::Request<ReqBody>,
+            Response = hyper::Response<Full<Bytes>>,
+            Error = Infallible,
+        > + Clone
+        + Send
+        + 'static,
+    S::Future: Send + 'static,
+    ReqBody: Send + 'static,
+{
+    type Response = hyper::Response<Full<Bytes>>;
+    type Error = Infallible;
+    type Future = std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>> + Send>,
+    >;
+
+    fn poll_ready(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, mut req: hyper::Request<ReqBody>) -> Self::Future {
+        let mut inner = self.inner.clone();
+        let header_name = self.header_name;
+        let static_val = self.header_value.clone();
+        let builder = self.builder.clone();
+
+        let nonce = if builder.use_nonce {
+            let n = generate_csp_nonce();
+            req.extensions_mut().insert(CspNonce(n.clone()));
+            Some(n)
+        } else {
+            None
+        };
+
+        Box::pin(async move {
+            let mut resp = inner.call(req).await?;
+            let value_str = match &nonce {
+                Some(n) => builder.header_value_with_nonce(Some(n)),
+                None => static_val,
+            };
+            let header_val = hyper::http::HeaderValue::from_str(&value_str)
+                .unwrap_or_else(|_| hyper::http::HeaderValue::from_static("default-src 'self'"));
+            resp.headers_mut().insert(
+                hyper::http::HeaderName::from_static(header_name),
+                header_val,
+            );
+
+            if let Some(n) = nonce {
+                let is_html = resp
+                    .headers()
+                    .get(hyper::header::CONTENT_TYPE)
+                    .and_then(|v| v.to_str().ok())
+                    .is_some_and(|ct| ct.contains("text/html"));
+                if is_html {
+                    use http_body_util::BodyExt;
+                    let (mut parts, body) = resp.into_parts();
+                    let bytes = match body.collect().await {
+                        Ok(collected) => collected.to_bytes(),
+                        Err(never) => match never {},
+                    };
+                    if let Ok(html) = std::str::from_utf8(&bytes) {
+                        if html.contains("<script id=\"__djangors_livereload\">") {
+                            let patched = html.replace(
+                                "<script id=\"__djangors_livereload\">",
+                                &format!("<script nonce=\"{n}\" id=\"__djangors_livereload\">"),
+                            );
+                            parts.headers.remove(hyper::header::CONTENT_LENGTH);
+                            return Ok(hyper::Response::from_parts(
+                                parts,
+                                Full::new(Bytes::from(patched)),
+                            ));
+                        }
+                    }
+                    return Ok(hyper::Response::from_parts(parts, Full::new(bytes)));
+                }
+            }
+
+            Ok(resp)
+        })
     }
 }
 

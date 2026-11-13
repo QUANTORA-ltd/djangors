@@ -1,0 +1,74 @@
+[package]
+name = "djangors-contrib-oauth"
+description = "OAuth 2.0 and OpenID Connect client and provider for Djangors"
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["django", "web-framework", "oauth2", "oidc", "sso"]
+categories = ["authentication", "web-programming"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[features]
+default = ["postgres", "sqlite", "client", "provider"]
+postgres = [
+    "djangors-orm/postgres",
+    "djangors-core/postgres",
+    "djangors-db/postgres",
+    "djangors-auth/postgres",
+    "djangors-sessions/postgres",
+]
+sqlite = [
+    "djangors-orm/sqlite",
+    "djangors-core/sqlite",
+    "djangors-db/sqlite",
+    "djangors-auth/sqlite",
+    "djangors-sessions/sqlite",
+]
+# OAuth 2 / OIDC client (Google, Microsoft, Apple, GitHub, generic OIDC) via rustls (ring).
+client = ["dep:openidconnect", "dep:oauth2", "dep:reqwest", "dep:jsonwebtoken"]
+# Acting as an OAuth 2 / OIDC provider (auth code + PKCE, client_credentials, refresh rotation, JWKS, UserInfo).
+provider = ["dep:jsonwebtoken", "dep:rsa", "dep:p256"]
+# Admin registration for OAuth models.
+admin = ["dep:djangors-admin"]
+
+[dependencies]
+async-trait = "0.1.86"
+base64 = "0.22.1"
+chrono = { version = "0.4.45", features = ["std", "serde"] }
+djangors-admin = { path = "../djangors-admin", version = "0.12.0", optional = true }
+djangors-auth = { path = "../djangors-auth", version = "0.12.0", default-features = false }
+djangors-core = { path = "../djangors-core", version = "0.12.0", default-features = false }
+djangors-db = { path = "../djangors-db", version = "0.12.0", default-features = false }
+djangors-macros = { path = "../djangors-macros", version = "0.12.0" }
+djangors-orm = { path = "../djangors-orm", version = "0.12.0", default-features = false }
+djangors-sessions = { path = "../djangors-sessions", version = "0.12.0", default-features = false }
+hyper = "1.10.1"
+jsonwebtoken = { version = "10.4.0", default-features = false, features = ["rust_crypto", "use_pem"], optional = true }
+oauth2 = { version = "5.0.0", default-features = false, features = ["reqwest", "rustls-tls"], optional = true }
+openidconnect = { version = "4.1.0", default-features = false, features = ["reqwest", "rustls-tls"], optional = true }
+p256 = { version = "0.13.2", default-features = false, features = ["ecdsa", "pkcs8", "std"], optional = true }
+rand = "0.8.7"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
+rsa = { version = "0.9.10", default-features = false, features = ["std", "pem", "sha2"], optional = true }
+secrecy = "0.10.3"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+serde_urlencoded = "0.7.1"
+sha2 = "0.10.9"
+subtle = "2.6.1"
+thiserror = "2.0.18"
+tokio = { version = "1.53.0", features = ["sync", "time"] }
+url = "2.5.8"
+
+[dev-dependencies]
+djangors-test = { path = "../djangors-test" }
+http-body-util = "0.1.4"
+hyper = { version = "1.10.1", features = ["http1", "server"] }
+hyper-util = { version = "0.1.20", features = ["server-auto", "tokio"] }
+p256 = { version = "0.13.2", default-features = false, features = ["ecdsa", "pkcs8", "std"] }
+rsa = { version = "0.9.10", default-features = false, features = ["std", "pem", "sha2"] }
+tokio = { version = "1.53.0", features = ["macros", "net", "rt-multi-thread"] }

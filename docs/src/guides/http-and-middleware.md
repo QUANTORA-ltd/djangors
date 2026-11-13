@@ -612,6 +612,27 @@ assert!(escaped.contains("&#x27;"));
 # }
 ```
 
+## Per-Route Rate Limiting (`RateLimiter`)
+
+Outside of `djangors-rest`, `djangors_core::ratelimit::RateLimiter` applies sliding-window rate limiting to any plain `Router` route (backed by `djangors-cache`, e.g. `InMemoryCache` or `RedisCache`):
+
+```rust,illustrative
+use std::sync::Arc;
+use std::time::Duration;
+use djangors_core::ratelimit::{ByIp, RateLimiter};
+use djangors_core::{DjangorsError, Request, Response};
+
+# async fn example(req: Request, limiter: RateLimiter) -> Result<Response, DjangorsError> {
+let outcome = limiter.check(&req, &ByIp).await?;
+if !outcome.allowed {
+    return Err(DjangorsError::TooManyRequests("rate limit exceeded".into()));
+}
+Ok(Response::text("ok"))
+# }
+```
+
+Implement `RateLimitKey` for custom keying strategies (e.g. by API key or user ID).
+
 ## Where to go next
 
 - [Requests and Responses tutorial](../tutorial/01-requests-and-responses.md) — the fast path to a first endpoint.

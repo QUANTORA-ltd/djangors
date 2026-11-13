@@ -101,6 +101,25 @@ impl Dialect {
         }
     }
 
+    /// Returns the column type string for a 64-bit integer.
+    ///
+    /// Postgres: `BIGINT`; SQLite: `INTEGER` (always 64-bit storage).
+    pub fn bigint_type(&self) -> &'static str {
+        match self {
+            Dialect::Postgres => "BIGINT",
+            Dialect::Sqlite => "INTEGER",
+        }
+    }
+
+    /// Returns the column type string for a boolean.
+    ///
+    /// `BOOLEAN` on both backends (SQLite stores it as 0/1 with numeric affinity).
+    pub fn bool_type(&self) -> &'static str {
+        match self {
+            Dialect::Postgres | Dialect::Sqlite => "BOOLEAN",
+        }
+    }
+
     /// Returns the column type string for a timezone-aware timestamp.
     ///
     /// Postgres: `TIMESTAMPTZ`; SQLite: `TEXT`.

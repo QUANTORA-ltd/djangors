@@ -25,6 +25,8 @@ fn builtin_command_names() -> std::collections::HashSet<&'static str> {
         "openapi",
         "generate",
         "inspectdb",
+        "clearsessions",
+        "rotate-encryption-keys",
     ]
     .into_iter()
     .collect()
@@ -198,6 +200,26 @@ async fn main() {
         } => {
             if let Err(e) = commands::inspectdb(database_url, output, &app).await {
                 eprintln!("[dj inspectdb] error: {e}");
+                std::process::exit(1);
+            }
+        }
+        Commands::Clearsessions { database_url } => {
+            match commands::clearsessions(database_url.as_deref()).await {
+                Ok(removed) => println!("[dj clearsessions] removed {removed} expired session(s)"),
+                Err(e) => {
+                    eprintln!("[dj clearsessions] error: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::RotateEncryptionKeys {
+            model,
+            batch,
+            database_url,
+        } => {
+            if let Err(e) = commands::rotate_encryption_keys(&model, batch, database_url.as_deref())
+            {
+                eprintln!("[dj rotate-encryption-keys] error: {e}");
                 std::process::exit(1);
             }
         }

@@ -115,6 +115,12 @@ pub struct DjangorsSettings {
     /// Must be kept confidential and never be empty in production.
     pub secret_key: String,
 
+    /// Previous signing keys, newest first, accepted for verification only (key rotation).
+    /// Mirrors Django's `SECRET_KEY_FALLBACKS`. Set with `secret_key_fallbacks` in
+    /// `djangors.toml` or the comma-separated `DJANGORS_SECRET_KEY_FALLBACKS` variable.
+    /// Empty by default.
+    pub secret_key_fallbacks: Vec<String>,
+
     /// Bind address host name or IP address (e.g., "127.0.0.1").
     pub host: String,
 
@@ -132,6 +138,15 @@ pub struct DjangorsSettings {
     /// default (CORS disabled). Set with `cors_allowed_origins` in `djangors.toml`
     /// or the comma-separated `DJANGORS_CORS_ALLOWED_ORIGINS` environment variable.
     pub cors_allowed_origins: Vec<String>,
+
+    /// Maximum age in seconds for "remember me" sessions (defaults to 30 days).
+    /// Set with `session_remember_age` in `djangors.toml` or `DJANGORS_SESSION_REMEMBER_AGE`.
+    pub session_remember_age: u64,
+
+    /// When `true`, users must have a verified email address to log in.
+    /// Defaults to `false`. Set with `require_verified_email_for_login` in `djangors.toml`
+    /// or `DJANGORS_REQUIRE_VERIFIED_EMAIL_FOR_LOGIN`.
+    pub require_verified_email_for_login: bool,
 }
 
 impl fmt::Debug for DjangorsSettings {
@@ -140,10 +155,19 @@ impl fmt::Debug for DjangorsSettings {
             .field("debug", &self.debug)
             .field("allowed_hosts", &self.allowed_hosts)
             .field("secret_key", &"[redacted]")
+            .field(
+                "secret_key_fallbacks",
+                &format_args!("[{} redacted]", self.secret_key_fallbacks.len()),
+            )
             .field("host", &self.host)
             .field("port", &self.port)
             .field("max_body_bytes", &self.max_body_bytes)
             .field("cors_allowed_origins", &self.cors_allowed_origins)
+            .field("session_remember_age", &self.session_remember_age)
+            .field(
+                "require_verified_email_for_login",
+                &self.require_verified_email_for_login,
+            )
             .finish()
     }
 }
@@ -154,10 +178,13 @@ impl Default for DjangorsSettings {
             debug: true,
             allowed_hosts: vec!["127.0.0.1".into(), "localhost".into()],
             secret_key: String::new(),
+            secret_key_fallbacks: Vec::new(),
             host: "127.0.0.1".into(),
             port: 8000,
             max_body_bytes: DEFAULT_MAX_BODY_BYTES,
             cors_allowed_origins: Vec::new(),
+            session_remember_age: 30 * 24 * 60 * 60,
+            require_verified_email_for_login: false,
         }
     }
 }
@@ -189,6 +216,15 @@ impl DjangorsSettings {
         self
     }
 
+    /// Sets fallback signing keys accepted for signature verification (newest first).
+    pub fn with_secret_key_fallbacks(
+        mut self,
+        fallbacks: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.secret_key_fallbacks = fallbacks.into_iter().map(Into::into).collect();
+        self
+    }
+
     /// Sets the bind host.
     pub fn with_host(mut self, host: impl Into<String>) -> Self {
         self.host = host.into();
@@ -215,6 +251,18 @@ impl DjangorsSettings {
         self.cors_allowed_origins = origins.into_iter().map(Into::into).collect();
         self
     }
+
+    /// Sets the maximum age in seconds for "remember me" sessions.
+    pub fn with_session_remember_age(mut self, secs: u64) -> Self {
+        self.session_remember_age = secs;
+        self
+    }
+
+    /// Sets whether a verified email is required for login.
+    pub fn with_require_verified_email_for_login(mut self, require: bool) -> Self {
+        self.require_verified_email_for_login = require;
+        self
+    }
 }
 
 #[derive(Deserialize)]
@@ -222,10 +270,13 @@ struct PartialSettings {
     debug: Option<bool>,
     allowed_hosts: Option<Vec<String>>,
     secret_key: Option<String>,
+    secret_key_fallbacks: Option<Vec<String>>,
     host: Option<String>,
     port: Option<u16>,
     max_body_bytes: Option<usize>,
     cors_allowed_origins: Option<Vec<String>>,
+    session_remember_age: Option<u64>,
+    require_verified_email_for_login: Option<bool>,
 }
 
 impl DjangorsSettings {
@@ -252,6 +303,14 @@ impl DjangorsSettings {
 
         if let Ok(val) = std::env::var("DJANGORS_SECRET_KEY") {
             self.secret_key = val;
+        }
+
+        if let Ok(val) = std::env::var("DJANGORS_SECRET_KEY_FALLBACKS") {
+            self.secret_key_fallbacks = val
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
         }
 
         if let Ok(val) = std::env::var("DJANGORS_HOST") {
@@ -285,6 +344,27 @@ impl DjangorsSettings {
                 .collect();
         }
 
+        if let Ok(val) = std::env::var("DJANGORS_SESSION_REMEMBER_AGE") {
+            match val.parse::<u64>() {
+                Ok(secs) => self.session_remember_age = secs,
+                Err(_) => warnings.push(format!(
+                    "Ignored invalid env var DJANGORS_SESSION_REMEMBER_AGE: '{}'",
+                    val
+                )),
+            }
+        }
+
+        if let Ok(val) = std::env::var("DJANGORS_REQUIRE_VERIFIED_EMAIL_FOR_LOGIN") {
+            match val.to_lowercase().as_str() {
+                "true" | "1" => self.require_verified_email_for_login = true,
+                "false" | "0" => self.require_verified_email_for_login = false,
+                _ => warnings.push(format!(
+                    "Ignored invalid env var DJANGORS_REQUIRE_VERIFIED_EMAIL_FOR_LOGIN: '{}'",
+                    val
+                )),
+            }
+        }
+
         warnings
     }
 
@@ -312,6 +392,9 @@ impl DjangorsSettings {
         if let Some(secret_key) = partial.secret_key {
             settings.secret_key = secret_key;
         }
+        if let Some(fallbacks) = partial.secret_key_fallbacks {
+            settings.secret_key_fallbacks = fallbacks;
+        }
         if let Some(host) = partial.host {
             settings.host = host;
         }
@@ -323,6 +406,12 @@ impl DjangorsSettings {
         }
         if let Some(cors_allowed_origins) = partial.cors_allowed_origins {
             settings.cors_allowed_origins = cors_allowed_origins;
+        }
+        if let Some(session_remember_age) = partial.session_remember_age {
+            settings.session_remember_age = session_remember_age;
+        }
+        if let Some(require_verified) = partial.require_verified_email_for_login {
+            settings.require_verified_email_for_login = require_verified;
         }
 
         Ok(settings)
@@ -349,6 +438,16 @@ impl DjangorsSettings {
     /// Validates the loaded settings structure.
     /// Returns an error if the configuration is invalid or unsafe for startup.
     pub fn validate(&self) -> Result<(), DjangorsError> {
+        if self.secret_key.contains("${secret:")
+            || self
+                .secret_key_fallbacks
+                .iter()
+                .any(|k| k.contains("${secret:"))
+        {
+            return Err(DjangorsError::Internal(
+                "Unresolved ${secret:...} placeholder in SECRET_KEY; use load_with_secrets".into(),
+            ));
+        }
         if self.secret_key.is_empty() && !self.debug {
             return Err(DjangorsError::Internal(
                 "SECRET_KEY cannot be empty when DEBUG is false".into(),
@@ -358,6 +457,46 @@ impl DjangorsSettings {
             return Err(DjangorsError::Internal("Port cannot be 0".into()));
         }
         Ok(())
+    }
+
+    /// Resolves any `${secret:NAME}` placeholders in settings fields using `provider`.
+    #[cfg(feature = "secrets")]
+    pub async fn resolve_secrets(
+        &mut self,
+        provider: &dyn crate::secrets::SecretsProvider,
+    ) -> Result<(), DjangorsError> {
+        self.secret_key = crate::secrets::resolve_placeholders(&self.secret_key, provider).await?;
+        for fallback in &mut self.secret_key_fallbacks {
+            *fallback = crate::secrets::resolve_placeholders(fallback, provider).await?;
+        }
+        for host in &mut self.allowed_hosts {
+            *host = crate::secrets::resolve_placeholders(host, provider).await?;
+        }
+        for origin in &mut self.cors_allowed_origins {
+            *origin = crate::secrets::resolve_placeholders(origin, provider).await?;
+        }
+        Ok(())
+    }
+
+    /// Parses TOML settings and resolves `${secret:NAME}` placeholders via `provider`.
+    #[cfg(feature = "secrets")]
+    pub async fn from_toml_str_with_secrets(
+        s: &str,
+        provider: &dyn crate::secrets::SecretsProvider,
+    ) -> Result<Self, DjangorsError> {
+        let mut settings = Self::from_toml_str(s)?;
+        settings.resolve_secrets(provider).await?;
+        Ok(settings)
+    }
+
+    /// Loads `djangors.toml` + env settings and resolves `${secret:NAME}` placeholders.
+    #[cfg(feature = "secrets")]
+    pub async fn load_with_secrets(
+        provider: &dyn crate::secrets::SecretsProvider,
+    ) -> Result<(Self, Vec<String>), DjangorsError> {
+        let (mut settings, warnings) = Self::load()?;
+        settings.resolve_secrets(provider).await?;
+        Ok((settings, warnings))
     }
 }
 

@@ -17,9 +17,18 @@ pub use djangors_cache as cache;
 /// Model history: records every create, update, and delete of chosen models.
 #[cfg(feature = "history")]
 pub use djangors_contrib_history as history;
+/// OAuth 2.0 and OpenID Connect social login and provider endpoints.
+#[cfg(any(feature = "oauth-client", feature = "oauth-provider"))]
+pub use djangors_contrib_oauth as oauth;
+/// Organizations, teams, roles, and memberships.
+#[cfg(feature = "orgs")]
+pub use djangors_contrib_orgs as orgs;
 /// Payment provider integration (Paystack, Bachs) with idempotent transaction recording.
 #[cfg(feature = "payments")]
 pub use djangors_contrib_payments as payments;
+/// Pure-Rust SAML 2.0 Service Provider single sign-on endpoints.
+#[cfg(feature = "saml")]
+pub use djangors_contrib_saml as saml;
 /// Multi-tenancy: tenant model, membership-verified request scoping.
 #[cfg(feature = "tenancy")]
 pub use djangors_contrib_tenancy as tenancy;

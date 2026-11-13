@@ -22,6 +22,9 @@ extern crate self as djangors_core;
 
 /// Application builder and launcher logic.
 pub mod app;
+/// `VerifiedCaptcha` extractor for JSON APIs (feature `captcha`).
+#[cfg(feature = "captcha")]
+pub mod captcha;
 /// Django-style HTML debug and error page rendering.
 pub mod debug_page;
 /// Dev-only request and SQL query inspection panel (`debug-panel` feature).
@@ -59,12 +62,17 @@ pub mod resilience;
 pub mod response;
 /// URL routing engine and pattern matching.
 pub mod router;
+/// Secrets providers (`EnvProvider`, `DotenvProvider`, Vault, GCP, AWS) and interpolation.
+#[cfg(feature = "secrets")]
+pub mod secrets;
 /// Tower service implementations for Djangors applications.
 pub mod service;
 /// Framework-wide settings container.
 pub mod settings;
 /// Framework lifecycle event signals.
 pub mod signals;
+/// Django-style signing (`Signer`, `TimestampSigner`, `dumps`/`loads`) and signed URLs.
+pub mod signing;
 /// Server-Sent Events (SSE) streaming response types.
 pub mod sse;
 /// Type-map state storage container.
@@ -158,6 +166,15 @@ pub async fn run_management_command_if_requested() {
         Err(_) => return,
     };
 
+    if command_name == "rotate-encryption-keys" {
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        if let Err(err) = run_rotate_encryption_keys(&args).await {
+            eprintln!("[dj rotate-encryption-keys] error: {err}");
+            std::process::exit(1);
+        }
+        std::process::exit(0);
+    }
+
     let handler = inventory::iter::<ManagementCommandRegistration>()
         .find(|reg| reg.name == command_name)
         .map(|reg| reg.handler);
@@ -173,6 +190,60 @@ pub async fn run_management_command_if_requested() {
             std::process::exit(1);
         }
     }
+}
+
+async fn run_rotate_encryption_keys(args: &[String]) -> Result<(), String> {
+    let mut model: Option<String> = None;
+    let mut batch: usize = 500;
+    let mut database_url: Option<String> = None;
+
+    let mut i = 0;
+    while i < args.len() {
+        let arg = &args[i];
+        if let Some(val) = arg.strip_prefix("--model=") {
+            model = Some(val.to_string());
+        } else if arg == "--model" {
+            i += 1;
+            model = args.get(i).cloned();
+        } else if let Some(val) = arg.strip_prefix("--batch=") {
+            batch = val
+                .parse::<usize>()
+                .map_err(|e| format!("invalid --batch value '{val}': {e}"))?;
+        } else if arg == "--batch" {
+            i += 1;
+            let val = args
+                .get(i)
+                .ok_or_else(|| "missing value after --batch".to_string())?;
+            batch = val
+                .parse::<usize>()
+                .map_err(|e| format!("invalid --batch value '{val}': {e}"))?;
+        } else if let Some(val) = arg.strip_prefix("--database-url=") {
+            database_url = Some(val.to_string());
+        } else if arg == "--database-url" {
+            i += 1;
+            database_url = args.get(i).cloned();
+        }
+        i += 1;
+    }
+
+    let model = model.ok_or_else(|| "missing required --model <app.Model> argument".to_string())?;
+    let url = match database_url {
+        Some(u) if !u.trim().is_empty() => u,
+        _ => std::env::var("DATABASE_URL")
+            .map_err(|_| "DATABASE_URL environment variable is not set".to_string())?,
+    };
+    let config = djangors_db::DatabaseConfig::new(url);
+    let db = djangors_db::Database::connect(&config)
+        .await
+        .map_err(|e| format!("failed to connect to database: {e}"))?;
+    let report = djangors_orm::encryption::rotate_registered_model_keys(&db, &model, batch)
+        .await
+        .map_err(|e| e.to_string())?;
+    println!(
+        "[dj rotate-encryption-keys] table={}: scanned={}, updated={}, batches={}",
+        report.table_name, report.rows_scanned, report.rows_updated, report.batches
+    );
+    Ok(())
 }
 
 /// If enabled, print this binary's compiled model registry and terminate.

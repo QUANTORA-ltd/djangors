@@ -292,6 +292,20 @@ pub struct ModelRegistration {
 
 inventory::collect!(ModelRegistration);
 
+/// Registration of a model's `#[djangors(encrypted)]` field names.
+///
+/// Submitted by `#[derive(Model)]` alongside [`ModelRegistration`] so runtime
+/// key-rotation utilities can discover encrypted columns for any registered
+/// model without altering [`ModelMeta`] or [`FieldMeta`].
+pub struct EncryptedFieldsRegistration {
+    /// Model struct name matching [`ModelMeta::struct_name`].
+    pub struct_name: &'static str,
+    /// Function returning the model's `#[djangors(encrypted)]` field names.
+    pub fields_fn: fn() -> &'static [&'static str],
+}
+
+inventory::collect!(EncryptedFieldsRegistration);
+
 /// Returns an iterator over all registered model metadata.
 ///
 /// Can be used by downstream tools like migrations to discover all models.

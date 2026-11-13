@@ -298,3 +298,133 @@ async fn test_session_cookie_secure() {
     let set_cookie_secure = resp2.headers().get(SET_COOKIE).unwrap().to_str().unwrap();
     assert!(set_cookie_secure.contains("; Secure"));
 }
+
+#[tokio::test]
+async fn test_per_session_expiry_cookie_attributes_and_server_enforcement() {
+    use tower::{service_fn, Service, ServiceBuilder};
+
+    let secret = b"my-very-secret-key-that-is-long-enough";
+    let store = SignedCookieStore::new(secret);
+
+    let router = Router::new()
+        .post(
+            "/browser",
+            |req: Request, _: djangors_core::PathParams| async move {
+                let sess = req.ext::<Session>().unwrap();
+                sess.set("user", "alice");
+                sess.set_expiry(None);
+                Ok::<_, DjangorsError>(Response::text(StatusCode::OK, "ok"))
+            },
+        )
+        .post(
+            "/remember",
+            |req: Request, _: djangors_core::PathParams| async move {
+                let sess = req.ext::<Session>().unwrap();
+                sess.set("user", "bob");
+                sess.set_expiry(Some(Duration::from_secs(2_592_000)));
+                Ok::<_, DjangorsError>(Response::text(StatusCode::OK, "ok"))
+            },
+        );
+
+    let layer = SessionLayer::new(store);
+    let svc_fn = service_fn({
+        let router = router.clone();
+        move |req| {
+            let router = router.clone();
+            async move { Ok::<_, std::convert::Infallible>(router.dispatch(req).await) }
+        }
+    });
+    let mut svc = ServiceBuilder::new().layer(layer).service(svc_fn);
+
+    // Browser session omits Max-Age
+    let req1 = hyper::Request::builder()
+        .method(hyper::Method::POST)
+        .uri("/browser")
+        .body(Full::new(Bytes::new()))
+        .unwrap();
+    let resp1 = svc.ready().await.unwrap().call(req1).await.unwrap();
+    let cookie1 = resp1.headers().get(SET_COOKIE).unwrap().to_str().unwrap();
+    assert!(!cookie1.contains("Max-Age="));
+
+    // Remember-me session sets Max-Age=2592000
+    let req2 = hyper::Request::builder()
+        .method(hyper::Method::POST)
+        .uri("/remember")
+        .body(Full::new(Bytes::new()))
+        .unwrap();
+    let resp2 = svc.ready().await.unwrap().call(req2).await.unwrap();
+    let cookie2 = resp2.headers().get(SET_COOKIE).unwrap().to_str().unwrap();
+    assert!(cookie2.contains("Max-Age=2592000"));
+
+    // Server-side expiry enforcement on SignedCookieStore
+    let zero_store = SignedCookieStore::new(secret);
+    let sess = Session::new_empty();
+    sess.set("k", "v");
+    sess.set_expiry(Some(Duration::from_secs(0)));
+    let encoded = zero_store.encode(&sess);
+    assert!(zero_store.decode(&encoded).is_none());
+}
+
+#[tokio::test]
+async fn test_database_store_lifecycle_and_for_user() {
+    let config = djangors_db::DatabaseConfig::new("sqlite::memory:")
+        .max_connections(1)
+        .min_connections(1);
+    let db = djangors_db::Database::connect(&config).await.unwrap();
+    let db_handle = db.clone();
+    let store = DatabaseStore::new(db);
+
+    let sess = Session::new_empty();
+    sess.set("_auth_user_id", 42_i64);
+    sess.set("role", "admin");
+    let ctx = SessionContext {
+        ip: Some("127.0.0.1".to_string()),
+        user_agent: Some("TestAgent/1.0".to_string()),
+    };
+
+    let raw_key = store.save(&sess, &ctx).await.unwrap();
+    assert_eq!(raw_key.len(), 64);
+
+    let loaded = store
+        .load(&raw_key)
+        .await
+        .unwrap()
+        .expect("session should load");
+    assert_eq!(loaded.get::<i64>("_auth_user_id"), Some(42));
+    assert_eq!(loaded.get::<String>("role"), Some("admin".to_string()));
+    assert_eq!(loaded.session_key(), raw_key);
+
+    // Only the hash may reach the database; the raw key must not appear anywhere in the row.
+    let row = db_handle
+        .conn()
+        .fetch_one("SELECT key, data FROM djangors_session", &[])
+        .await
+        .unwrap();
+    let stored_key = row.try_string(0).unwrap().unwrap();
+    let stored_data = row.try_string(1).unwrap().unwrap();
+    assert_eq!(stored_key, hash_session_key(&raw_key));
+    assert!(
+        !stored_data.contains(&raw_key),
+        "raw session key leaked into data column"
+    );
+
+    let records = store.for_user(42).await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].key_hash, hash_session_key(&raw_key));
+    assert_eq!(records[0].ip.as_deref(), Some("127.0.0.1"));
+    assert_eq!(records[0].user_agent.as_deref(), Some("TestAgent/1.0"));
+
+    // Delete by key_hash
+    store.delete(&records[0].key_hash).await.unwrap();
+    assert!(store.load(&raw_key).await.unwrap().is_none());
+    assert!(store.for_user(42).await.unwrap().is_empty());
+
+    // Expired session is rejected on server and cleaned up by clear_expired
+    let expired_sess = Session::new_empty();
+    expired_sess.set("_auth_user_id", 99_i64);
+    expired_sess.set_expiry(Some(Duration::from_secs(0)));
+    let expired_key = store.save(&expired_sess, &ctx).await.unwrap();
+    let cleared = store.clear_expired().await.unwrap();
+    assert!(cleared >= 1);
+    assert!(store.load(&expired_key).await.unwrap().is_none());
+}

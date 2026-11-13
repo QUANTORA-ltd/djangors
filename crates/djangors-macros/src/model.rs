@@ -1580,6 +1580,13 @@ pub fn expand_derive_model(input: DeriveInput) -> syn::Result<TokenStream> {
                 meta_fn: #struct_name_ident::meta,
             }
         }
+
+        djangors_orm::inventory::submit! {
+            djangors_orm::EncryptedFieldsRegistration {
+                struct_name: #struct_name,
+                fields_fn: <#struct_name_ident as djangors_orm::Model>::encrypted_fields,
+            }
+        }
     })
 }
 

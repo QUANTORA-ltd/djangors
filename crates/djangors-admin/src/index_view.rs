@@ -30,6 +30,7 @@ pub(crate) struct IndexContext {
     pub(crate) site_title: String,
     pub(crate) logo_url: Option<String>,
     pub(crate) accent_color: Option<String>,
+    pub(crate) impersonation_banner: Option<String>,
 }
 
 pub(crate) async fn admin_index(
@@ -221,6 +222,9 @@ pub(crate) async fn admin_index(
         })
         .collect();
 
+    let banner = djangors_auth::impersonation_banner_html(&req);
+    let impersonation_banner = (!banner.is_empty()).then_some(banner);
+
     djangors_template::render(
         &ADMIN_TEMPLATES,
         "admin/index.html",
@@ -231,6 +235,7 @@ pub(crate) async fn admin_index(
             site_title: branding.site_title,
             logo_url: branding.logo_url,
             accent_color: branding.accent_color,
+            impersonation_banner,
         },
     )
 }

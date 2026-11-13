@@ -1,0 +1,49 @@
+<saml2p:Response xmlns:saml2p="urn:oasis:names:tc:SAML:2.0:protocol" Destination="https://app.example.com/saml/okta/acs" ID="_resp_f2" InResponseTo="_req_fixture_1" IssueInstant="2026-01-01T00:00:00Z" Version="2.0">
+  <saml2:Issuer xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion" Format="urn:oasis:names:tc:SAML:2.0:nameid-format:entity">https://idp.example.com</saml2:Issuer>
+  <saml2p:Status>
+    <saml2p:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/>
+  </saml2p:Status>
+  <saml2:Assertion xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion" xmlns:xs="http://www.w3.org/2001/XMLSchema" ID="_assert_f2" IssueInstant="2026-01-01T00:00:00Z" Version="2.0">
+    <saml2:Issuer Format="urn:oasis:names:tc:SAML:2.0:nameid-format:entity">https://idp.example.com</saml2:Issuer>
+    <ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#"><ds:SignedInfo><ds:CanonicalizationMethod Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/><ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha512"/><ds:Reference URI="#_assert_f2"><ds:Transforms><ds:Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/><ds:Transform Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/></ds:Transforms><ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha512"/><ds:DigestValue>e9fccXldBhfZzsUF2EvIg9t4EkXvoAvhzeHnpW/adgJVRxKN0QqvbcpSn0Wm5OLZVFvtp4SH5iIvwfSG7OTjkg==</ds:DigestValue></ds:Reference></ds:SignedInfo><ds:SignatureValue>gRrOsBPo1U0MHHT84OjQ5IS+4G116m7KUh5nzQa/vbc4zKkWpperqbfI4IsN81PvglAVyYl9NZXE/zRQf/qLKsadlKNI5gz3mzDYNDhn559gmEI8Z+hyzOqRXwq3DZkYMD7TR0ANBN7YCyHXwYIAM7/uAEs+X8L/7OHakUnSRXz7J5L4ZDTsMmeIcy3TS5vAJqEUBsGT9qlrV3LimcqF+JEuXvkUjecQBMI35BpOchJT1bR8HR6ZWv3gVboXJMaw03JOaizoZYhJpOgYD/g0EWni4WlgwKh40F4RlOd4iHp25dm5mTvt5FnohPvpmDjYo2sjzFH4qkXVSZ5qpTKewQ==</ds:SignatureValue><ds:KeyInfo><ds:X509Data><ds:X509Certificate>MIICwjCCAaqgAwIBAgIUbV4wRETEotb6d9WtwSz2prsWmjkwDQYJKoZIhvcNAQEL
+BQAwGjEYMBYGA1UEAwwPZml4dHVyZS1pZHAtcnNhMCAXDTI1MDEwMTAwMDAwMFoY
+DzIxMjQxMjA4MDAwMDAwWjAaMRgwFgYDVQQDDA9maXh0dXJlLWlkcC1yc2EwggEi
+MA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQCVXzEpnbzO3ngV4lUi/V3kh2Xx
+xAjZrDt0k2QfueAGMSZdYvl33MdyjR9aIqUovoGZOnbOOEwYJm+jfC2EIB5sZ3Al
+R8UjnPyJ1px/5uhPLD1M0Vt3QfLZ28CrzfGWuwH2SBGaT3hhw1skG0vBGtRrJxWj
+21D6dXE2Q+eNRp4bvkfYOVafamn2wLjojsHghdaUqLxsM4yCNNt/jzvbH1m8g0ZX
+NfqfkREPZzPWSqZeeNOsZV5jkSKO9KODm5aQ+EFTJo28ARSO9kkj78bF6xCsjHcc
+6cx+IXrCVenxXKG68cqYLAFxb+5AR0ShqW0++gGaFLBUQbQdUp5yHwjlbH7RAgMB
+AAEwDQYJKoZIhvcNAQELBQADggEBADVrvkJ36xDn/TM3Gyam+FXw7D7VzXIvQKXY
+RyEfb4Xec5WRpg3K9L8eTFGMFkustqmacARXvgpbIdu02XhD0ffELpxsGVR2T2E8
+e/uRsNPmN4hGIdTrnh6B8CPlNJWeKwipzkU63Ni4uoZtLyMaWcNZD9ioTiaL4w9H
+WC12eUvLHMekEyYGyl9etrQkEeJh2sZle8B3xFGoMdRw8tXQ5DebcZq/wgBfAjdA
+QhsZTedJ/C5TmIobu9SRrJeP4wkZR9g5SicBy/Yzx4hihxj3SBpjSoenmaWkkJY5
+KrhPTamqpdSZh+Ad4sLm1RuM/i+H+CNtM9gCyI3Z9xdSl9c1k3Q=
+</ds:X509Certificate></ds:X509Data></ds:KeyInfo></ds:Signature>
+    <saml2:Subject>
+      <saml2:NameID Format="urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress">alice@example.com</saml2:NameID>
+      <saml2:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer">
+        <saml2:SubjectConfirmationData InResponseTo="_req_fixture_1" NotOnOrAfter="2099-01-01T00:00:00Z" Recipient="https://app.example.com/saml/okta/acs"/>
+      </saml2:SubjectConfirmation>
+    </saml2:Subject>
+    <saml2:Conditions NotBefore="2020-01-01T00:00:00Z" NotOnOrAfter="2099-01-01T00:00:00Z">
+      <saml2:AudienceRestriction>
+        <saml2:Audience>https://app.example.com/sp</saml2:Audience>
+      </saml2:AudienceRestriction>
+    </saml2:Conditions>
+    <saml2:AuthnStatement AuthnInstant="2026-01-01T00:00:00Z" SessionIndex="_assert_f2">
+      <saml2:AuthnContext>
+        <saml2:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport</saml2:AuthnContextClassRef>
+      </saml2:AuthnContext>
+    </saml2:AuthnStatement>
+    <saml2:AttributeStatement>
+      <saml2:Attribute Name="uid" NameFormat="urn:oasis:names:tc:SAML:2.0:attrname-format:basic">
+        <saml2:AttributeValue xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="xs:string">fixture-alice</saml2:AttributeValue>
+      </saml2:Attribute>
+      <saml2:Attribute Name="mail" NameFormat="urn:oasis:names:tc:SAML:2.0:attrname-format:basic">
+        <saml2:AttributeValue xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="xs:string">alice@example.com</saml2:AttributeValue>
+      </saml2:Attribute>
+    </saml2:AttributeStatement>
+  </saml2:Assertion>
+</saml2p:Response>

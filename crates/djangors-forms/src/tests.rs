@@ -511,3 +511,60 @@ fn test_formset_security_huge_total_forms_rejected() {
     // Confirm form_errors is empty and no allocation occurred
     assert!(err.form_errors.is_empty());
 }
+
+#[test]
+fn test_honeypot_min_submit_time_and_bot_guard() {
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    let hp = HoneypotField::default();
+    assert!(hp.validate(None).is_ok());
+    assert!(hp.validate(Some("")).is_ok());
+    assert_eq!(
+        hp.validate(Some("spam")),
+        Err(HoneypotError::HoneypotFilled)
+    );
+    assert!(hp.render().contains("name=\"website\""));
+
+    let min_time = MinSubmitTime::new(b"secret-key", Duration::from_secs(3));
+    let immediate = min_time.generate_token();
+    assert_eq!(
+        min_time.validate(Some(&immediate)),
+        Err(HoneypotError::SubmittedTooFast)
+    );
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let old_token = min_time.sign_timestamp(now.saturating_sub(10));
+    assert!(min_time.validate(Some(&old_token)).is_ok());
+    assert_eq!(
+        min_time.validate(Some("12345.bad_sig")),
+        Err(HoneypotError::InvalidTimestamp)
+    );
+
+    let guard = BotGuard::new(b"secret-key", Duration::from_secs(3));
+    assert_eq!(
+        guard.evaluate(Some(""), Some(&old_token), Some("Mozilla/5.0")),
+        SubmissionCheck::Clean
+    );
+    assert!(matches!(
+        guard.evaluate(Some("bot-value"), Some(&old_token), Some("curl/8.0")),
+        SubmissionCheck::Suspicious {
+            show_captcha: true,
+            ..
+        }
+    ));
+}
+
+#[cfg(feature = "captcha")]
+#[tokio::test]
+async fn test_captcha_always_pass_fail_and_field() {
+    assert!(AlwaysPass.verify("tok", None).await.unwrap().success);
+    assert!(!AlwaysFail.verify("tok", None).await.unwrap().success);
+
+    let field = CaptchaField::new(CaptchaProvider::Turnstile, "site-123");
+    let html = field.render();
+    assert!(html.contains("challenges.cloudflare.com/turnstile"));
+    assert!(html.contains("cf-turnstile-response"));
+}
