@@ -37,10 +37,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-146c955f.js";
+            window.path_to_searchindex_js = "searchindex-5c9aec32.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-86e03ec5.js"></script>
+        <script src="toc-37bf99b9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -3912,6 +3912,21 @@ let mut buf = Vec::with_capacity(128);
 q.write_json(&amp;mut buf);
 assert!(std::str::from_utf8(&amp;buf).unwrap().contains("\"question_text\":\"Fast JSON?\""));
 <span class="boring">}</span></code></pre>
+<h2 id="json-fields"><a class="header" href="#json-fields">JSON Fields</a></h2>
+<p>Use <code>serde_json::Value</code> (or <code>Option&lt;serde_json::Value&gt;</code>) on a <code>#[derive(Model)]</code> field to store structured JSON (<code>FieldKind::Json</code> -&gt; <code>JSONB</code> on PostgreSQL, <code>TEXT</code> on SQLite):</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors::macros::Model;
+use serde_json::Value;
+
+#[derive(Model, Debug, Clone)]
+#[djangors(app = "catalog", table_name = "catalog_product")]
+pub struct Product {
+    #[djangors(primary_key, auto)]
+    pub id: i64,
+    pub attributes: Value,
+}
+<span class="boring">}</span></code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="encrypted-fields"><a class="header" href="#encrypted-fields">Encrypted Fields</a></h1>
 <p>Some text columns hold data that should not be readable in a database dump, such as API tokens, personal identifiers or notes. Mark those fields with <code>#[djangors(encrypted)]</code>. The ORM encrypts them with AES-256-GCM on every write and decrypts them when a row is loaded, so application code keeps working with plain <code>String</code> values.</p>
@@ -3955,12 +3970,16 @@ head -c 32 /dev/urandom | base64
 <p>Each save uses a fresh random nonce, so saving the same text twice produces different stored values. Because of this, the column must be wide enough for the ciphertext. Ciphertext is about 1.4 times the length of the plaintext plus 40 bytes, so a <code>max_length</code> of 100 needs a column of about 180 characters. The column type stays <code>TEXT</code> or <code>VARCHAR</code>; no special migration is needed to add the attribute to a new column.</p>
 <p>Rows written before a field was marked <code>encrypted</code> contain plaintext. Those values are returned unchanged when loaded, so you can add the attribute first and re-save rows later to encrypt them.</p>
 <h2 id="key-rotation"><a class="header" href="#key-rotation">Key rotation</a></h2>
-<p>To rotate, move the current key into <code>DJANGORS_FIELD_ENCRYPTION_OLD_KEYS</code> and set a new key:</p>
-<pre><code class="language-text">DJANGORS_FIELD_ENCRYPTION_KEY=&lt;new key&gt;
-DJANGORS_FIELD_ENCRYPTION_OLD_KEYS=&lt;previous key&gt;[,&lt;older key&gt;...]
+<p>Configure keys with <code>DJANGORS_FIELD_ENCRYPTION_KEYS</code> as a comma-separated list of base64-encoded 32-byte keys, <strong>newest first</strong>:</p>
+<pre><code class="language-text">DJANGORS_FIELD_ENCRYPTION_KEYS=&lt;newest key&gt;,&lt;previous key&gt;[,&lt;older key&gt;...]
 </code></pre>
-<p>Reads try the current key first and then each old key. Writes always use the current key. Rows written under an old key are re-encrypted when they are next saved or updated. To re-encrypt everything at once, load each row and call <code>save</code> or <code>update</code> on it. Once no rows depend on an old key, remove it from the list.</p>
-<p>Keep the old keys in the list for as long as any row may still hold a value encrypted with them.</p>
+<p>(The older two-variable form <code>DJANGORS_FIELD_ENCRYPTION_KEY</code> + <code>DJANGORS_FIELD_ENCRYPTION_OLD_KEYS</code> continues to work when <code>DJANGORS_FIELD_ENCRYPTION_KEYS</code> is unset.)</p>
+<p>New writes always encrypt using the first key in <code>DJANGORS_FIELD_ENCRYPTION_KEYS</code> and tag each ciphertext with its key ID (<code>enc:v1:&lt;key_id&gt;:&lt;base64&gt;</code>). Reads look up the named key ID directly, while legacy untagged ciphertexts (<code>enc:v1:&lt;base64&gt;</code>) remain readable via key 0 and any older keys in the list.</p>
+<h3 id="batch-re-encryption-with-dj-rotate-encryption-keys"><a class="header" href="#batch-re-encryption-with-dj-rotate-encryption-keys">Batch re-encryption with <code>dj rotate-encryption-keys</code></a></h3>
+<p>After prepending a new key to <code>DJANGORS_FIELD_ENCRYPTION_KEYS</code>, re-encrypt existing rows in transactional batches of 500 (default):</p>
+<pre><code class="language-bash">dj rotate-encryption-keys --model billing.PaymentMethod --batch 500
+</code></pre>
+<p>Each batch commits inside its own transaction and skips rows already tagged with the newest key ID, so an interrupted run can be resumed safely by running the command again. Once every row has been rotated, remove the retired keys from <code>DJANGORS_FIELD_ENCRYPTION_KEYS</code>. If any row references a missing or wrong key ID, decryption returns an error rather than exposing ciphertext.</p>
 <h2 id="what-you-cannot-do"><a class="header" href="#what-you-cannot-do">What you cannot do</a></h2>
 <p>Encryption uses random nonces, so the same plaintext never produces the same stored value. This has consequences:</p>
 <ul>
@@ -4797,7 +4816,7 @@ async fn profile(req: Request) -&gt; Result&lt;Response, DjangorsError&gt; {
 <span class="boring">}</span></code></pre>
 <p>Because a handler reads messages before the response is built, <code>context</code> is available as template context in the GET request that follows the POST.</p>
 <h3 id="sessions-middleware"><a class="header" href="#sessions-middleware">Sessions Middleware</a></h3>
-<p>The <code>add</code>/<code>take</code> helpers operate on the <code>Session</code> handle, so requests must flow through the <code>SessionLayer</code> middleware (<code>djangors-sessions</code>) before they reach these handlers. See <a href="#sessions-and-csrf-protection">Sessions and CSRF Protection</a> for how to construct and mount it.</p>
+<p>The <code>add</code>/<code>take</code> helpers operate on the <code>Session</code> handle, so requests must flow through the <code>SessionLayer</code> middleware (<code>djangors-sessions</code>) before they reach these handlers. See <a href="#sessions">Sessions and CSRF Protection</a> for how to construct and mount it.</p>
 <blockquote class="blockquote-tag blockquote-tag-note">
 <p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
 <p>Djangors sessions are <strong>client-side signed cookies</strong>: queued flash messages round-trip to the browser inside the cookie. Keep messages short — a single <code>Message</code> should be a sentence or two, not a rendered HTML fragment — so the cookie stays small and requests against it stay fast.</p>
@@ -5152,7 +5171,7 @@ around <code>RouterService::new(router, debug)</code> — the same stack shape a
 depth in the <a href="#security">Security guide</a>.</p>
 <p>The <code>CsrfLayer</code> injects a <code>CsrfToken(String)</code> extension on every request (plus a pending-check
 marker for form bodies). Sessions and tenancy similarly communicate through <code>ext</code>; see
-<a href="#sessions-and-csrf-protection">Sessions and CSRF Protection</a> and <a href="#multi-tenancy-djangors-contrib-tenancy">Multi-tenancy</a>.</p>
+<a href="#sessions">Sessions and CSRF Protection</a> and <a href="#multi-tenancy-djangors-contrib-tenancy">Multi-tenancy</a>.</p>
 <pre class="playground"><code class="language-rust compile"><span class="boring">fn main() {
 </span>use djangors_core::middleware::{
     logging_layer, security_headers_layer, hsts_layer, normalize_path_layer,
@@ -5482,11 +5501,29 @@ assert!(escaped.contains("&amp;lt;script&amp;gt;"));
 assert!(escaped.contains("&amp;amp;"));
 assert!(escaped.contains("&amp;#x27;"));
 <span class="boring">}</span></code></pre>
+<h2 id="per-route-rate-limiting-ratelimiter"><a class="header" href="#per-route-rate-limiting-ratelimiter">Per-Route Rate Limiting (<code>RateLimiter</code>)</a></h2>
+<p>Outside of <code>djangors-rest</code>, <code>djangors_core::ratelimit::RateLimiter</code> applies sliding-window rate limiting to any plain <code>Router</code> route (backed by <code>djangors-cache</code>, e.g. <code>InMemoryCache</code> or <code>RedisCache</code>):</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use std::sync::Arc;
+use std::time::Duration;
+use djangors_core::ratelimit::{ByIp, RateLimiter};
+use djangors_core::{DjangorsError, Request, Response};
+
+<span class="boring">async fn example(req: Request, limiter: RateLimiter) -&gt; Result&lt;Response, DjangorsError&gt; {
+</span>let outcome = limiter.check(&amp;req, &amp;ByIp).await?;
+if !outcome.allowed {
+    return Err(DjangorsError::TooManyRequests("rate limit exceeded".into()));
+}
+Ok(Response::text("ok"))
+<span class="boring">}
+</span><span class="boring">}</span></code></pre>
+<p>Implement <code>RateLimitKey</code> for custom keying strategies (e.g. by API key or user ID).</p>
 <h2 id="where-to-go-next"><a class="header" href="#where-to-go-next">Where to go next</a></h2>
 <ul>
 <li><a href="#tutorial-part-1-requests-and-responses">Requests and Responses tutorial</a> — the fast path to a first endpoint.</li>
 <li><a href="#security">Security</a> — CSRF, HSTS, host validation, CSP, and the production checklist.</li>
-<li><a href="#sessions-and-csrf-protection">Sessions and CSRF Protection</a> — session middleware and <code>SignedCookieStore</code>.</li>
+<li><a href="#sessions">Sessions and CSRF Protection</a> — session middleware and <code>SignedCookieStore</code>.</li>
 <li><a href="#how-to-stream-server-sent-events-sse">How to Stream Server-Sent Events</a> — <code>Response::sse</code> / <code>Router::get_sse</code> in practice.</li>
 <li><a href="#rest-framework">REST Framework</a> — where <code>Paginator</code>/cursor primitives surface as cursor pagination.</li>
 </ul>
@@ -5771,6 +5808,52 @@ if let Err(messages) = validate_password("1234", Some(&amp;attrs), &amp;validato
 <span class="boring">}
 </span><span class="boring">}</span></code></pre>
 <p><code>confirm_password_reset</code> runs <code>default_validators()</code> automatically before hashing and returns <code>AuthError::WeakPassword</code> if any rule fails. <code>dj createsuperuser</code> also validates the password unless <code>--skip-validation</code> is passed.</p>
+<h2 id="email-verification"><a class="header" href="#email-verification">Email verification</a></h2>
+<p><code>djangors-auth</code> tracks verified email addresses via the <code>EmailAddress</code> model (<code>auth_email_address</code> table) and signed, time-limited HMAC-SHA256 tokens bound to <code>(user_id, email, expiry)</code>:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors::auth::{send_verification_email, verify_email, HasVerifiedEmail};
+
+<span class="boring">async fn example(db: &amp;djangors::db::Database, mailer: &amp;dyn djangors::mail::MailBackend, secret: &amp;[u8]) -&gt; Result&lt;(), djangors::auth::AuthError&gt; {
+</span>send_verification_email(db, mailer, 1, "alice@example.com", "https://example.com", secret).await?;
+let verified = verify_email(db, "token-from-query", secret).await?;
+<span class="boring">Ok(())
+</span><span class="boring">}
+</span><span class="boring">}</span></code></pre>
+<ul>
+<li>Use the <code>HasVerifiedEmail</code> extractor on routes that require a verified email (returns <code>403 Forbidden</code> otherwise).</li>
+<li>Set <code>require_verified_email_for_login = true</code> in <code>djangors.toml</code> (or <code>DJANGORS_REQUIRE_VERIFIED_EMAIL_FOR_LOGIN=true</code>) and call <code>ensure_verified_for_login</code> during login.</li>
+<li>New projects created with <code>dj new</code> include <code>templates/auth/check_inbox.html</code>.</li>
+</ul>
+<h2 id="magic-link-login"><a class="header" href="#magic-link-login">Magic-link login</a></h2>
+<p><code>djangors_auth::magic_link</code> implements passwordless single-use login links backed by the <code>LoginLink</code> model (<code>auth_login_link</code> table):</p>
+<ul>
+<li>Tokens are 256-bit random values whose SHA-256 hash (<code>hash_login_token</code>) is stored in <code>LoginLink.token_hash</code>.</li>
+<li><code>send_login_link</code> enforces per-email and per-IP rate limits (<code>LoginLinkPolicy</code>, default 15-minute TTL) and returns <code>Ok(())</code> whether or not the email exists, preventing account enumeration.</li>
+<li><code>GET /login/magic/{token}</code> (<code>magic_link_router</code>) renders a confirmation page with a <code>POST</code> form rather than consuming the link on <code>GET</code>, so email link scanners cannot burn the token.</li>
+<li><code>POST /login/magic/{token}</code> atomically claims the link with a conditional <code>UPDATE ... WHERE used_at IS NULL AND expires_at &gt; now</code> and establishes the session via <code>login_with</code>.</li>
+</ul>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors::auth::{
+    create_login_link_tables, magic_link_router, send_login_link, LoginLinkPolicy,
+};
+
+<span class="boring">async fn example(db: &amp;djangors::db::Database, mailer: &amp;dyn djangors::mail::MailBackend) -&gt; Result&lt;(), djangors::auth::AuthError&gt; {
+</span>create_login_link_tables(db).await?;
+send_login_link(
+    db,
+    mailer,
+    "alice@example.com",
+    Some("203.0.113.10"),
+    "https://example.com",
+    LoginLinkPolicy::default(),
+)
+.await?;
+<span class="boring">let _router = magic_link_router();
+</span><span class="boring">Ok(())
+</span><span class="boring">}
+</span><span class="boring">}</span></code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="passkeys-webauthn"><a class="header" href="#passkeys-webauthn">Passkeys (WebAuthn)</a></h1>
 <p>Passkeys let users sign in with a fingerprint, face, device PIN or security key instead
@@ -5778,7 +5861,7 @@ of a password. The private key never leaves the user’s device. The server stor
 public key, so there is nothing to phish and nothing useful to leak.</p>
 <p>Djangors implements the server side of WebAuthn (the <em>relying party</em>) in pure Rust,
 without OpenSSL. Enable it with the <code>passkeys</code> feature:</p>
-<pre><code class="language-toml">djangors = { version = "0.12", features = ["passkeys"] }
+<pre><code class="language-toml">djangors = { version = "0.13", features = ["passkeys"] }
 </code></pre>
 <h2 id="what-is-supported"><a class="header" href="#what-is-supported">What is supported</a></h2>
 <ul>
@@ -5955,6 +6038,373 @@ the examples, so a failed attempt can’t be retried with the same challenge.</l
 <li>Passkeys can replace passwords or sit alongside them. Let users register more than
 one passkey, so losing a device doesn’t lock them out.</li>
 </ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="organizations-and-teams"><a class="header" href="#organizations-and-teams">Organizations and Teams</a></h1>
+<p><code>djangors-contrib-orgs</code> provides multi-user <code>Organization</code>, <code>Membership</code>, <code>Team</code>, and <code>TeamMembership</code> models along with role-based permissions and request extractors.</p>
+<h2 id="setup-and-permissions"><a class="header" href="#setup-and-permissions">Setup and Permissions</a></h2>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors::orgs::{create_organization, OrgPermissions, ROLE_ADMIN, ROLE_MEMBER};
+
+<span class="boring">async fn example(db: &amp;djangors::db::Database, owner_id: i64) -&gt; Result&lt;(), djangors::orgs::OrgError&gt; {
+</span>let (org, _membership) = create_organization(db, "Acme", "acme", owner_id, None).await?;
+
+let perms = OrgPermissions::new()
+    .role(ROLE_ADMIN, &amp;["members.invite", "teams.manage"])
+    .role(ROLE_MEMBER, &amp;["projects.read"]);
+<span class="boring">let _ = (org, perms);
+</span><span class="boring">Ok(())
+</span><span class="boring">}
+</span><span class="boring">}</span></code></pre>
+<h2 id="resolving-the-active-organization"><a class="header" href="#resolving-the-active-organization">Resolving the Active Organization</a></h2>
+<p><code>CurrentOrg</code> resolves the organization slug in this order:</p>
+<ol>
+<li>URL path parameter <code>{org_slug}</code></li>
+<li><code>X-Organization</code> HTTP header</li>
+<li><code>_current_org_slug</code> session key</li>
+</ol>
+<p>Pair it with <code>IsOrgMember</code>, <code>HasOrgRole</code>, and <code>HasOrgPermission</code> to guard routes. At least one <code>"owner"</code> must always remain in an organization (<code>remove_member</code> and <code>update_member_role</code> return <code>OrgError::LastOwner</code>).</p>
+<h2 id="relationship-to-tenancy"><a class="header" href="#relationship-to-tenancy">Relationship to Tenancy</a></h2>
+<p>An <code>Organization</code> can optionally reference a <code>tenant_id</code> (from <code>djangors-contrib-tenancy</code>) when each organization maps to an isolated tenant scope. Use <code>djangors-contrib-tenancy</code> for row/schema isolation and <code>djangors-contrib-orgs</code> for roles, teams, and invitations.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="privacy-gdpr-export-and-account-deletion"><a class="header" href="#privacy-gdpr-export-and-account-deletion">Privacy, GDPR Export, and Account Deletion</a></h1>
+<p><code>djangors-auth::gdpr</code> provides user data export as a ZIP archive and scheduled account deletion with a configurable grace period.</p>
+<h2 id="exporting-user-data"><a class="header" href="#exporting-user-data">Exporting User Data</a></h2>
+<p><code>UserDataRegistry::with_builtins()</code> registers built-in exporters for <code>user</code>, <code>sessions</code>, <code>social_accounts</code>, <code>api_keys</code>, and <code>history</code>. Apps can register custom exporters under any name:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors::auth::{export_user_data, UserDataRegistry};
+
+<span class="boring">async fn example(db: &amp;djangors::db::Database) -&gt; Result&lt;(), djangors::auth::AuthError&gt; {
+</span>let mut registry = UserDataRegistry::with_builtins();
+registry.register("orders", |db, user_id| {
+    Box::pin(async move {
+        let _ = (db, user_id);
+        Ok(serde_json::json!([]))
+    })
+});
+
+let zip_bytes = export_user_data(db, &amp;registry, 1).await?;
+<span class="boring">let _ = zip_bytes;
+</span><span class="boring">Ok(())
+</span><span class="boring">}
+</span><span class="boring">}</span></code></pre>
+<p>Wire <code>request_export_view</code> (<code>POST /privacy/export</code>) and <code>download_export_view</code> (<code>GET /privacy/export/download</code>) to let authenticated users request and download their ZIP archive via a signed link.</p>
+<h2 id="scheduled-account-deletion"><a class="header" href="#scheduled-account-deletion">Scheduled Account Deletion</a></h2>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors::auth::{cancel_account_deletion, request_account_deletion, run_scheduled_deletions};
+
+<span class="boring">async fn example(db: &amp;djangors::db::Database) -&gt; Result&lt;(), djangors::auth::AuthError&gt; {
+</span>// Schedule deletion 30 days from now (default):
+request_account_deletion(db, 1, None).await?;
+
+// User changed their mind:
+cancel_account_deletion(db, 1).await?;
+
+// Run in a recurring background task to process due deletions:
+let processed = run_scheduled_deletions(db, &amp;[]).await?;
+<span class="boring">let _ = processed;
+</span><span class="boring">Ok(())
+</span><span class="boring">}
+</span><span class="boring">}</span></code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="social-login-oauth-20--openid-connect"><a class="header" href="#social-login-oauth-20--openid-connect">Social Login (OAuth 2.0 &amp; OpenID Connect)</a></h1>
+<p>Djangors provides OAuth 2.0 and OpenID Connect social login through the <code>djangors-contrib-oauth</code> crate (behind the off-by-default <code>oauth-client</code> feature on the <code>djangors</code> facade). All HTTP calls use <code>reqwest</code> over <code>rustls</code> (<code>ring</code> crypto provider; zero OpenSSL).</p>
+<h2 id="enabling-the-feature"><a class="header" href="#enabling-the-feature">Enabling the feature</a></h2>
+<pre><code class="language-toml">[dependencies]
+djangors = { version = "0.12.0", features = ["oauth-client"] }
+</code></pre>
+<h2 id="database-setup"><a class="header" href="#database-setup">Database setup</a></h2>
+<p>Create the <code>oauth_social_account</code> table once during database initialization or migrations:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_contrib_oauth::create_social_account_table;
+
+create_social_account_table(&amp;db).await?;
+<span class="boring">}</span></code></pre>
+<p>When <code>admin</code> is enabled, register <code>SocialAccount</code> with <code>register_client_admin(&amp;site)</code>.</p>
+<h2 id="configuring-providers-and-mounting-routes"><a class="header" href="#configuring-providers-and-mounting-routes">Configuring providers and mounting routes</a></h2>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_contrib_oauth::{
+    oauth_client_router, AppleConfig, AppleProvider, GitHubConfig, GitHubProvider,
+    GoogleProvider, MicrosoftProvider, MicrosoftTenant, OAuthRegistry, OidcConfig, OidcProvider,
+};
+
+let registry = OAuthRegistry::new("https://app.example.com")
+    .with_post_login_redirect("/dashboard")
+    .register(GoogleProvider::new(google_id, google_secret)?)
+    .register(MicrosoftProvider::new(
+        MicrosoftTenant::Common,
+        ms_id,
+        ms_secret,
+    )?)
+    .register(AppleProvider::new(AppleConfig::new(
+        apple_services_id,
+        apple_team_id,
+        apple_key_id,
+        apple_p8_pem,
+    ))?)
+    .register(GitHubProvider::new(GitHubConfig::new(gh_id, gh_secret))?)
+    .register(OidcProvider::new(OidcConfig::new(
+        "okta",
+        "https://example.okta.com/oauth2/default",
+        okta_id,
+        Some(okta_secret),
+    ))?);
+
+let state = AppState::new().insert(db).insert(registry);
+let app = Router::new().merge(oauth_client_router()).with_state(state);
+<span class="boring">}</span></code></pre>
+<p>This mounts:</p>
+<ul>
+<li><code>GET /auth/{provider}/login</code> — redirects to the provider with one-time <code>state</code>, PKCE <code>S256</code> challenge, and OIDC <code>nonce</code> stored in the session.</li>
+<li><code>GET|POST /auth/{provider}/callback</code> — validates <code>state</code>, exchanges the code with the PKCE verifier, verifies the ID token’s JWKS signature, <code>iss</code>, <code>aud</code>, <code>exp</code>, <code>nonce</code>, and <code>at_hash</code> (or fetches GitHub <code>/user</code> + verified <code>/user/emails</code>), resolves the user, and calls <code>djangors_auth::login</code>.</li>
+<li><code>GET /auth/{provider}/connect</code> — links a social account to an already logged-in user.</li>
+<li><code>POST /auth/{provider}/disconnect</code> — unlinks a social account; refuses if the user has neither a usable password nor another linked <code>SocialAccount</code>.</li>
+</ul>
+<h2 id="account-lookup--security-rules"><a class="header" href="#account-lookup--security-rules">Account lookup &amp; security rules</a></h2>
+<ol>
+<li>Existing <code>SocialAccount</code> matching <code>(provider, subject)</code>.</li>
+<li>If in <code>/auth/{provider}/connect</code>, link to the logged-in user (rejecting if already linked elsewhere).</li>
+<li>Existing local <code>User</code> with a matching <strong>verified</strong> email (<code>email_verified == true</code>). Unverified email claims never link to existing accounts.</li>
+<li>Otherwise create a new local <code>User</code> with an unusable password (<code>"!"</code>).</li>
+</ol>
+<blockquote class="blockquote-tag blockquote-tag-note">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
+<p>Apple Sign In uses <code>response_mode=form_post</code>, so Apple’s browser redirect sends a cross-site <code>POST</code> to <code>/auth/apple/callback</code>. Exempt <code>/auth/*/callback</code> from HTML form CSRF middleware; cross-site request forgery protection is enforced by the single-use <code>state</code> token bound to the user’s session.</p>
+</blockquote>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="acting-as-an-oauth-20--openid-connect-provider"><a class="header" href="#acting-as-an-oauth-20--openid-connect-provider">Acting as an OAuth 2.0 / OpenID Connect Provider</a></h1>
+<p>Djangors includes an OAuth 2.0 authorization server and OpenID Connect (OIDC) provider in <code>djangors::oauth::provider</code> (crate <code>djangors-contrib-oauth</code>).</p>
+<h2 id="enabling-the-feature-1"><a class="header" href="#enabling-the-feature-1">Enabling the feature</a></h2>
+<p>Add the <code>oauth-provider</code> feature to <code>djangors</code>:</p>
+<pre><code class="language-toml">[dependencies]
+djangors = { version = "0.13", features = ["oauth-provider"] }
+</code></pre>
+<h2 id="database-setup-and-signing-keys"><a class="header" href="#database-setup-and-signing-keys">Database setup and signing keys</a></h2>
+<p>Create the provider tables once at startup (or in a migration) and generate an asymmetric OIDC signing key (<code>RS256</code> or <code>ES256</code>). Ensure <code>DJANGORS_FIELD_ENCRYPTION_KEY</code> (or <code>DJANGORS_FIELD_ENCRYPTION_KEYS</code>) is configured because <code>SigningKey::private_key_pem</code> is stored with <code>#[djangors(encrypted)]</code>.</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors::oauth::{
+    create_oauth_provider_tables, oauth_provider_router, OAuthApplication,
+    OAuthProviderConfig, SigningKey,
+};
+use djangors::orm::Model as _;
+use djangors::AppState;
+
+<span class="boring">async fn setup(db: djangors::db::Database) -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+</span>create_oauth_provider_tables(&amp;db).await?;
+
+// Generate an RS256 signing key if none exists yet.
+if SigningKey::objects().all(&amp;db).await?.is_empty() {
+    SigningKey::generate_rs256()?.save(&amp;db).await?;
+}
+
+// Register a confidential web client (keep `client_secret` — it is only returned once).
+let (app, client_secret) = OAuthApplication::create_confidential(
+    &amp;db,
+    "Partner Portal",
+    &amp;["https://partner.example.com/oauth/callback"],
+    &amp;["authorization_code", "refresh_token"],
+    &amp;["openid", "profile", "email", "offline_access"],
+    false,
+    None,
+)
+.await?;
+
+let state = AppState::new()
+    .insert(db)
+    .insert(OAuthProviderConfig::new("https://auth.example.com"));
+
+let router = oauth_provider_router();
+<span class="boring">let _ = (app, client_secret, state, router);
+</span><span class="boring">Ok(())
+</span><span class="boring">}
+</span><span class="boring">}</span></code></pre>
+<h2 id="endpoints"><a class="header" href="#endpoints">Endpoints</a></h2>
+<p><code>oauth_provider_router()</code> mounts:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Endpoint</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><code>GET | POST /o/authorize</code></td><td>Authorization endpoint with HTML consent form (auto-approves if <code>skip_consent = true</code>)</td></tr>
+<tr><td><code>POST /o/token</code></td><td>Token endpoint (<code>authorization_code</code>, <code>client_credentials</code>, <code>refresh_token</code>) with <code>Cache-Control: no-store</code></td></tr>
+<tr><td><code>POST /o/revoke</code></td><td>RFC 7009 token revocation (revokes access tokens or entire refresh-token families)</td></tr>
+<tr><td><code>POST /o/introspect</code></td><td>RFC 7662 token introspection (requires client authentication)</td></tr>
+<tr><td><code>GET | POST /o/userinfo</code></td><td>OIDC UserInfo endpoint filtered by granted scopes (<code>openid</code>, <code>profile</code>, <code>email</code>)</td></tr>
+<tr><td><code>GET /.well-known/openid-configuration</code></td><td>OpenID Provider discovery metadata</td></tr>
+<tr><td><code>GET /o/jwks</code></td><td>Public JSON Web Key Set for active signing keys</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="protecting-api-views"><a class="header" href="#protecting-api-views">Protecting API views</a></h2>
+<p>Use <a href="../crates/djangors-contrib-oauth/src/provider.rs"><code>OAuthBearer</code></a> to validate incoming <code>Authorization: Bearer &lt;token&gt;</code> headers, or <a href="../crates/djangors-contrib-oauth/src/provider.rs"><code>HasOAuthScope</code></a> to enforce scopes:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors::oauth::HasOAuthScope;
+use djangors::prelude::*;
+
+async fn read_reports(req: Request, _params: PathParams) -&gt; Result&lt;Response, DjangorsError&gt; {
+    let bearer = HasOAuthScope("read").check(&amp;req).await?;
+    Response::json(StatusCode::OK, &amp;serde_json::json!({
+        "client_app_id": bearer.application_id,
+        "user_id": bearer.user_id,
+    }))
+}
+<span class="boring">}</span></code></pre>
+<h2 id="admin-and-bulk-revocation"><a class="header" href="#admin-and-bulk-revocation">Admin and bulk revocation</a></h2>
+<p>When the <code>admin</code> feature is enabled, register all provider models on your <code>AdminSite</code> and revoke tokens programmatically via <code>revoke_app_tokens</code>:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>djangors::oauth::register_provider_admin(&amp;admin_site);
+let revoked = djangors::oauth::revoke_app_tokens(&amp;db, app.id).await?;
+<span class="boring">}</span></code></pre>
+<h2 id="security-properties"><a class="header" href="#security-properties">Security properties</a></h2>
+<ul>
+<li><strong>PKCE S256 required for public clients</strong>: Public clients (<code>confidential = false</code>) cannot skip PKCE and cannot downgrade <code>code_challenge_method</code> to <code>plain</code>. Set <code>require_pkce_for_all_clients(true)</code> on <code>OAuthProviderConfig</code> to enforce PKCE for confidential clients too.</li>
+<li><strong>Exact <code>redirect_uri</code> matching</strong>: Wildcards and prefix matching are rejected before redirecting.</li>
+<li><strong>Short-lived, single-use authorization codes</strong>: Default TTL is 120 seconds, hashed with SHA-256 at rest, and consumed atomically via a single conditional <code>UPDATE</code>.</li>
+<li><strong>Rotating refresh tokens with reuse detection</strong>: Every refresh exchange issues a new <code>RefreshToken</code> in the same <code>family_id</code>. Presenting a previously used or revoked refresh token immediately revokes all refresh tokens in that family.</li>
+<li><strong>Hashed client secrets &amp; tokens</strong>: Only SHA-256 digests of secrets, codes, access tokens, and refresh tokens are stored; comparisons run in constant time.</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="saml-20-single-sign-on"><a class="header" href="#saml-20-single-sign-on">SAML 2.0 Single Sign-On</a></h1>
+<p>Djangors provides pure-Rust SAML 2.0 Service Provider (SP) support in <code>djangors::saml</code> (crate <code>djangors-contrib-saml</code>). It has <strong>no C library dependencies</strong> (<code>libxml2</code> and <code>xmlsec1</code> are not needed) and verifies XML-DSig signatures in-house using <code>quick-xml</code>, W3C Exclusive Canonical XML 1.0 (<code>xml-exc-c14n#</code>), <code>der</code>, <code>rsa</code>, <code>p256</code>, and <code>sha2</code>.</p>
+<h2 id="enabling-the-feature-2"><a class="header" href="#enabling-the-feature-2">Enabling the feature</a></h2>
+<p>Add the <code>saml</code> feature to <code>djangors</code>:</p>
+<pre><code class="language-toml">[dependencies]
+djangors = { version = "0.13", features = ["saml"] }
+</code></pre>
+<h2 id="database-setup-and-identity-provider-configuration"><a class="header" href="#database-setup-and-identity-provider-configuration">Database setup and identity provider configuration</a></h2>
+<p>Create the <code>saml_identity_provider</code> table once at startup (or in a migration), import an IdP’s <code>EntityDescriptor</code> metadata XML, and insert <a href="../crates/djangors-contrib-saml/src/lib.rs"><code>SamlSpConfig</code></a> plus your replay <a href="../crates/djangors-cache/src/lib.rs"><code>Cache</code></a> (<code>Arc&lt;dyn Cache&gt;</code>) into <code>AppState</code>:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors::cache::{Cache, InMemoryCache};
+use djangors::orm::Model as _;
+use djangors::saml::{
+    create_saml_tables, saml_router, SamlIdentityProvider, SamlSpConfig,
+};
+use djangors::AppState;
+use std::sync::Arc;
+
+<span class="boring">async fn setup(db: djangors::db::Database, idp_metadata_xml: String) -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+</span>create_saml_tables(&amp;db).await?;
+
+let idp = SamlIdentityProvider::from_metadata_xml("okta", "Okta Enterprise", idp_metadata_xml)?;
+idp.save(&amp;db).await?;
+
+let replay_cache: Arc&lt;dyn Cache&gt; = Arc::new(InMemoryCache::new(10_000));
+let sp_config = SamlSpConfig::new(
+    "https://app.example.com/saml/okta/metadata",
+    "https://app.example.com",
+);
+
+let state = AppState::new()
+    .insert(db)
+    .insert(sp_config)
+    .insert(replay_cache);
+
+let router = saml_router();
+<span class="boring">let _ = (state, router);
+</span><span class="boring">Ok(())
+</span><span class="boring">}
+</span><span class="boring">}</span></code></pre>
+<h2 id="endpoints-1"><a class="header" href="#endpoints-1">Endpoints</a></h2>
+<p><code>saml_router()</code> mounts three routes keyed by <code>{idp}</code> slug:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Route</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><code>GET /saml/{idp}/metadata</code></td><td>Serves SP SAML 2.0 <code>EntityDescriptor</code> metadata (<code>WantAssertionsSigned="true"</code>)</td></tr>
+<tr><td><code>GET /saml/{idp}/login</code></td><td>Initiates SP-initiated AuthnRequest (HTTP-Redirect binding + session <code>RelayState</code>)</td></tr>
+<tr><td><code>POST /saml/{idp}/acs</code></td><td>Assertion Consumer Service: verifies XML signature, claims, replay cache, JIT user creation, and login</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="admin-registration-1"><a class="header" href="#admin-registration-1">Admin registration</a></h2>
+<p>When the <code>admin</code> feature is enabled, IdP configurations can be added and rotated directly in the admin site:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>djangors::saml::register_saml_admin(&amp;admin_site);
+<span class="boring">}</span></code></pre>
+<h2 id="attribute-mapping--jit-user-creation"><a class="header" href="#attribute-mapping--jit-user-creation">Attribute mapping &amp; JIT user creation</a></h2>
+<p><code>SamlIdentityProvider::attribute_map_json</code> deserializes into <code>SamlAttributeMap</code> (candidate SAML attribute names for <code>username</code>, <code>email</code>, <code>first_name</code>, and <code>last_name</code>, falling back to <code>&lt;NameID&gt;</code>). When <code>jit_create_users</code> is <code>true</code>, new users are created with an unusable password (<code>"!"</code>).</p>
+<h2 id="security-guarantees"><a class="header" href="#security-guarantees">Security guarantees</a></h2>
+<ul>
+<li><strong>No unsigned or partially signed assertions</strong>: At least one direct-child <code>&lt;ds:Signature&gt;</code> must cover <code>&lt;samlp:Response&gt;</code> (<code>#&lt;response_id&gt;</code>) and/or the sole <code>&lt;saml:Assertion&gt;</code> (<code>#&lt;assertion_id&gt;</code>).</li>
+<li><strong>Pinned certificates only</strong>: Signatures verify strictly against X.509 certificates stored on <code>SamlIdentityProvider</code> — embedded <code>&lt;KeyInfo&gt;</code> certificates inside untrusted responses are ignored.</li>
+<li><strong>Anti-XSW and anti-XXE</strong>: <code>&lt;!DOCTYPE</code>, entity references, duplicate <code>ID</code> attributes across the document, <code>&lt;EncryptedAssertion&gt;</code>, nested <code>&lt;Assertion&gt;</code> wrappers, and multiple assertions are rejected before claim extraction.</li>
+<li><strong>Strict claim &amp; replay enforcement</strong>: Validates <code>StatusCode == Success</code>, <code>Destination</code>, <code>Audience</code>, <code>Recipient</code>, <code>NotBefore</code>, <code>NotOnOrAfter</code>, <code>InResponseTo</code>, and marks each <code>Assertion/@ID</code> once via atomic <code>Cache::add</code>.</li>
+<li><strong>Supported signature algorithms</strong>: <code>RSA-SHA256</code>, <code>RSA-SHA512</code>, and <code>ECDSA-P256-SHA256</code> with <code>xml-exc-c14n#</code> and <code>enveloped-signature</code> transforms. (IdPs requiring SHA-1, XML encryption, or DSA signatures are rejected.)</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="ldap--active-directory-authentication"><a class="header" href="#ldap--active-directory-authentication">LDAP / Active Directory Authentication</a></h1>
+<p>Djangors provides an optional LDAP / Active Directory authentication backend (<code>LdapBackend</code>) implementing <code>AuthBackend</code>. It runs purely on <code>rustls</code> (via <code>ldap3</code> with the <code>ring</code> crypto provider — zero OpenSSL or C toolchain dependencies).</p>
+<h2 id="enabling-the-feature-3"><a class="header" href="#enabling-the-feature-3">Enabling the feature</a></h2>
+<p><code>ldap</code> is off by default. Enable it on the <code>djangors</code> facade or directly on <code>djangors-auth</code>:</p>
+<pre><code class="language-toml">[dependencies]
+djangors = { version = "0.12.0", features = ["ldap"] }
+</code></pre>
+<h2 id="configuration"><a class="header" href="#configuration">Configuration</a></h2>
+<p>Build an [<code>LdapConfig</code>] and pass it to [<code>LdapBackend</code>]:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_auth::ldap::{LdapAttributeMap, LdapBackend, LdapConfig, LdapGroupMapping};
+use std::collections::HashMap;
+
+let mut cfg = LdapConfig::new(
+    "ldaps://ldap.example.com:636",
+    "cn=service-ro,ou=ServiceAccounts,dc=example,dc=com",
+    std::env::var("LDAP_BIND_PASSWORD")?,
+    "ou=People,dc=example,dc=com",
+)
+.with_user_filter("(sAMAccountName={username})");
+
+cfg.attributes = LdapAttributeMap {
+    username_attr: "sAMAccountName".into(),
+    email_attr: "mail".into(),
+    first_name_attr: "givenName".into(),
+    last_name_attr: "sn".into(),
+    groups_attr: "memberOf".into(),
+};
+
+cfg.group_mapping = LdapGroupMapping {
+    staff_groups: vec!["Engineering".into()],
+    superuser_groups: vec!["CN=Domain Admins,OU=Groups,DC=example,DC=com".into()],
+    group_map: HashMap::from([("Editors".into(), "editors".into())]),
+    sync_all_groups: false,
+};
+
+let backend = LdapBackend::new(cfg);
+<span class="boring">}</span></code></pre>
+<h3 id="tls-and-custom-ca-certificates"><a class="header" href="#tls-and-custom-ca-certificates">TLS and custom CA certificates</a></h3>
+<ul>
+<li>By default, <code>require_tls = true</code> rejects plaintext <code>ldap://</code> URLs unless <code>starttls = true</code>.</li>
+<li><code>ldap3</code> 0.12’s <code>tls-rustls-ring</code> backend validates certificates against the operating system trust store. If your directory uses an internal CA, validate the PEM file path with <code>cfg.ca_file = Some(...)</code> and point <code>SSL_CERT_FILE=/path/to/ca.pem</code> in your process environment so <code>rustls</code> loads it into the root store.</li>
+</ul>
+<h2 id="security-guarantees-1"><a class="header" href="#security-guarantees-1">Security guarantees</a></h2>
+<ul>
+<li><strong>No anonymous binds</strong>: empty passwords and blank usernames are rejected immediately before dialing the LDAP server.</li>
+<li><strong>Injection protection</strong>: <code>{username}</code> placeholders in <code>user_filter</code> are escaped per RFC 4515 (<code>escape_filter_value</code>), and <code>{dn_username}</code> placeholders are escaped per RFC 4514 (<code>escape_dn_value</code>).</li>
+<li><strong>Unambiguous search</strong>: login fails closed unless the directory search returns exactly one entry.</li>
+<li><strong>Unusable local passwords</strong>: just-in-time provisioned users receive <code>"!"</code> as their password hash so <code>ModelBackend</code> cannot authenticate them locally.</li>
+</ul>
+<h2 id="live-integration-testing"><a class="header" href="#live-integration-testing">Live integration testing</a></h2>
+<p>Unit tests for escaping, attribute mapping, and JIT user/group sync run without a directory server. To exercise live bind + search authentication, set:</p>
+<pre><code class="language-bash">LDAP_URL=ldaps://ldap.example.com:636 \
+LDAP_BIND_DN="cn=admin,dc=example,dc=com" \
+LDAP_BIND_PASSWORD="..." \
+LDAP_BASE_DN="dc=example,dc=com" \
+LDAP_TEST_USER=jdoe \
+LDAP_TEST_PASSWORD="..." \
+cargo test -p djangors-auth --features ldap live_ldap
+</code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="rest-framework"><a class="header" href="#rest-framework">REST Framework</a></h1>
 <p><code>djangors-rest</code> is the API layer: ViewSets that turn a model into CRUD routes,
@@ -7057,6 +7507,34 @@ than trusting the submitted form, so a scoped add-form can never plant a row els
 <a href="#multi-tenancy-djangors-contrib-tenancy">Multi-tenancy guide</a> walks through the reasoning, the “not stored on the
 admin” design, and the fail-closed resolution rules in full — read it before writing a custom
 <code>ModelAdmin</code> for a scoped site.</p>
+<h2 id="admin-impersonation"><a class="header" href="#admin-impersonation">Admin impersonation</a></h2>
+<p><code>djangors_auth::impersonation</code> allows active superusers to temporarily act as another non-superuser account (<code>POST /admin/impersonate/{user_id}</code> and <code>POST /admin/impersonate/stop</code>) via <code>impersonation_router()</code>:</p>
+<ul>
+<li>Only active superusers can start impersonation; superusers cannot be impersonated and nesting is refused.</li>
+<li><code>Auth&lt;User&gt;</code> returns the target user while <code>req.impersonator()</code> (<code>RequestImpersonation</code> trait) returns the real superuser.</li>
+<li>Every start and stop is logged to <code>auth_impersonation_log</code> (create once via <code>create_impersonation_log_table</code>).</li>
+<li>Sensitive actions (such as password changes via <code>change_password</code>, or routes guarded with the <code>NotImpersonating</code> extractor / <code>ensure_not_impersonating</code>) are rejected with <code>403 Forbidden</code> while impersonating.</li>
+<li><code>impersonation_banner_html(&amp;req)</code> renders a stop-impersonating banner (included automatically in the admin index template).</li>
+</ul>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors::auth::{create_impersonation_log_table, impersonation_router, NotImpersonating};
+use djangors::core::{DjangorsError, PathParams, Request, Response, Router, StatusCode};
+
+async fn change_email(
+    req: Request,
+    _params: PathParams,
+) -&gt; Result&lt;Response, DjangorsError&gt; {
+    let _not_imp = NotImpersonating::from_request(&amp;req).await?;
+    Ok(Response::text(StatusCode::OK, "updated"))
+}
+
+<span class="boring">async fn example(db: &amp;djangors::db::Database) -&gt; Result&lt;(), djangors::auth::AuthError&gt; {
+</span>create_impersonation_log_table(db).await?;
+let _router = Router::new().mount("", impersonation_router());
+<span class="boring">Ok(())
+</span><span class="boring">}
+</span><span class="boring">}</span></code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="testing"><a class="header" href="#testing">Testing</a></h1>
 <p>Djangors supports two testing paradigms: <strong>in-process route testing</strong> via <code>djangors-test</code> (<code>TestClient</code>) and <strong>real-socket integration testing</strong> over localhost TCP sockets.</p>
@@ -7596,7 +8074,7 @@ codegen-units = 1
 </code></pre>
 <p>When depending on the <code>djangors</code> facade crate, all subsystems and both database backends (<code>postgres</code> and <code>sqlite</code>) are enabled by default. To minimize compile times and binary size in production, disable default features and opt into only the database backend and subsystems your application uses:</p>
 <pre><code class="language-toml">[dependencies]
-djangors = { version = "0.12", default-features = false, features = [
+djangors = { version = "0.13", default-features = false, features = [
     "postgres",   # or "sqlite" — drops libsqlite3-sys when only "postgres" is enabled
     "migrations",
     "rest",
@@ -7943,6 +8421,37 @@ the <code>X-CSRFToken</code> header.</p>
 before CSRF checks run. <code>cors_layer</code> rejects <code>"*"</code> combined with <code>allow_credentials(true)</code> because
 browsers forbid wildcard origins with credentials, and <code>dj check --deploy</code> warns if
 <code>cors_allowed_origins</code> contains <code>"*"</code> when <code>debug</code> is <code>false</code>.</p>
+<h2 id="cross-origin-isolation--permissions-policy"><a class="header" href="#cross-origin-isolation--permissions-policy">Cross-Origin Isolation &amp; Permissions-Policy</a></h2>
+<p><code>SecurityHeadersLayer</code> sets <code>Cross-Origin-Opener-Policy: same-origin</code> and
+<code>Cross-Origin-Resource-Policy: same-origin</code> by default (while leaving
+<code>Cross-Origin-Embedder-Policy</code> off so third-party embeds continue to work).
+Use <code>SecurityHeadersBuilder</code> and <code>PermissionsPolicyBuilder</code> to customize them:</p>
+<pre class="playground"><code class="language-rust compile"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span><span class="boring">use djangors_core::middleware::{PermissionsPolicyBuilder, SecurityHeadersBuilder};
+</span><span class="boring">fn example() {
+</span>let layer = SecurityHeadersBuilder::new()
+    .permissions_policy(
+        PermissionsPolicyBuilder::new()
+            .feature("camera", &amp;[])
+            .feature("geolocation", &amp;["self"]),
+    )
+    .coep(Some("require-corp"))
+    .build();
+<span class="boring">let _ = layer;
+</span><span class="boring">}
+</span><span class="boring">}</span></code></pre>
+<h2 id="per-request-csp-nonces"><a class="header" href="#per-request-csp-nonces">Per-Request CSP Nonces</a></h2>
+<p>Call <code>.with_nonce()</code> on <code>CspBuilder</code> or <code>CspLayer</code> to generate a fresh 16-byte cryptographic
+nonce per request, store <code>CspNonce</code> in request extensions, and add <code>'nonce-...'</code> to
+<code>script-src</code> and <code>style-src</code>. Live-reload <code>&lt;script&gt;</code> tags receive the nonce automatically,
+and templates can read it with <code>{{ csp_nonce() }}</code> when <code>_csp_nonce</code> is passed in the template
+context.</p>
+<h2 id="honeypot-and-minimum-submit-time"><a class="header" href="#honeypot-and-minimum-submit-time">Honeypot and Minimum Submit Time</a></h2>
+<p>In <code>djangors-forms</code>, <code>HoneypotField</code> renders a hidden field that must stay empty,
+<code>MinSubmitTime</code> embeds an HMAC-signed timestamp to reject submissions faster than N seconds,
+and <code>BotGuard</code> combines both with <code>is_suspicious_user_agent</code> so you can escalate to
+<code>CaptchaField</code> only when a submission looks suspicious.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="connection-pool-tuning"><a class="header" href="#connection-pool-tuning">Connection Pool Tuning</a></h1>
 <p>This guide records the 2026-07-27 load test of the real <code>examples/school</code> Djangors admin,
@@ -8873,11 +9382,11 @@ let db = djangors_db::Database::connect(&amp;config).await?;
 <h3 id="cargo-feature-flags-postgres-and-sqlite"><a class="header" href="#cargo-feature-flags-postgres-and-sqlite">Cargo Feature Flags (<code>postgres</code> and <code>sqlite</code>)</a></h3>
 <p>At compile time, <code>djangors-db</code> (and the <code>djangors</code> facade crate) gate each SQL driver behind its own Cargo feature flag (<code>postgres</code> and <code>sqlite</code>, both enabled by default). If your production deployment targets only one database engine, disable default features and enable only the backend you need to drop the unused driver (such as bundled <code>libsqlite3-sys</code> or <code>sqlx-postgres</code>) from your dependency graph and release binary:</p>
 <pre><code class="language-toml"># PostgreSQL-only build (drops sqlx-sqlite and libsqlite3-sys)
-djangors = { version = "0.12", default-features = false, features = ["postgres", "rest"] }
+djangors = { version = "0.13", default-features = false, features = ["postgres", "rest"] }
 
 # Or when depending on djangors-db / djangors-orm directly:
-djangors-db = { version = "0.12", default-features = false, features = ["postgres"] }
-djangors-orm = { version = "0.12", default-features = false, features = ["postgres"] }
+djangors-db = { version = "0.13", default-features = false, features = ["postgres"] }
+djangors-orm = { version = "0.13", default-features = false, features = ["postgres"] }
 </code></pre>
 <blockquote class="blockquote-tag blockquote-tag-note">
 <p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
@@ -10218,143 +10727,51 @@ let ctx = minijinja::context! {
 &lt;h1&gt;{{ "welcome" | trans(locales, locale) }}&lt;/h1&gt;
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
-<h1 id="sessions-and-csrf-protection"><a class="header" href="#sessions-and-csrf-protection">Sessions and CSRF Protection</a></h1>
-<p>Djangors provides a client-side, signed-cookie session engine and double-submit CSRF (Cross-Site Request Forgery) protection, mirroring Django’s design patterns.</p>
-<hr>
-<h2 id="signed-cookie-sessions"><a class="header" href="#signed-cookie-sessions">Signed-Cookie Sessions</a></h2>
-<p>Djangors stores session data directly in the client’s browser using signed cookies.</p>
-<h3 id="how-it-works-1"><a class="header" href="#how-it-works-1">How it Works</a></h3>
-<ol>
-<li><strong>Serialization</strong>: Session key-value data is serialized to JSON.</li>
-<li><strong>Encoding</strong>: The JSON payload is Base64-encoded.</li>
-<li><strong>Signing</strong>: Djangors signs the payload with HMAC-SHA256 using the application’s secret key (<code>SECRET_KEY</code>).</li>
-<li><strong>Storage</strong>: The combined payload and signature are sent to the client as a cookie (defaults to <code>"djangors_sessionid"</code>).</li>
-</ol>
-<p>At the start of a request, the <code>SessionLayer</code> middleware extracts the cookie, verifies the HMAC signature to ensure it hasn’t been tampered with, deserializes the JSON data, and inserts a request-scoped <code>Session</code> handle into the request’s extension map.</p>
-<h3 id="code-example"><a class="header" href="#code-example">Code Example</a></h3>
-<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
-</span><span class="boring">fn main() {
-</span>// Accessing the Session handle in a view
-let session = req.session();
-
-// Write value to session
-session.set("user_id", 42i64);
-session.set("theme", "dark".to_string());
-
-// Read value from session
-if let Some(user_id) = session.get::&lt;i64&gt;("user_id") {
-    println!("Logged in user: {user_id}");
-}
-
-// Remove a specific key
-session.remove("theme");
-<span class="boring">}</span></code></pre>
-<h3 id="security-flags"><a class="header" href="#security-flags">Security Flags</a></h3>
-<p>Cookie configurations are managed by <code>SignedCookieStore</code> with safe defaults:</p>
+<h1 id="sessions"><a class="header" href="#sessions">Sessions</a></h1>
+<p>Djangors provides pluggable session storage through <code>djangors-sessions</code> (<code>djangors::sessions</code>).</p>
+<h2 id="stores"><a class="header" href="#stores">Stores</a></h2>
 <ul>
-<li><strong><code>HttpOnly</code></strong>: Set to <code>true</code> by default. This prevents client-side scripts from reading the cookie, mitigating Cross-Site Scripting (XSS) session theft.</li>
-<li><strong><code>Secure</code></strong>: Set to <code>true</code> if your application is configured to require HTTPS.</li>
-<li><strong><code>SameSite</code></strong>: Set to <code>Lax</code> to balance convenience with cross-site request security.</li>
-<li><strong><code>max_age</code></strong>: Default cookie expiration duration is 2 weeks.</li>
+<li><strong><code>SignedCookieStore</code></strong> (default): stores session data in an HMAC-SHA256 signed cookie. No database or Redis required.</li>
+<li><strong><code>DatabaseStore</code></strong>: stores session data in the <code>djangors_session</code> table. Session keys are 32 random bytes, stored as SHA-256 hashes in the database. <code>last_seen_at</code> is updated at most once per minute.</li>
+<li><strong><code>RedisStore</code></strong> (requires the <code>redis</code> feature): stores session data in Redis with automatic TTL expiration and per-user session tracking.</li>
 </ul>
-<h3 id="session-rotation-cycle_key"><a class="header" href="#session-rotation-cycle_key">Session Rotation (<code>cycle_key</code>)</a></h3>
-<p>To prevent session fixation attacks (where an attacker provides a known session ID to a victim and waits for them to log in), call <code>session.cycle_key()</code> upon user login or logout:</p>
 <pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>// Authenticate user
-session.cycle_key(); // Generates a new internal session identity
-session.set("user_id", new_user_id);
-<span class="boring">}</span></code></pre>
-<hr>
-<h2 id="programmatic-session-access"><a class="header" href="#programmatic-session-access">Programmatic Session Access</a></h2>
-<h3 id="sessionis_empty"><a class="header" href="#sessionis_empty"><code>Session::is_empty()</code></a></h3>
-<p>Returns <code>true</code> when the session holds no application data (only the internal <code>_session_key</code>). Useful
-for “do I need to write a <code>Set-Cookie</code> at all?” checks:</p>
+</span>use std::sync::Arc;
+use djangors::sessions::{DatabaseStore, SessionLayer};
+
+<span class="boring">async fn example(db: djangors::db::Database) {
+</span>let store = DatabaseStore::new(db).with_secure(true);
+let layer = SessionLayer::new(store);
+<span class="boring">}
+</span><span class="boring">}</span></code></pre>
+<h2 id="remember-me-login_with"><a class="header" href="#remember-me-login_with">Remember Me (<code>login_with</code>)</a></h2>
+<p>Use <code>login_with</code> to control whether a session persists across browser restarts:</p>
 <pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>let session = Session::new_empty();
-assert!(session.is_empty());
+</span>use djangors::auth::{login_with, LoginOptions, User};
+use djangors::core::Request;
 
-session.set("theme", "dark".to_string());
-assert!(!session.is_empty());
-<span class="boring">}</span></code></pre>
-<h3 id="manual-encodedecode-with-signedcookiestore"><a class="header" href="#manual-encodedecode-with-signedcookiestore">Manual encode/decode with <code>SignedCookieStore</code></a></h3>
-<p><code>SignedCookieStore</code> encodes and decodes sessions independently of the middleware — handy for custom
-middleware or code that must set the cookie header itself instead of delegating to <code>SessionLayer</code>.</p>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Method</th><th>Signature</th><th>Notes</th></tr>
-</thead>
-<tbody>
-<tr><td><code>store.encode(&amp;session)</code></td><td><code>fn(&amp;self, &amp;Session) -&gt; String</code></td><td>Serializes, base64-encodes, signs (HMAC-SHA256), returns <code>"&lt;b64 payload&gt;.&lt;b64 expiry&gt;.&lt;b64 hmac&gt;"</code></td></tr>
-<tr><td><code>store.decode(cookie_value)</code></td><td><code>fn(&amp;self, &amp;str) -&gt; Option&lt;Session&gt;</code></td><td>Verifies signature + expiry, then decodes; <code>None</code> for missing/malformed/tampered/expired cookies</td></tr>
-</tbody>
-</table>
-</div>
-<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
-</span><span class="boring">fn main() {
-</span>use djangors_sessions::{Session, SignedCookieStore};
+<span class="boring">async fn example(req: Request, user: User) -&gt; Result&lt;(), djangors::auth::AuthError&gt; {
+</span>// Browser session: omits Max-Age on Set-Cookie, expires when the browser closes.
+login_with(&amp;req, &amp;user, LoginOptions::new(false)).await?;
 
-let store = SignedCookieStore::new(b"my-32-byte-minimum-secret-key!!");
-let session = Session::new_empty();
-session.set("user_id", 42i64);
-
-let cookie_value = store.encode(&amp;session);       // "&lt;b64 payload&gt;.&lt;b64 expiry&gt;.&lt;b64 hmac&gt;"
-let restored = store.decode(&amp;cookie_value);       // Some(session) — data verified intact
-assert_eq!(restored.unwrap().get::&lt;i64&gt;("user_id"), Some(42));
-<span class="boring">}</span></code></pre>
-<h3 id="sessionservice-the-layers-service-type"><a class="header" href="#sessionservice-the-layers-service-type"><code>SessionService</code>: the layer’s service type</a></h3>
-<p><code>SessionLayer</code> is a
-<a href="https://docs.rs/tower/latest/tower/trait.Layer.html"><code>tower::Layer</code></a>; wrapping an inner service
-yields a <code>SessionService&lt;S&gt;</code> (<code>djangors_sessions::SessionService</code>) as the concrete service type.
-This is the Tower middleware that does the per-request work: read the <code>Cookie</code> header, decode +
-verify it via the store, insert the <code>Session</code> into the request’s <code>Extensions</code>, then write
-<code>Set-Cookie</code> back on the response when the session was modified or newly created.</p>
-<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
-</span><span class="boring">fn main() {
-</span>use djangors_sessions::{SessionService, SessionLayer, SignedCookieStore};
-use tower::Layer;
-
-fn stack(inner: djangors_core::router::RouterService) -&gt; SessionService&lt;djangors_core::router::RouterService&gt; {
-    SessionLayer::new(SignedCookieStore::new(b"my-32-byte-minimum-secret-key!!"))
-        .layer(inner)
-}
-<span class="boring">}</span></code></pre>
-<hr>
-<h2 id="csrf-protection"><a class="header" href="#csrf-protection">CSRF Protection</a></h2>
-<p>Djangors uses a double-submit cookie scheme to protect against Cross-Site Request Forgery (CSRF).</p>
-<h3 id="the-mechanism"><a class="header" href="#the-mechanism">The Mechanism</a></h3>
-<ol>
-<li>The <code>CsrfLayer</code> middleware reads the request cookie named <code>csrftoken</code>. If not present, it generates a cryptographically secure random token and sets it as the <code>csrftoken</code> cookie.</li>
-<li>For unsafe methods (<code>POST</code>, <code>PUT</code>, <code>PATCH</code>, <code>DELETE</code>), Djangors requires the client to submit the same CSRF token value in the request.</li>
-<li>The server performs a constant-time comparison (using <code>constant_time_eq</code>) between the cookie value and the submitted request value.</li>
-</ol>
-<h3 id="submitting-the-token"><a class="header" href="#submitting-the-token">Submitting the Token</a></h3>
-<p>Clients can submit the CSRF token in one of two ways, both of which are accepted by Djangors:</p>
-<h4 id="1-plain-html-forms-csrfmiddlewaretoken"><a class="header" href="#1-plain-html-forms-csrfmiddlewaretoken">1. Plain HTML Forms (<code>csrfmiddlewaretoken</code>)</a></h4>
-<p>When rendering a form, include the token value as a hidden input parameter named <code>csrfmiddlewaretoken</code>.</p>
-<pre><code class="language-html">&lt;form method="post" action="/submit"&gt;
-  &lt;!-- Renders a hidden field with the CSRF token --&gt;
-  &lt;input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}"&gt;
-  &lt;button type="submit"&gt;Submit&lt;/button&gt;
-&lt;/form&gt;
+// Persistent session: sets Max-Age = settings.session_remember_age (default 30 days).
+login_with(&amp;req, &amp;user, LoginOptions::new(true)).await?;
+<span class="boring">Ok(())
+</span><span class="boring">}
+</span><span class="boring">}</span></code></pre>
+<h2 id="managing-active-sessions"><a class="header" href="#managing-active-sessions">Managing Active Sessions</a></h2>
+<p>With <code>DatabaseStore</code> or <code>RedisStore</code>, users can inspect and revoke their active sessions:</p>
+<ul>
+<li><code>list_sessions(store, &amp;user)</code> returns active <code>SessionRecord</code> entries (IP, user agent, timestamps).</li>
+<li><code>revoke_session(store, &amp;user, key_or_hash)</code> deletes a specific session owned by <code>user</code>.</li>
+<li><code>logout_other_sessions(&amp;req)</code> rotates the current session key and invalidates all other sessions (also works in signed-cookie mode via the user’s <code>session_generation</code> counter).</li>
+</ul>
+<h2 id="cleaning-up-expired-sessions"><a class="header" href="#cleaning-up-expired-sessions">Cleaning Up Expired Sessions</a></h2>
+<p>Run <code>dj clearsessions</code> periodically to remove expired rows from <code>djangors_session</code>:</p>
+<pre><code class="language-bash">dj clearsessions
 </code></pre>
-<p>During a form post (<code>application/x-www-form-urlencoded</code>), the Djangors router parses the form body, extracts <code>csrfmiddlewaretoken</code>, and compares it against the expected token.</p>
-<h4 id="2-javascript-clients-x-csrftoken-header"><a class="header" href="#2-javascript-clients-x-csrftoken-header">2. Javascript Clients (<code>X-CSRFToken</code> Header)</a></h4>
-<p>For AJAX/fetch requests (such as SPA clients sending JSON bodies), the <code>csrftoken</code> cookie is intentionally <strong>not</strong> marked <code>HttpOnly</code> so that client-side JavaScript can read it.</p>
-<p>JS clients must extract the value from the cookie and send it in the <strong><code>X-CSRFToken</code></strong> header with their request.</p>
-<pre><code class="language-javascript">// Example fetch request
-fetch('/api/data', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    'X-CSRFToken': getCookie('csrftoken')
-  },
-  body: JSON.stringify({ key: 'value' })
-});
-</code></pre>
-<p>The CSRF middleware intercepts the request, reads the header, and validates it.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="static-files"><a class="header" href="#static-files">Static Files</a></h1>
 <p>Managing CSS, JavaScript, images, and other assets is handled by the <code>djangors-staticfiles</code> subsystem. This provides dev-time asset serving, a pluggable storage model, and a production <code>collectstatic</code> asset pipeline that generates content-hashed assets and a tracking manifest.</p>
@@ -10904,7 +11321,7 @@ you — the crate renders exactly what the trait returns.</p>
 <p>You want to perform a custom bulk action on selected rows in the Djangors admin changelist (e.g. marking selected articles as published or resetting user accounts).</p>
 <h2 id="solution"><a class="header" href="#solution">Solution</a></h2>
 <p>Define an <code>AdminAction</code> struct specifying the action name, user-facing label, confirmation requirement, and an async handler function. Register it on your <code>ModelAdminConfig</code> passed to <code>AdminSite::register_with</code>.</p>
-<h2 id="code-example-1"><a class="header" href="#code-example-1">Code Example</a></h2>
+<h2 id="code-example"><a class="header" href="#code-example">Code Example</a></h2>
 <pre class="playground"><code class="language-rust compile"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span><span class="boring">use djangors_orm::Model;
@@ -10955,7 +11372,7 @@ fn register_admin(site: &amp;mut AdminSite) {
 <p>You want to send plain-text or HTML emails in your Djangors application using SMTP, or write outgoing messages to local disk during development.</p>
 <h2 id="solution-1"><a class="header" href="#solution-1">Solution</a></h2>
 <p>Use <code>djangors_mail::Message</code> and configure a backend implementing the <code>MailBackend</code> trait, such as <code>SmtpBackend</code> (powered by <code>lettre</code> with <code>rustls</code> TLS — zero OpenSSL or <code>native-tls</code> C dependencies), <code>FileBackend</code>, <code>ConsoleBackend</code>, or <code>InMemoryBackend</code>. Note that <code>Message</code> is <code>#[non_exhaustive]</code>; construct it via <code>Message::new(to, from, subject, text_body)</code> and attach optional HTML bodies with <code>.html_body(...)</code>.</p>
-<h2 id="code-example-2"><a class="header" href="#code-example-2">Code Example</a></h2>
+<h2 id="code-example-1"><a class="header" href="#code-example-1">Code Example</a></h2>
 <h3 id="1-sending-via-smtp-production"><a class="header" href="#1-sending-via-smtp-production">1. Sending via SMTP (Production)</a></h3>
 <pre class="playground"><code class="language-rust compile"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
@@ -11030,7 +11447,7 @@ security requirements:</p>
 <li><strong>No <code>Set-Cookie</code></strong>: responses setting cookies (e.g. session cookies) are <strong>never</strong> cached,
 regardless of the opt-in marker.</li>
 </ol>
-<h2 id="code-example-3"><a class="header" href="#code-example-3">Code Example</a></h2>
+<h2 id="code-example-2"><a class="header" href="#code-example-2">Code Example</a></h2>
 <h3 id="1-opting-a-djangors-view-into-response-caching"><a class="header" href="#1-opting-a-djangors-view-into-response-caching">1. Opting a Djangors View into Response Caching</a></h3>
 <p>Call <code>.cacheable()</code> on any <code>djangors_core::Response</code> and wrap your <code>RouterService</code> with <code>CacheLayer</code>:</p>
 <pre class="playground"><code class="language-rust compile"><span class="boring">#![allow(unused)]
@@ -11093,7 +11510,7 @@ async fn build_and_call_cached_service() {
 <p>You want to offload long-running work (such as sending emails, processing uploads, or generating reports) to an asynchronous background task queue.</p>
 <h2 id="solution-3"><a class="header" href="#solution-3">Solution</a></h2>
 <p>Annotate an async task handler with <code>#[task]</code> from <code>djangors_tasks</code>. Enqueue tasks into the database queue with <code>enqueue()</code>, and run the background task consumer using <code>Worker</code>.</p>
-<h2 id="code-example-4"><a class="header" href="#code-example-4">Code Example</a></h2>
+<h2 id="code-example-3"><a class="header" href="#code-example-3">Code Example</a></h2>
 <pre class="playground"><code class="language-rust compile"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>use serde::{Deserialize, Serialize};
@@ -11139,7 +11556,7 @@ pub async fn start_background_worker(db: Database) {
 <p>You want to stream real-time updates or events to web browsers over Server-Sent Events (SSE).</p>
 <h2 id="solution-4"><a class="header" href="#solution-4">Solution</a></h2>
 <p>Create a streaming response using <code>StreamingResponse::sse(stream)</code> or register an SSE endpoint on a <code>Router</code> using <code>.sse(path, handler)</code>.</p>
-<h2 id="code-example-5"><a class="header" href="#code-example-5">Code Example</a></h2>
+<h2 id="code-example-4"><a class="header" href="#code-example-4">Code Example</a></h2>
 <pre class="playground"><code class="language-rust compile">use async_stream::stream;
 use tokio_stream::StreamExt;
 use djangors_core::{Request, PathParams, DjangorsError, Router, DjangorsSettings, Djangors};
@@ -11308,7 +11725,7 @@ its timing and a warning for each repeated one.</p>
 <h3 id="1-enable-the-feature"><a class="header" href="#1-enable-the-feature">1. Enable the feature</a></h3>
 <p>The panel is behind the <code>debug-panel</code> Cargo feature, which is off by default:</p>
 <pre><code class="language-toml">[dependencies]
-djangors = { version = "0.12", features = ["debug-panel"] }
+djangors = { version = "0.13", features = ["debug-panel"] }
 </code></pre>
 <h3 id="2-wrap-your-router-with-settings"><a class="header" href="#2-wrap-your-router-with-settings">2. Wrap your router with settings</a></h3>
 <p><code>DebugPanelLayer::for_settings(&amp;settings)</code> enables the panel only when <code>settings.debug</code>
@@ -11544,10 +11961,10 @@ OpenTelemetry code.</p>
 <h2 id="enable-the-feature"><a class="header" href="#enable-the-feature">Enable the feature</a></h2>
 <p>Turn on <code>otel</code> on the facade crate:</p>
 <pre><code class="language-toml">[dependencies]
-djangors = { version = "0.12", features = ["otel"] }
+djangors = { version = "0.13", features = ["otel"] }
 </code></pre>
 <p>If you depend on <code>djangors-core</code> directly, enable <code>otel</code> there instead.</p>
-<h2 id="code-example-6"><a class="header" href="#code-example-6">Code Example</a></h2>
+<h2 id="code-example-5"><a class="header" href="#code-example-5">Code Example</a></h2>
 <pre class="playground"><code class="language-rust illustrative">use djangors::core::logging::init_otel_logging;
 
 #[tokio::main]
@@ -11560,7 +11977,7 @@ async fn main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
 }</code></pre>
 <p>The guard must stay alive until shutdown. If you drop it early, spans recorded
 afterwards are not exported.</p>
-<h2 id="configuration"><a class="header" href="#configuration">Configuration</a></h2>
+<h2 id="configuration-1"><a class="header" href="#configuration-1">Configuration</a></h2>
 <p>Export is configured with the standard OpenTelemetry environment variables:</p>
 <div class="table-wrapper">
 <table>
@@ -11991,7 +12408,7 @@ Ok(task_id)
 <p>You want to translate text strings in HTML templates based on the user’s preferred locale or HTTP <code>Accept-Language</code> header.</p>
 <h2 id="solution-9"><a class="header" href="#solution-9">Solution</a></h2>
 <p>Use <code>djangors_i18n::Locales</code> to load Fluent (<code>.ftl</code>) catalogs. Pass <code>locales_value(Arc::new(locales))</code> and the resolved locale code into the MiniJinja context, and use the <code>trans</code> template filter.</p>
-<h2 id="code-example-7"><a class="header" href="#code-example-7">Code Example</a></h2>
+<h2 id="code-example-6"><a class="header" href="#code-example-6">Code Example</a></h2>
 <pre class="playground"><code class="language-rust compile"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>use std::sync::Arc;
@@ -12021,6 +12438,177 @@ fn render_translated_template(user_locale: &amp;str) -&gt; Result&lt;String, Box
     Ok(rendered)
 }
 <span class="boring">}</span></code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="user-invitations"><a class="header" href="#user-invitations">User Invitations</a></h1>
+<p><code>djangors-auth</code> provides an <code>Invitation</code> model (<code>auth_invitation</code> table) and helpers for inviting new or existing users (optionally into an organization).</p>
+<h2 id="sending-and-resending-invitations"><a class="header" href="#sending-and-resending-invitations">Sending and Resending Invitations</a></h2>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use std::time::Duration;
+use djangors::auth::{invite, resend_invitation, revoke_invitation};
+
+<span class="boring">async fn example(
+</span><span class="boring">    db: &amp;djangors::db::Database,
+</span><span class="boring">    mailer: &amp;dyn djangors::mail::MailBackend,
+</span><span class="boring">) -&gt; Result&lt;(), djangors::auth::AuthError&gt; {
+</span>let (inv, _raw_token) = invite(
+    db,
+    mailer,
+    1, // inviter user_id
+    "teammate@example.com",
+    Some(42), // optional organization_id
+    "member",
+    "https://example.com",
+    Duration::from_secs(7 * 24 * 60 * 60),
+)
+.await?;
+
+// Resending rotates the stored token hash and extends expiry:
+let (_inv, _new_token) = resend_invitation(
+    db,
+    mailer,
+    inv.id,
+    "https://example.com",
+    Duration::from_secs(7 * 24 * 60 * 60),
+)
+.await?;
+
+// Revoking prevents acceptance:
+revoke_invitation(db, inv.id).await?;
+<span class="boring">Ok(())
+</span><span class="boring">}
+</span><span class="boring">}</span></code></pre>
+<h2 id="accepting-invitations"><a class="header" href="#accepting-invitations">Accepting Invitations</a></h2>
+<p><code>accept_invitation(db, token, password, current_user)</code> handles both cases:</p>
+<ul>
+<li><strong>New user</strong>: creates an active <code>User</code> with the supplied <code>password</code> (validated against <code>default_validators()</code>).</li>
+<li><strong>Existing user</strong>: requires <code>current_user</code> to be <code>Some(user)</code> whose email matches the invitation email.</li>
+</ul>
+<p>Mount <code>djangors::auth::invitation_router()</code> to expose <code>GET /invitations/accept</code> and <code>GET /admin/invitations</code> (staff only).</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="captcha-verification"><a class="header" href="#captcha-verification">CAPTCHA Verification</a></h1>
+<p>Enable the <code>captcha</code> feature on <code>djangors</code> (or <code>djangors-forms</code>) to use Cloudflare Turnstile, hCaptcha, reCAPTCHA v2, or reCAPTCHA v3. Network failures fail closed.</p>
+<h2 id="configuration-2"><a class="header" href="#configuration-2">Configuration</a></h2>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use std::time::Duration;
+use djangors::core::AppState;
+use djangors::forms::{CaptchaConfig, CaptchaProvider};
+
+<span class="boring">fn example() {
+</span>let config = CaptchaConfig::new(
+    CaptchaProvider::Turnstile,
+    "your-site-key",
+    "your-secret-key",
+)
+.with_timeout(Duration::from_secs(5));
+
+let state = AppState::new().insert(config.build_verifier());
+<span class="boring">let _ = state;
+</span><span class="boring">}
+</span><span class="boring">}</span></code></pre>
+<h2 id="form-field-and-json-extractor"><a class="header" href="#form-field-and-json-extractor">Form Field and JSON Extractor</a></h2>
+<ul>
+<li>Use <code>CaptchaField::new(provider, site_key).render()</code> to emit the widget script tag and hidden response input in HTML forms.</li>
+<li>Use <code>djangors::core::captcha::VerifiedCaptcha</code> as an extractor in JSON API handlers. It reads the <code>X-Captcha-Token</code> header, or a <code>captcha_token</code> / <code>token</code> field in a JSON body, and rejects with <code>403</code> when verification fails. It lives in <code>djangors-core</code> (feature <code>captcha</code>) because <code>djangors-forms</code> sits below the HTTP layer.</li>
+<li>Use <code>AlwaysPass</code> and <code>AlwaysFail</code> in tests.</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="signing-values-and-signed-urls"><a class="header" href="#signing-values-and-signed-urls">Signing values and signed URLs</a></h1>
+<p><code>djangors_core::signing</code> provides Django-style cryptographic signing (<code>Signer</code>, <code>TimestampSigner</code>, <code>dumps</code>/<code>loads</code>) and signed URLs (<code>sign_url</code>, <code>sign_url_for</code>, <code>SignedUrl</code>).</p>
+<p>Every signature uses HMAC-SHA256 with a key derived from the secret and a caller-supplied <strong>salt</strong> for domain separation. Tokens signed under one salt never verify under another, even when both share <code>SECRET_KEY</code>. Comparisons are constant time, and an empty key fails closed with <code>SigningError::MissingKey</code>.</p>
+<h2 id="signing-strings-and-payloads"><a class="header" href="#signing-strings-and-payloads">Signing strings and payloads</a></h2>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_core::signing::{dumps, loads, Signer, TimestampSigner};
+use std::time::Duration;
+
+<span class="boring">fn example() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+</span>let signer = Signer::new("your-secret-key", "myapp.invite")?;
+let signed = signer.sign("user-42");
+assert_eq!(signer.unsign(&amp;signed)?, "user-42");
+
+// Time-limited signing
+let ts = TimestampSigner::new("your-secret-key", "myapp.reset", Duration::from_secs(3600))?;
+let token = ts.sign("user-42");
+let value = ts.unsign(&amp;token)?;
+
+// Structured JSON payloads (with optional zlib compression)
+let packed = dumps(&amp;serde_json::json!({"org": 7}), &amp;signer, true)?;
+let decoded: serde_json::Value = loads(&amp;packed, &amp;signer)?;
+<span class="boring">Ok(())
+</span><span class="boring">}
+</span><span class="boring">}</span></code></pre>
+<h2 id="key-rotation-secret_key_fallbacks"><a class="header" href="#key-rotation-secret_key_fallbacks">Key rotation (<code>SECRET_KEY_FALLBACKS</code>)</a></h2>
+<p><code>Signer::from_settings</code> and <code>TimestampSigner::from_settings</code> sign new values with <code>settings.secret_key</code> and accept signatures made with any key in <code>settings.secret_key_fallbacks</code>.</p>
+<p>Configure fallbacks in <code>djangors.toml</code>:</p>
+<pre><code class="language-toml">secret_key = "current-secret-key"
+secret_key_fallbacks = ["previous-secret-key"]
+</code></pre>
+<p>Or via <code>DJANGORS_SECRET_KEY_FALLBACKS</code> (comma-separated).</p>
+<h2 id="signed-urls"><a class="header" href="#signed-urls">Signed URLs</a></h2>
+<p><code>sign_url</code> and <code>sign_url_for</code> append <code>exp</code> and <code>sig</code> query parameters covering the HTTP method, path, sorted query pairs, and expiry timestamp. Use the <code>SignedUrl</code> extractor in handlers to reject tampered or expired links with <code>403 Forbidden</code>:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_core::signing::{sign_url_for, SignedUrl, Signer, SIGNED_URL_SALT};
+use djangors_core::{DjangorsError, PathParams, Request, Response, StatusCode};
+use std::time::Duration;
+
+async fn download(req: Request, _params: PathParams) -&gt; Result&lt;Response, DjangorsError&gt; {
+    let _verified = SignedUrl::from_request(&amp;req).await?;
+    Ok(Response::text(StatusCode::OK, "secret file contents"))
+}
+
+<span class="boring">fn make_link(secret: &amp;str) -&gt; Result&lt;String, Box&lt;dyn std::error::Error&gt;&gt; {
+</span>let signer = Signer::new(secret, SIGNED_URL_SALT)?;
+let url = sign_url_for(&amp;signer, "GET", "/files/report.pdf?v=1", Duration::from_secs(300))?;
+<span class="boring">Ok(url)
+</span><span class="boring">}
+</span><span class="boring">}</span></code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="secrets-providers"><a class="header" href="#secrets-providers">Secrets providers</a></h1>
+<p><code>djangors_core::secrets</code> (enabled by the default <code>secrets</code> feature) loads secrets from environment variables and <code>.env</code> files, and interpolates <code>${secret:NAME}</code> placeholders in settings without pulling in an HTTP client.</p>
+<p>Remote secret backends (<code>VaultProvider</code>, <code>GcpSecretManagerProvider</code>, and <code>AwsSecretsManagerProvider</code>) are opt-in behind the <code>secrets-remote</code> feature (which adds <code>reqwest</code>):</p>
+<pre><code class="language-toml">djangors = { version = "0.13", features = ["secrets-remote"] }
+# or directly on djangors-core:
+# djangors-core = { version = "0.13", features = ["secrets-remote"] }
+</code></pre>
+<p>All secret values are returned as <code>SecretString</code> (<code>secrecy::SecretString</code>), which redacts <code>Debug</code> output and zeroizes memory on drop.</p>
+<h2 id="built-in-providers"><a class="header" href="#built-in-providers">Built-in providers</a></h2>
+<ul>
+<li><code>EnvProvider</code>: reads <code>std::env::var</code>, optionally with a prefix (<code>EnvProvider::with_prefix("MYAPP_")</code>).</li>
+<li><code>DotenvProvider</code>: parses a <code>.env</code> file with <code>dotenvy</code> without mutating process-wide environment variables.</li>
+<li><code>VaultProvider</code> <em>(requires <code>features = ["secrets-remote"]</code>)</em>: reads HashiCorp Vault KV v2 secrets (<code>/v1/{mount}/data/{path}</code>) with token or AppRole authentication and automatic token/lease renewal.</li>
+<li><code>GcpSecretManagerProvider</code> <em>(requires <code>features = ["secrets-remote"]</code>)</em>: reads GCP Secret Manager versions using GCE/Cloud Run metadata-server tokens.</li>
+<li><code>AwsSecretsManagerProvider</code> <em>(requires <code>features = ["secrets-remote"]</code>)</em>: calls AWS Secrets Manager (<code>GetSecretValue</code>) using pure-Rust SigV4 signing (<code>hmac</code>/<code>sha2</code>).</li>
+<li><code>ChainSecretsProvider</code>: tries multiple providers in order.</li>
+<li><code>CachedSecretsProvider</code>: caches lookups in memory for a configurable TTL.</li>
+</ul>
+<h2 id="interpolating-settings"><a class="header" href="#interpolating-settings">Interpolating settings</a></h2>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_core::secrets::{CachedSecretsProvider, ChainSecretsProvider, DotenvProvider, EnvProvider};
+use djangors_core::settings::DjangorsSettings;
+use std::sync::Arc;
+use std::time::Duration;
+
+<span class="boring">async fn example() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+</span>let chain = Arc::new(
+    ChainSecretsProvider::new()
+        .push(Arc::new(EnvProvider::new()))
+        .push(Arc::new(DotenvProvider::optional(".env"))),
+);
+let cached = CachedSecretsProvider::new(chain, Duration::from_secs(300));
+
+let (settings, _warnings) = DjangorsSettings::load_with_secrets(&amp;cached).await?;
+settings.validate()?;
+<span class="boring">Ok(())
+</span><span class="boring">}
+</span><span class="boring">}</span></code></pre>
+<p>In <code>djangors.toml</code>:</p>
+<pre><code class="language-toml">debug = false
+secret_key = "${secret:APP_SECRET_KEY}"
+</code></pre>
 
                     </main>
 

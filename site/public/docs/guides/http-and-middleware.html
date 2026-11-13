@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-146c955f.js";
+            window.path_to_searchindex_js = "../searchindex-5c9aec32.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-86e03ec5.js"></script>
+        <script src="../toc-37bf99b9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -758,6 +758,24 @@ assert!(escaped.contains("&amp;lt;script&amp;gt;"));
 assert!(escaped.contains("&amp;amp;"));
 assert!(escaped.contains("&amp;#x27;"));
 <span class="boring">}</span></code></pre>
+<h2 id="per-route-rate-limiting-ratelimiter"><a class="header" href="#per-route-rate-limiting-ratelimiter">Per-Route Rate Limiting (<code>RateLimiter</code>)</a></h2>
+<p>Outside of <code>djangors-rest</code>, <code>djangors_core::ratelimit::RateLimiter</code> applies sliding-window rate limiting to any plain <code>Router</code> route (backed by <code>djangors-cache</code>, e.g. <code>InMemoryCache</code> or <code>RedisCache</code>):</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use std::sync::Arc;
+use std::time::Duration;
+use djangors_core::ratelimit::{ByIp, RateLimiter};
+use djangors_core::{DjangorsError, Request, Response};
+
+<span class="boring">async fn example(req: Request, limiter: RateLimiter) -&gt; Result&lt;Response, DjangorsError&gt; {
+</span>let outcome = limiter.check(&amp;req, &amp;ByIp).await?;
+if !outcome.allowed {
+    return Err(DjangorsError::TooManyRequests("rate limit exceeded".into()));
+}
+Ok(Response::text("ok"))
+<span class="boring">}
+</span><span class="boring">}</span></code></pre>
+<p>Implement <code>RateLimitKey</code> for custom keying strategies (e.g. by API key or user ID).</p>
 <h2 id="where-to-go-next"><a class="header" href="#where-to-go-next">Where to go next</a></h2>
 <ul>
 <li><a href="../tutorial/01-requests-and-responses.html">Requests and Responses tutorial</a> — the fast path to a first endpoint.</li>

@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-146c955f.js";
+            window.path_to_searchindex_js = "../searchindex-5c9aec32.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-86e03ec5.js"></script>
+        <script src="../toc-37bf99b9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -822,6 +822,21 @@ let db = routing_map.db_for::&lt;User&gt;();
 let mut buf = Vec::with_capacity(128);
 q.write_json(&amp;mut buf);
 assert!(std::str::from_utf8(&amp;buf).unwrap().contains("\"question_text\":\"Fast JSON?\""));
+<span class="boring">}</span></code></pre>
+<h2 id="json-fields"><a class="header" href="#json-fields">JSON Fields</a></h2>
+<p>Use <code>serde_json::Value</code> (or <code>Option&lt;serde_json::Value&gt;</code>) on a <code>#[derive(Model)]</code> field to store structured JSON (<code>FieldKind::Json</code> -&gt; <code>JSONB</code> on PostgreSQL, <code>TEXT</code> on SQLite):</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors::macros::Model;
+use serde_json::Value;
+
+#[derive(Model, Debug, Clone)]
+#[djangors(app = "catalog", table_name = "catalog_product")]
+pub struct Product {
+    #[djangors(primary_key, auto)]
+    pub id: i64,
+    pub attributes: Value,
+}
 <span class="boring">}</span></code></pre>
 
                     </main>

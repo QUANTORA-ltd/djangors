@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-146c955f.js";
+            window.path_to_searchindex_js = "../searchindex-5c9aec32.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-86e03ec5.js"></script>
+        <script src="../toc-37bf99b9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -462,6 +462,34 @@ than trusting the submitted form, so a scoped add-form can never plant a row els
 <a href="multi-tenancy.html">Multi-tenancy guide</a> walks through the reasoning, the “not stored on the
 admin” design, and the fail-closed resolution rules in full — read it before writing a custom
 <code>ModelAdmin</code> for a scoped site.</p>
+<h2 id="admin-impersonation"><a class="header" href="#admin-impersonation">Admin impersonation</a></h2>
+<p><code>djangors_auth::impersonation</code> allows active superusers to temporarily act as another non-superuser account (<code>POST /admin/impersonate/{user_id}</code> and <code>POST /admin/impersonate/stop</code>) via <code>impersonation_router()</code>:</p>
+<ul>
+<li>Only active superusers can start impersonation; superusers cannot be impersonated and nesting is refused.</li>
+<li><code>Auth&lt;User&gt;</code> returns the target user while <code>req.impersonator()</code> (<code>RequestImpersonation</code> trait) returns the real superuser.</li>
+<li>Every start and stop is logged to <code>auth_impersonation_log</code> (create once via <code>create_impersonation_log_table</code>).</li>
+<li>Sensitive actions (such as password changes via <code>change_password</code>, or routes guarded with the <code>NotImpersonating</code> extractor / <code>ensure_not_impersonating</code>) are rejected with <code>403 Forbidden</code> while impersonating.</li>
+<li><code>impersonation_banner_html(&amp;req)</code> renders a stop-impersonating banner (included automatically in the admin index template).</li>
+</ul>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors::auth::{create_impersonation_log_table, impersonation_router, NotImpersonating};
+use djangors::core::{DjangorsError, PathParams, Request, Response, Router, StatusCode};
+
+async fn change_email(
+    req: Request,
+    _params: PathParams,
+) -&gt; Result&lt;Response, DjangorsError&gt; {
+    let _not_imp = NotImpersonating::from_request(&amp;req).await?;
+    Ok(Response::text(StatusCode::OK, "updated"))
+}
+
+<span class="boring">async fn example(db: &amp;djangors::db::Database) -&gt; Result&lt;(), djangors::auth::AuthError&gt; {
+</span>create_impersonation_log_table(db).await?;
+let _router = Router::new().mount("", impersonation_router());
+<span class="boring">Ok(())
+</span><span class="boring">}
+</span><span class="boring">}</span></code></pre>
 
                     </main>
 

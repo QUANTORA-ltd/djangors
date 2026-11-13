@@ -205,3 +205,40 @@ Always place `cors_layer` **outside** `csrf_layer()` so preflight `OPTIONS` requ
 before CSRF checks run. `cors_layer` rejects `"*"` combined with `allow_credentials(true)` because
 browsers forbid wildcard origins with credentials, and `dj check --deploy` warns if
 `cors_allowed_origins` contains `"*"` when `debug` is `false`.
+
+## Cross-Origin Isolation & Permissions-Policy
+
+`SecurityHeadersLayer` sets `Cross-Origin-Opener-Policy: same-origin` and
+`Cross-Origin-Resource-Policy: same-origin` by default (while leaving
+`Cross-Origin-Embedder-Policy` off so third-party embeds continue to work).
+Use `SecurityHeadersBuilder` and `PermissionsPolicyBuilder` to customize them:
+
+```rust,compile
+# use djangors_core::middleware::{PermissionsPolicyBuilder, SecurityHeadersBuilder};
+# fn example() {
+let layer = SecurityHeadersBuilder::new()
+    .permissions_policy(
+        PermissionsPolicyBuilder::new()
+            .feature("camera", &[])
+            .feature("geolocation", &["self"]),
+    )
+    .coep(Some("require-corp"))
+    .build();
+# let _ = layer;
+# }
+```
+
+## Per-Request CSP Nonces
+
+Call `.with_nonce()` on `CspBuilder` or `CspLayer` to generate a fresh 16-byte cryptographic
+nonce per request, store `CspNonce` in request extensions, and add `'nonce-...'` to
+`script-src` and `style-src`. Live-reload `<script>` tags receive the nonce automatically,
+and templates can read it with `{{ csp_nonce() }}` when `_csp_nonce` is passed in the template
+context.
+
+## Honeypot and Minimum Submit Time
+
+In `djangors-forms`, `HoneypotField` renders a hidden field that must stay empty,
+`MinSubmitTime` embeds an HMAC-signed timestamp to reject submissions faster than N seconds,
+and `BotGuard` combines both with `is_suspicious_user_agent` so you can escalate to
+`CaptchaField` only when a submission looks suspicious.

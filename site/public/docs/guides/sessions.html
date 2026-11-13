@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-146c955f.js";
+            window.path_to_searchindex_js = "../searchindex-5c9aec32.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-86e03ec5.js"></script>
+        <script src="../toc-37bf99b9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -175,143 +175,51 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="sessions-and-csrf-protection"><a class="header" href="#sessions-and-csrf-protection">Sessions and CSRF Protection</a></h1>
-<p>Djangors provides a client-side, signed-cookie session engine and double-submit CSRF (Cross-Site Request Forgery) protection, mirroring Django’s design patterns.</p>
-<hr>
-<h2 id="signed-cookie-sessions"><a class="header" href="#signed-cookie-sessions">Signed-Cookie Sessions</a></h2>
-<p>Djangors stores session data directly in the client’s browser using signed cookies.</p>
-<h3 id="how-it-works"><a class="header" href="#how-it-works">How it Works</a></h3>
-<ol>
-<li><strong>Serialization</strong>: Session key-value data is serialized to JSON.</li>
-<li><strong>Encoding</strong>: The JSON payload is Base64-encoded.</li>
-<li><strong>Signing</strong>: Djangors signs the payload with HMAC-SHA256 using the application’s secret key (<code>SECRET_KEY</code>).</li>
-<li><strong>Storage</strong>: The combined payload and signature are sent to the client as a cookie (defaults to <code>"djangors_sessionid"</code>).</li>
-</ol>
-<p>At the start of a request, the <code>SessionLayer</code> middleware extracts the cookie, verifies the HMAC signature to ensure it hasn’t been tampered with, deserializes the JSON data, and inserts a request-scoped <code>Session</code> handle into the request’s extension map.</p>
-<h3 id="code-example"><a class="header" href="#code-example">Code Example</a></h3>
-<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
-</span><span class="boring">fn main() {
-</span>// Accessing the Session handle in a view
-let session = req.session();
-
-// Write value to session
-session.set("user_id", 42i64);
-session.set("theme", "dark".to_string());
-
-// Read value from session
-if let Some(user_id) = session.get::&lt;i64&gt;("user_id") {
-    println!("Logged in user: {user_id}");
-}
-
-// Remove a specific key
-session.remove("theme");
-<span class="boring">}</span></code></pre>
-<h3 id="security-flags"><a class="header" href="#security-flags">Security Flags</a></h3>
-<p>Cookie configurations are managed by <code>SignedCookieStore</code> with safe defaults:</p>
+                        <h1 id="sessions"><a class="header" href="#sessions">Sessions</a></h1>
+<p>Djangors provides pluggable session storage through <code>djangors-sessions</code> (<code>djangors::sessions</code>).</p>
+<h2 id="stores"><a class="header" href="#stores">Stores</a></h2>
 <ul>
-<li><strong><code>HttpOnly</code></strong>: Set to <code>true</code> by default. This prevents client-side scripts from reading the cookie, mitigating Cross-Site Scripting (XSS) session theft.</li>
-<li><strong><code>Secure</code></strong>: Set to <code>true</code> if your application is configured to require HTTPS.</li>
-<li><strong><code>SameSite</code></strong>: Set to <code>Lax</code> to balance convenience with cross-site request security.</li>
-<li><strong><code>max_age</code></strong>: Default cookie expiration duration is 2 weeks.</li>
+<li><strong><code>SignedCookieStore</code></strong> (default): stores session data in an HMAC-SHA256 signed cookie. No database or Redis required.</li>
+<li><strong><code>DatabaseStore</code></strong>: stores session data in the <code>djangors_session</code> table. Session keys are 32 random bytes, stored as SHA-256 hashes in the database. <code>last_seen_at</code> is updated at most once per minute.</li>
+<li><strong><code>RedisStore</code></strong> (requires the <code>redis</code> feature): stores session data in Redis with automatic TTL expiration and per-user session tracking.</li>
 </ul>
-<h3 id="session-rotation-cycle_key"><a class="header" href="#session-rotation-cycle_key">Session Rotation (<code>cycle_key</code>)</a></h3>
-<p>To prevent session fixation attacks (where an attacker provides a known session ID to a victim and waits for them to log in), call <code>session.cycle_key()</code> upon user login or logout:</p>
 <pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>// Authenticate user
-session.cycle_key(); // Generates a new internal session identity
-session.set("user_id", new_user_id);
-<span class="boring">}</span></code></pre>
-<hr>
-<h2 id="programmatic-session-access"><a class="header" href="#programmatic-session-access">Programmatic Session Access</a></h2>
-<h3 id="sessionis_empty"><a class="header" href="#sessionis_empty"><code>Session::is_empty()</code></a></h3>
-<p>Returns <code>true</code> when the session holds no application data (only the internal <code>_session_key</code>). Useful
-for “do I need to write a <code>Set-Cookie</code> at all?” checks:</p>
+</span>use std::sync::Arc;
+use djangors::sessions::{DatabaseStore, SessionLayer};
+
+<span class="boring">async fn example(db: djangors::db::Database) {
+</span>let store = DatabaseStore::new(db).with_secure(true);
+let layer = SessionLayer::new(store);
+<span class="boring">}
+</span><span class="boring">}</span></code></pre>
+<h2 id="remember-me-login_with"><a class="header" href="#remember-me-login_with">Remember Me (<code>login_with</code>)</a></h2>
+<p>Use <code>login_with</code> to control whether a session persists across browser restarts:</p>
 <pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>let session = Session::new_empty();
-assert!(session.is_empty());
+</span>use djangors::auth::{login_with, LoginOptions, User};
+use djangors::core::Request;
 
-session.set("theme", "dark".to_string());
-assert!(!session.is_empty());
-<span class="boring">}</span></code></pre>
-<h3 id="manual-encodedecode-with-signedcookiestore"><a class="header" href="#manual-encodedecode-with-signedcookiestore">Manual encode/decode with <code>SignedCookieStore</code></a></h3>
-<p><code>SignedCookieStore</code> encodes and decodes sessions independently of the middleware — handy for custom
-middleware or code that must set the cookie header itself instead of delegating to <code>SessionLayer</code>.</p>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Method</th><th>Signature</th><th>Notes</th></tr>
-</thead>
-<tbody>
-<tr><td><code>store.encode(&amp;session)</code></td><td><code>fn(&amp;self, &amp;Session) -&gt; String</code></td><td>Serializes, base64-encodes, signs (HMAC-SHA256), returns <code>"&lt;b64 payload&gt;.&lt;b64 expiry&gt;.&lt;b64 hmac&gt;"</code></td></tr>
-<tr><td><code>store.decode(cookie_value)</code></td><td><code>fn(&amp;self, &amp;str) -&gt; Option&lt;Session&gt;</code></td><td>Verifies signature + expiry, then decodes; <code>None</code> for missing/malformed/tampered/expired cookies</td></tr>
-</tbody>
-</table>
-</div>
-<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
-</span><span class="boring">fn main() {
-</span>use djangors_sessions::{Session, SignedCookieStore};
+<span class="boring">async fn example(req: Request, user: User) -&gt; Result&lt;(), djangors::auth::AuthError&gt; {
+</span>// Browser session: omits Max-Age on Set-Cookie, expires when the browser closes.
+login_with(&amp;req, &amp;user, LoginOptions::new(false)).await?;
 
-let store = SignedCookieStore::new(b"my-32-byte-minimum-secret-key!!");
-let session = Session::new_empty();
-session.set("user_id", 42i64);
-
-let cookie_value = store.encode(&amp;session);       // "&lt;b64 payload&gt;.&lt;b64 expiry&gt;.&lt;b64 hmac&gt;"
-let restored = store.decode(&amp;cookie_value);       // Some(session) — data verified intact
-assert_eq!(restored.unwrap().get::&lt;i64&gt;("user_id"), Some(42));
-<span class="boring">}</span></code></pre>
-<h3 id="sessionservice-the-layers-service-type"><a class="header" href="#sessionservice-the-layers-service-type"><code>SessionService</code>: the layer’s service type</a></h3>
-<p><code>SessionLayer</code> is a
-<a href="https://docs.rs/tower/latest/tower/trait.Layer.html"><code>tower::Layer</code></a>; wrapping an inner service
-yields a <code>SessionService&lt;S&gt;</code> (<code>djangors_sessions::SessionService</code>) as the concrete service type.
-This is the Tower middleware that does the per-request work: read the <code>Cookie</code> header, decode +
-verify it via the store, insert the <code>Session</code> into the request’s <code>Extensions</code>, then write
-<code>Set-Cookie</code> back on the response when the session was modified or newly created.</p>
-<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
-</span><span class="boring">fn main() {
-</span>use djangors_sessions::{SessionService, SessionLayer, SignedCookieStore};
-use tower::Layer;
-
-fn stack(inner: djangors_core::router::RouterService) -&gt; SessionService&lt;djangors_core::router::RouterService&gt; {
-    SessionLayer::new(SignedCookieStore::new(b"my-32-byte-minimum-secret-key!!"))
-        .layer(inner)
-}
-<span class="boring">}</span></code></pre>
-<hr>
-<h2 id="csrf-protection"><a class="header" href="#csrf-protection">CSRF Protection</a></h2>
-<p>Djangors uses a double-submit cookie scheme to protect against Cross-Site Request Forgery (CSRF).</p>
-<h3 id="the-mechanism"><a class="header" href="#the-mechanism">The Mechanism</a></h3>
-<ol>
-<li>The <code>CsrfLayer</code> middleware reads the request cookie named <code>csrftoken</code>. If not present, it generates a cryptographically secure random token and sets it as the <code>csrftoken</code> cookie.</li>
-<li>For unsafe methods (<code>POST</code>, <code>PUT</code>, <code>PATCH</code>, <code>DELETE</code>), Djangors requires the client to submit the same CSRF token value in the request.</li>
-<li>The server performs a constant-time comparison (using <code>constant_time_eq</code>) between the cookie value and the submitted request value.</li>
-</ol>
-<h3 id="submitting-the-token"><a class="header" href="#submitting-the-token">Submitting the Token</a></h3>
-<p>Clients can submit the CSRF token in one of two ways, both of which are accepted by Djangors:</p>
-<h4 id="1-plain-html-forms-csrfmiddlewaretoken"><a class="header" href="#1-plain-html-forms-csrfmiddlewaretoken">1. Plain HTML Forms (<code>csrfmiddlewaretoken</code>)</a></h4>
-<p>When rendering a form, include the token value as a hidden input parameter named <code>csrfmiddlewaretoken</code>.</p>
-<pre><code class="language-html">&lt;form method="post" action="/submit"&gt;
-  &lt;!-- Renders a hidden field with the CSRF token --&gt;
-  &lt;input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}"&gt;
-  &lt;button type="submit"&gt;Submit&lt;/button&gt;
-&lt;/form&gt;
+// Persistent session: sets Max-Age = settings.session_remember_age (default 30 days).
+login_with(&amp;req, &amp;user, LoginOptions::new(true)).await?;
+<span class="boring">Ok(())
+</span><span class="boring">}
+</span><span class="boring">}</span></code></pre>
+<h2 id="managing-active-sessions"><a class="header" href="#managing-active-sessions">Managing Active Sessions</a></h2>
+<p>With <code>DatabaseStore</code> or <code>RedisStore</code>, users can inspect and revoke their active sessions:</p>
+<ul>
+<li><code>list_sessions(store, &amp;user)</code> returns active <code>SessionRecord</code> entries (IP, user agent, timestamps).</li>
+<li><code>revoke_session(store, &amp;user, key_or_hash)</code> deletes a specific session owned by <code>user</code>.</li>
+<li><code>logout_other_sessions(&amp;req)</code> rotates the current session key and invalidates all other sessions (also works in signed-cookie mode via the user’s <code>session_generation</code> counter).</li>
+</ul>
+<h2 id="cleaning-up-expired-sessions"><a class="header" href="#cleaning-up-expired-sessions">Cleaning Up Expired Sessions</a></h2>
+<p>Run <code>dj clearsessions</code> periodically to remove expired rows from <code>djangors_session</code>:</p>
+<pre><code class="language-bash">dj clearsessions
 </code></pre>
-<p>During a form post (<code>application/x-www-form-urlencoded</code>), the Djangors router parses the form body, extracts <code>csrfmiddlewaretoken</code>, and compares it against the expected token.</p>
-<h4 id="2-javascript-clients-x-csrftoken-header"><a class="header" href="#2-javascript-clients-x-csrftoken-header">2. Javascript Clients (<code>X-CSRFToken</code> Header)</a></h4>
-<p>For AJAX/fetch requests (such as SPA clients sending JSON bodies), the <code>csrftoken</code> cookie is intentionally <strong>not</strong> marked <code>HttpOnly</code> so that client-side JavaScript can read it.</p>
-<p>JS clients must extract the value from the cookie and send it in the <strong><code>X-CSRFToken</code></strong> header with their request.</p>
-<pre><code class="language-javascript">// Example fetch request
-fetch('/api/data', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    'X-CSRFToken': getCookie('csrftoken')
-  },
-  body: JSON.stringify({ key: 'value' })
-});
-</code></pre>
-<p>The CSRF middleware intercepts the request, reads the header, and validates it.</p>
 
                     </main>
 

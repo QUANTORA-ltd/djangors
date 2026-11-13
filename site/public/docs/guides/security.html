@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-146c955f.js";
+            window.path_to_searchindex_js = "../searchindex-5c9aec32.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-86e03ec5.js"></script>
+        <script src="../toc-37bf99b9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -339,6 +339,37 @@ the <code>X-CSRFToken</code> header.</p>
 before CSRF checks run. <code>cors_layer</code> rejects <code>"*"</code> combined with <code>allow_credentials(true)</code> because
 browsers forbid wildcard origins with credentials, and <code>dj check --deploy</code> warns if
 <code>cors_allowed_origins</code> contains <code>"*"</code> when <code>debug</code> is <code>false</code>.</p>
+<h2 id="cross-origin-isolation--permissions-policy"><a class="header" href="#cross-origin-isolation--permissions-policy">Cross-Origin Isolation &amp; Permissions-Policy</a></h2>
+<p><code>SecurityHeadersLayer</code> sets <code>Cross-Origin-Opener-Policy: same-origin</code> and
+<code>Cross-Origin-Resource-Policy: same-origin</code> by default (while leaving
+<code>Cross-Origin-Embedder-Policy</code> off so third-party embeds continue to work).
+Use <code>SecurityHeadersBuilder</code> and <code>PermissionsPolicyBuilder</code> to customize them:</p>
+<pre class="playground"><code class="language-rust compile"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span><span class="boring">use djangors_core::middleware::{PermissionsPolicyBuilder, SecurityHeadersBuilder};
+</span><span class="boring">fn example() {
+</span>let layer = SecurityHeadersBuilder::new()
+    .permissions_policy(
+        PermissionsPolicyBuilder::new()
+            .feature("camera", &amp;[])
+            .feature("geolocation", &amp;["self"]),
+    )
+    .coep(Some("require-corp"))
+    .build();
+<span class="boring">let _ = layer;
+</span><span class="boring">}
+</span><span class="boring">}</span></code></pre>
+<h2 id="per-request-csp-nonces"><a class="header" href="#per-request-csp-nonces">Per-Request CSP Nonces</a></h2>
+<p>Call <code>.with_nonce()</code> on <code>CspBuilder</code> or <code>CspLayer</code> to generate a fresh 16-byte cryptographic
+nonce per request, store <code>CspNonce</code> in request extensions, and add <code>'nonce-...'</code> to
+<code>script-src</code> and <code>style-src</code>. Live-reload <code>&lt;script&gt;</code> tags receive the nonce automatically,
+and templates can read it with <code>{{ csp_nonce() }}</code> when <code>_csp_nonce</code> is passed in the template
+context.</p>
+<h2 id="honeypot-and-minimum-submit-time"><a class="header" href="#honeypot-and-minimum-submit-time">Honeypot and Minimum Submit Time</a></h2>
+<p>In <code>djangors-forms</code>, <code>HoneypotField</code> renders a hidden field that must stay empty,
+<code>MinSubmitTime</code> embeds an HMAC-signed timestamp to reject submissions faster than N seconds,
+and <code>BotGuard</code> combines both with <code>is_suspicious_user_agent</code> so you can escalate to
+<code>CaptchaField</code> only when a submission looks suspicious.</p>
 
                     </main>
 

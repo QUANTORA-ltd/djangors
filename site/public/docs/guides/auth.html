@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-146c955f.js";
+            window.path_to_searchindex_js = "../searchindex-5c9aec32.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-86e03ec5.js"></script>
+        <script src="../toc-37bf99b9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -455,6 +455,52 @@ if let Err(messages) = validate_password("1234", Some(&amp;attrs), &amp;validato
 <span class="boring">}
 </span><span class="boring">}</span></code></pre>
 <p><code>confirm_password_reset</code> runs <code>default_validators()</code> automatically before hashing and returns <code>AuthError::WeakPassword</code> if any rule fails. <code>dj createsuperuser</code> also validates the password unless <code>--skip-validation</code> is passed.</p>
+<h2 id="email-verification"><a class="header" href="#email-verification">Email verification</a></h2>
+<p><code>djangors-auth</code> tracks verified email addresses via the <code>EmailAddress</code> model (<code>auth_email_address</code> table) and signed, time-limited HMAC-SHA256 tokens bound to <code>(user_id, email, expiry)</code>:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors::auth::{send_verification_email, verify_email, HasVerifiedEmail};
+
+<span class="boring">async fn example(db: &amp;djangors::db::Database, mailer: &amp;dyn djangors::mail::MailBackend, secret: &amp;[u8]) -&gt; Result&lt;(), djangors::auth::AuthError&gt; {
+</span>send_verification_email(db, mailer, 1, "alice@example.com", "https://example.com", secret).await?;
+let verified = verify_email(db, "token-from-query", secret).await?;
+<span class="boring">Ok(())
+</span><span class="boring">}
+</span><span class="boring">}</span></code></pre>
+<ul>
+<li>Use the <code>HasVerifiedEmail</code> extractor on routes that require a verified email (returns <code>403 Forbidden</code> otherwise).</li>
+<li>Set <code>require_verified_email_for_login = true</code> in <code>djangors.toml</code> (or <code>DJANGORS_REQUIRE_VERIFIED_EMAIL_FOR_LOGIN=true</code>) and call <code>ensure_verified_for_login</code> during login.</li>
+<li>New projects created with <code>dj new</code> include <code>templates/auth/check_inbox.html</code>.</li>
+</ul>
+<h2 id="magic-link-login"><a class="header" href="#magic-link-login">Magic-link login</a></h2>
+<p><code>djangors_auth::magic_link</code> implements passwordless single-use login links backed by the <code>LoginLink</code> model (<code>auth_login_link</code> table):</p>
+<ul>
+<li>Tokens are 256-bit random values whose SHA-256 hash (<code>hash_login_token</code>) is stored in <code>LoginLink.token_hash</code>.</li>
+<li><code>send_login_link</code> enforces per-email and per-IP rate limits (<code>LoginLinkPolicy</code>, default 15-minute TTL) and returns <code>Ok(())</code> whether or not the email exists, preventing account enumeration.</li>
+<li><code>GET /login/magic/{token}</code> (<code>magic_link_router</code>) renders a confirmation page with a <code>POST</code> form rather than consuming the link on <code>GET</code>, so email link scanners cannot burn the token.</li>
+<li><code>POST /login/magic/{token}</code> atomically claims the link with a conditional <code>UPDATE ... WHERE used_at IS NULL AND expires_at &gt; now</code> and establishes the session via <code>login_with</code>.</li>
+</ul>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors::auth::{
+    create_login_link_tables, magic_link_router, send_login_link, LoginLinkPolicy,
+};
+
+<span class="boring">async fn example(db: &amp;djangors::db::Database, mailer: &amp;dyn djangors::mail::MailBackend) -&gt; Result&lt;(), djangors::auth::AuthError&gt; {
+</span>create_login_link_tables(db).await?;
+send_login_link(
+    db,
+    mailer,
+    "alice@example.com",
+    Some("203.0.113.10"),
+    "https://example.com",
+    LoginLinkPolicy::default(),
+)
+.await?;
+<span class="boring">let _router = magic_link_router();
+</span><span class="boring">Ok(())
+</span><span class="boring">}
+</span><span class="boring">}</span></code></pre>
 
                     </main>
 
