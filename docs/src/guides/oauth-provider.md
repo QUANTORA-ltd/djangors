@@ -8,7 +8,7 @@ Add the `oauth-provider` feature to `djangors`:
 
 ```toml
 [dependencies]
-djangors = { version = "0.13", features = ["oauth-provider"] }
+djangors = { version = "0.14", features = ["oauth-provider"] }
 ```
 
 ## Database setup and signing keys

@@ -6,7 +6,7 @@ Part of [Djangors](https://github.com/QUANTORA-ltd/djangors), a batteries-includ
 
 ```toml
 [dependencies]
-djangors-contrib-orgs = "0.13"
+djangors-contrib-orgs = "0.14"
 ```
 
 Adds `Organization`, `Membership`, `Team`, and `TeamMembership` models, a role-to-permission map (`OrgPermissions`), the `CurrentOrg` extractor, and invitation helpers built on `djangors-auth`. An organization always keeps at least one owner.

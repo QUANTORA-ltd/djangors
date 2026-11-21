@@ -5,9 +5,9 @@
 Remote secret backends (`VaultProvider`, `GcpSecretManagerProvider`, and `AwsSecretsManagerProvider`) are opt-in behind the `secrets-remote` feature (which adds `reqwest`):
 
 ```toml
-djangors = { version = "0.13", features = ["secrets-remote"] }
+djangors = { version = "0.14", features = ["secrets-remote"] }
 # or directly on djangors-core:
-# djangors-core = { version = "0.13", features = ["secrets-remote"] }
+# djangors-core = { version = "0.14", features = ["secrets-remote"] }
 ```
 
 All secret values are returned as `SecretString` (`secrecy::SecretString`), which redacts `Debug` output and zeroizes memory on drop.
