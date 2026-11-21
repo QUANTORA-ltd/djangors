@@ -55,6 +55,9 @@ async fn test_polls_voting_integration() {
     let _ = djangors_orm::sqlx::query("DROP TABLE IF EXISTS polls_question")
         .execute(db.pool())
         .await;
+    let _ = djangors_orm::sqlx::query("DROP TABLE IF EXISTS auth_user_session_generation")
+        .execute(db.pool())
+        .await;
     let _ = djangors_orm::sqlx::query("DROP TABLE IF EXISTS auth_user")
         .execute(db.pool())
         .await;

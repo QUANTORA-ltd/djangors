@@ -15,8 +15,24 @@ use rsa::traits::PublicKeyParts as _;
 use rsa::RsaPrivateKey;
 use sha2::{Digest, Sha256};
 use std::convert::Infallible;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use tokio::net::TcpListener;
+
+fn mock_oidc_rsa_key() -> &'static (String, String, String) {
+    static KEY: OnceLock<(String, String, String)> = OnceLock::new();
+    KEY.get_or_init(|| {
+        let mut rng = rand::thread_rng();
+        let private_key = RsaPrivateKey::new(&mut rng, 2048).unwrap();
+        let rsa_pem = private_key
+            .to_pkcs8_pem(rsa::pkcs8::LineEnding::LF)
+            .unwrap()
+            .to_string();
+        let pub_key = private_key.to_public_key();
+        let n_b64 = URL_SAFE_NO_PAD.encode(pub_key.n().to_bytes_be());
+        let e_b64 = URL_SAFE_NO_PAD.encode(pub_key.e().to_bytes_be());
+        (rsa_pem, n_b64, e_b64)
+    })
+}
 
 async fn setup_oauth_db() -> Database {
     let config = DatabaseConfig::new("sqlite::memory:")
@@ -83,15 +99,7 @@ struct MockIdTokenClaims {
 }
 
 async fn spawn_mock_oidc_server() -> (String, MockIdpState) {
-    let mut rng = rand::thread_rng();
-    let private_key = RsaPrivateKey::new(&mut rng, 2048).unwrap();
-    let rsa_pem = private_key
-        .to_pkcs8_pem(rsa::pkcs8::LineEnding::LF)
-        .unwrap()
-        .to_string();
-    let pub_key = private_key.to_public_key();
-    let n_b64 = URL_SAFE_NO_PAD.encode(pub_key.n().to_bytes_be());
-    let e_b64 = URL_SAFE_NO_PAD.encode(pub_key.e().to_bytes_be());
+    let (rsa_pem, n_b64, e_b64) = mock_oidc_rsa_key().clone();
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

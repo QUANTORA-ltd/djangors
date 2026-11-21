@@ -7,8 +7,10 @@
 use proc_macro::TokenStream;
 use syn::{parse_macro_input, DeriveInput};
 
+mod endpoint;
 mod factory;
 mod form;
+mod json_schema;
 mod management_command;
 mod model;
 mod settings;
@@ -119,6 +121,53 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn management_command(attr: TokenStream, item: TokenStream) -> TokenStream {
     management_command::expand_management_command(attr.into(), item.into())
+        .unwrap_or_else(|err| err.to_compile_error())
+        .into()
+}
+
+/// Derive macro for JSON Schema generation (`#[derive(JsonSchema)]`), producing
+/// `djangors_core::schemars::JsonSchema` implementations compatible with OpenAPI 3.1.
+#[proc_macro_derive(JsonSchema, attributes(serde, schemars, djangors))]
+pub fn derive_json_schema(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    json_schema::expand_derive_json_schema(input)
+        .unwrap_or_else(|err| err.to_compile_error())
+        .into()
+}
+
+/// Attribute macro declaring typed HTTP endpoint metadata on a Djangors handler function.
+///
+/// Leaves the annotated `async fn(Request, PathParams) -> Result<Response, DjangorsError>`
+/// untouched while submitting a `djangors_core::EndpointRegistration`
+/// via `inventory` so `Router` prefix tracking and `dj openapi --typescript` can emit exact
+/// OpenAPI operations and typed TypeScript clients.
+///
+/// # Example
+/// ```ignore
+/// #[derive(Serialize, JsonSchema)]
+/// pub struct ReceiptOut {
+///     reference: String,
+///     amount: Decimal,
+///     paid_at: DateTime<Utc>,
+/// }
+///
+/// #[endpoint(GET, "/payments/{id}/receipt", response = ReceiptOut)]
+/// pub async fn receipt(req: Request, params: PathParams) -> Result<Response, DjangorsError> {
+///     ...
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn endpoint(attr: TokenStream, item: TokenStream) -> TokenStream {
+    endpoint::expand_endpoint(attr.into(), item.into())
+        .unwrap_or_else(|err| err.to_compile_error())
+        .into()
+}
+
+/// Attribute macro marking a `fn() -> Router` builder so `dj openapi` executes it when
+/// `DJANGORS_INTROSPECT_OPENAPI=1` is set to resolve exact `Router::mount` prefixes.
+#[proc_macro_attribute]
+pub fn router(attr: TokenStream, item: TokenStream) -> TokenStream {
+    endpoint::expand_router(attr.into(), item.into())
         .unwrap_or_else(|err| err.to_compile_error())
         .into()
 }

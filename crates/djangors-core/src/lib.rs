@@ -30,6 +30,8 @@ pub mod debug_page;
 /// Dev-only request and SQL query inspection panel (`debug-panel` feature).
 #[cfg(feature = "debug-panel")]
 pub mod debug_panel;
+/// Typed HTTP endpoint registry, JSON Schema extraction, and router prefix tracking.
+pub mod endpoint;
 /// Framework core error types.
 pub mod error;
 /// Request parameter extractor utilities.
@@ -86,6 +88,11 @@ pub mod ws;
 pub use app::Djangors;
 #[cfg(feature = "debug-panel")]
 pub use debug_panel::{debug_panel_layer, DebugPanelLayer, DebugPanelService};
+pub use endpoint::{
+    mounted_endpoints_for_router, registered_endpoints_for_router, registered_endpoints_snapshot,
+    EndpointRegistration, EndpointSchema, EndpointSnapshot, MountedRouteEntry,
+    OpenApiIntrospection, RouterRegistration,
+};
 pub use error::{
     ApiError, ApiResultExt, DjangorsError, ErrorRenderer, JsonErrorRenderer, ProblemDetailsRenderer,
 };
@@ -115,8 +122,12 @@ pub use ws::{
     upgrade_websocket, upgrade_websocket_with_policy, OriginPolicy, WebSocket, WsHandler, WsMessage,
 };
 
-/// Re-export of [`hyper::StatusCode`] for convenience.
+/// Re-export of `hyper::StatusCode` for convenience.
 pub use hyper::StatusCode;
+/// Re-export of `schemars` and [`schemars::JsonSchema`] for typed endpoints and `#[derive(JsonSchema)]`.
+pub use schemars::{self, JsonSchema};
+/// Re-export of `serde_json` for macro-generated JSON Schema builders.
+pub use serde_json;
 
 /// Escapes HTML special characters in string input.
 // FREEZE-REVIEW: This cannot be made `pub(crate)` in this pass because the out-of-scope
@@ -246,8 +257,25 @@ async fn run_rotate_encryption_keys(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// If enabled, print this binary's compiled model registry and terminate.
+/// If enabled, print this binary's compiled model or OpenAPI endpoint registry and terminate.
+///
+/// - When `DJANGORS_INTROSPECT_OPENAPI=1` is set, prints an [`OpenApiIntrospection`] JSON object
+///   containing both registered ORM models and `#[endpoint]` metadata (including any mounted router
+///   prefixes recorded via `#[router]`).
+/// - When `DJANGORS_INTROSPECT_MODELS=1` is set, prints the [`ModelSnapshot`](djangors_orm::ModelSnapshot)
+///   JSON array.
 pub fn introspect_models_if_requested() {
+    if std::env::var("DJANGORS_INTROSPECT_OPENAPI").ok().as_deref() == Some("1") {
+        let payload = OpenApiIntrospection {
+            models: djangors_orm::meta::registered_models_snapshot(),
+            endpoints: endpoint::registered_endpoints_snapshot(),
+        };
+        println!(
+            "{}",
+            serde_json::to_string(&payload).expect("openapi introspection is serializable")
+        );
+        std::process::exit(0);
+    }
     if std::env::var("DJANGORS_INTROSPECT_MODELS").ok().as_deref() == Some("1") {
         println!(
             "{}",
@@ -256,6 +284,25 @@ pub fn introspect_models_if_requested() {
         );
         std::process::exit(0);
     }
+}
+
+/// Like [`introspect_models_if_requested`], but runs `build_router` when `DJANGORS_INTROSPECT_OPENAPI=1`
+/// is set so `Router::mount` prefixes are captured even if `#[router]` was not placed on the
+/// builder function.
+pub fn introspect_with_router(build_router: impl FnOnce() -> Router) {
+    if std::env::var("DJANGORS_INTROSPECT_OPENAPI").ok().as_deref() == Some("1") {
+        let router = build_router();
+        let payload = OpenApiIntrospection {
+            models: djangors_orm::meta::registered_models_snapshot(),
+            endpoints: endpoint::registered_endpoints_for_router(&router),
+        };
+        println!(
+            "{}",
+            serde_json::to_string(&payload).expect("openapi introspection is serializable")
+        );
+        std::process::exit(0);
+    }
+    introspect_models_if_requested();
 }
 
 #[cfg(test)]

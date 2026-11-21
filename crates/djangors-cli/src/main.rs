@@ -172,6 +172,7 @@ async fn main() {
             api_version,
             api_prefix,
             model,
+            routes,
         } => {
             if let Err(e) = commands::openapi(
                 typescript,
@@ -180,6 +181,7 @@ async fn main() {
                 &api_version,
                 &api_prefix,
                 &model,
+                routes.as_deref(),
             ) {
                 eprintln!("[dj openapi] error: {e}");
                 std::process::exit(1);

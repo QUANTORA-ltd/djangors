@@ -156,6 +156,12 @@ pub enum Commands {
         /// Include only the named model (repeatable; defaults to all models).
         #[arg(long = "model")]
         model: Vec<String>,
+        /// JSON file mapping models to their real mount path and CRUD operations:
+        /// `{"Post": {"path": "/api/v1/blog/posts", "ops": ["list", "retrieve"]}}`.
+        /// Mapped models get exactly those paths/operations (`--api-prefix` is
+        /// ignored); unmapped models get TypeScript types but no client methods.
+        #[arg(long)]
+        routes: Option<PathBuf>,
     },
     /// Generate code artifacts such as full-stack CRUD resources (`dj generate resource`).
     #[command(name = "generate")]
