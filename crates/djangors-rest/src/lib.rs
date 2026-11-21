@@ -30,6 +30,10 @@ pub mod viewsets;
 
 pub use api_keys::*;
 pub use auth::*;
+/// Re-export of `schemars` from `djangors-core`.
+pub use djangors_core::schemars;
+/// Re-export of typed endpoint attributes and `#[derive(JsonSchema)]` from `djangors-macros`.
+pub use djangors_macros::{endpoint, router, JsonSchema};
 pub use filters::*;
 pub use openapi::*;
 pub use pagination::*;

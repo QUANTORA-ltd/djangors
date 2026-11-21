@@ -1586,8 +1586,29 @@ pub fn collectstatic(source: Vec<PathBuf>, output: PathBuf) {
     }
 }
 
+fn introspect_openapi() -> Result<djangors_core::OpenApiIntrospection, String> {
+    let out = std::process::Command::new("cargo")
+        .args(["run", "--quiet"])
+        .env("DJANGORS_INTROSPECT_OPENAPI", "1")
+        .current_dir(".")
+        .output()
+        .map_err(|e| e.to_string())?;
+    if out.status.success() {
+        if let Ok(payload) =
+            serde_json::from_slice::<djangors_core::OpenApiIntrospection>(&out.stdout)
+        {
+            return Ok(payload);
+        }
+    }
+    let models = introspect_models()?;
+    Ok(djangors_core::OpenApiIntrospection {
+        models,
+        endpoints: Vec::new(),
+    })
+}
+
 /// Generate an OpenAPI 3.1 JSON specification or a TypeScript fetch client (`--typescript`)
-/// by introspecting the project's registered models.
+/// by introspecting the project's registered models and typed `#[endpoint]` handlers.
 pub fn openapi(
     typescript: bool,
     output: Option<PathBuf>,
@@ -1595,17 +1616,37 @@ pub fn openapi(
     api_version: &str,
     api_prefix: &str,
     model_filter: &[String],
+    routes: Option<&Path>,
 ) -> Result<(), String> {
     require_project_root()?;
-    let models = introspect_models()?;
-    let rendered = render_openapi_from_snapshots(
-        &models,
-        typescript,
-        title,
-        api_version,
-        api_prefix,
-        model_filter,
-    )?;
+    let introspection = introspect_openapi()?;
+    let rendered = match routes {
+        Some(routes_path) => {
+            let raw = std::fs::read_to_string(routes_path)
+                .map_err(|e| format!("failed to read '{}': {e}", routes_path.display()))?;
+            let routes: std::collections::BTreeMap<String, OpenApiRoute> =
+                serde_json::from_str(&raw)
+                    .map_err(|e| format!("invalid routes file '{}': {e}", routes_path.display()))?;
+            render_openapi_with_routes_and_endpoints(
+                &introspection.models,
+                &introspection.endpoints,
+                typescript,
+                title,
+                api_version,
+                &routes,
+                model_filter,
+            )?
+        }
+        None => render_openapi_from_snapshots_and_endpoints(
+            &introspection.models,
+            &introspection.endpoints,
+            typescript,
+            title,
+            api_version,
+            api_prefix,
+            model_filter,
+        )?,
+    };
     if let Some(path) = output {
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
@@ -1621,10 +1662,123 @@ pub fn openapi(
     Ok(())
 }
 
+/// One model's real mount point, as given in a `dj openapi --routes` file.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct OpenApiRoute {
+    /// Collection path, e.g. `/api/v1/billing/fee-items` (detail is `<path>/{pk}`).
+    pub path: String,
+    /// CRUD operations served there: `list`, `create`, `retrieve`, `update`,
+    /// `partial_update`, `destroy`.
+    pub ops: Vec<String>,
+}
+
+/// Renders OpenAPI JSON or TypeScript using explicit per-model routes instead of
+/// the `<prefix>/<plural>` guess. Models absent from `routes` are emitted as schemas
+/// (TypeScript interfaces) with no paths or client methods.
+#[cfg(test)]
+pub fn render_openapi_with_routes(
+    models: &[djangors_orm::ModelSnapshot],
+    typescript: bool,
+    title: &str,
+    api_version: &str,
+    routes: &std::collections::BTreeMap<String, OpenApiRoute>,
+    model_filter: &[String],
+) -> Result<String, String> {
+    render_openapi_with_routes_and_endpoints(
+        models,
+        &[],
+        typescript,
+        title,
+        api_version,
+        routes,
+        model_filter,
+    )
+}
+
+/// Like [`render_openapi_with_routes`], also registering typed `#[endpoint]` snapshots.
+pub fn render_openapi_with_routes_and_endpoints(
+    models: &[djangors_orm::ModelSnapshot],
+    endpoints: &[djangors_core::EndpointSnapshot],
+    typescript: bool,
+    title: &str,
+    api_version: &str,
+    routes: &std::collections::BTreeMap<String, OpenApiRoute>,
+    model_filter: &[String],
+) -> Result<String, String> {
+    let available = models
+        .iter()
+        .map(|m| m.struct_name.clone())
+        .collect::<Vec<_>>();
+    let unknown = model_filter
+        .iter()
+        .chain(routes.keys())
+        .filter(|name| !available.contains(name))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !unknown.is_empty() {
+        return Err(format!(
+            "unknown model(s): {}; available models: {}",
+            unknown.join(", "),
+            available.join(", ")
+        ));
+    }
+    let mut builder = djangors_rest::OpenApiBuilder::new(title, api_version);
+    for model in models {
+        if !model_filter.is_empty() && !model_filter.contains(&model.struct_name) {
+            continue;
+        }
+        match routes.get(&model.struct_name) {
+            Some(route) => {
+                let ops = route
+                    .ops
+                    .iter()
+                    .map(|op| {
+                        djangors_rest::CrudOp::parse(op).ok_or_else(|| {
+                            format!("{}: unknown operation '{op}'", model.struct_name)
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                builder.register_snapshot_with_ops(model, &route.path, &ops);
+            }
+            None => {
+                builder.register_snapshot_with_ops(model, "", &[]);
+            }
+        }
+    }
+    builder.register_endpoints(endpoints);
+    if typescript {
+        Ok(builder.to_typescript())
+    } else {
+        Ok(serde_json::to_string_pretty(&builder.build()).expect("OpenAPI spec is serializable"))
+    }
+}
+
 /// Pure helper used by [`openapi`] and unit tests to render OpenAPI JSON or TypeScript
 /// from a slice of [`djangors_orm::ModelSnapshot`]s.
+#[cfg(test)]
 pub fn render_openapi_from_snapshots(
     models: &[djangors_orm::ModelSnapshot],
+    typescript: bool,
+    title: &str,
+    api_version: &str,
+    api_prefix: &str,
+    model_filter: &[String],
+) -> Result<String, String> {
+    render_openapi_from_snapshots_and_endpoints(
+        models,
+        &[],
+        typescript,
+        title,
+        api_version,
+        api_prefix,
+        model_filter,
+    )
+}
+
+/// Like [`render_openapi_from_snapshots`], also registering typed `#[endpoint]` snapshots.
+pub fn render_openapi_from_snapshots_and_endpoints(
+    models: &[djangors_orm::ModelSnapshot],
+    endpoints: &[djangors_core::EndpointSnapshot],
     typescript: bool,
     title: &str,
     api_version: &str,
@@ -1665,6 +1819,7 @@ pub fn render_openapi_from_snapshots(
         );
         builder.register_snapshot(model, &base_path);
     }
+    builder.register_endpoints(endpoints);
     if typescript {
         Ok(format!("// {assumption}\n{}", builder.to_typescript()))
     } else {

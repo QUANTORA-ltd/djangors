@@ -13,6 +13,23 @@ use rsa::RsaPrivateKey;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read as _;
+use std::sync::OnceLock;
+
+fn test_rsa_key() -> &'static RsaPrivateKey {
+    static KEY: OnceLock<RsaPrivateKey> = OnceLock::new();
+    KEY.get_or_init(|| {
+        let mut rng = rand::thread_rng();
+        RsaPrivateKey::new(&mut rng, 2048).unwrap()
+    })
+}
+
+fn rogue_rsa_key() -> &'static RsaPrivateKey {
+    static KEY: OnceLock<RsaPrivateKey> = OnceLock::new();
+    KEY.get_or_init(|| {
+        let mut rng = rand::thread_rng();
+        RsaPrivateKey::new(&mut rng, 2048).unwrap()
+    })
+}
 
 async fn setup_saml_db() -> Database {
     let config = DatabaseConfig::new("sqlite::memory:")
@@ -201,8 +218,7 @@ fn build_signed_saml_response(private_key: &RsaPrivateKey, opts: &SignedSamlOpti
 
 #[tokio::test]
 async fn idp_metadata_parsing_and_sp_metadata_generation() {
-    let mut rng = rand::thread_rng();
-    let priv_key = RsaPrivateKey::new(&mut rng, 2048).unwrap();
+    let priv_key = test_rsa_key();
     let cert_pem = rsa_public_key_to_x509_pem(&priv_key.to_public_key());
     let b64_cert = strip_pem_headers(&cert_pem);
 
@@ -252,8 +268,7 @@ async fn idp_metadata_parsing_and_sp_metadata_generation() {
 #[tokio::test]
 async fn saml_login_acs_signature_verification_and_jit_user_creation() {
     let db = setup_saml_db().await;
-    let mut rng = rand::thread_rng();
-    let priv_key = RsaPrivateKey::new(&mut rng, 2048).unwrap();
+    let priv_key = test_rsa_key();
     let cert_pem = rsa_public_key_to_x509_pem(&priv_key.to_public_key());
 
     let idp = SamlIdentityProvider {
@@ -329,7 +344,7 @@ async fn saml_login_acs_signature_verification_and_jit_user_creation() {
     // 2. Build a signed SAMLResponse matching req_id and post to ACS.
     let future_ts = (Utc::now() + chrono::Duration::minutes(5)).to_rfc3339();
     let resp_xml = build_signed_saml_response(
-        &priv_key,
+        priv_key,
         &SignedSamlOptions {
             response_id: "_resp_1",
             assertion_id: "_assert_1",
@@ -388,9 +403,8 @@ async fn saml_login_acs_signature_verification_and_jit_user_creation() {
 
 #[tokio::test]
 async fn rejects_unsigned_tampered_xsw_replay_expired_audience_and_recipient() {
-    let mut rng = rand::thread_rng();
-    let priv_key = RsaPrivateKey::new(&mut rng, 2048).unwrap();
-    let rogue_key = RsaPrivateKey::new(&mut rng, 2048).unwrap();
+    let priv_key = test_rsa_key();
+    let rogue_key = rogue_rsa_key();
     let cert_pem = rsa_public_key_to_x509_pem(&priv_key.to_public_key());
 
     let idp = SamlIdentityProvider {
@@ -411,7 +425,7 @@ async fn rejects_unsigned_tampered_xsw_replay_expired_audience_and_recipient() {
     let future_ts = (Utc::now() + chrono::Duration::minutes(5)).to_rfc3339();
 
     let valid_xml = build_signed_saml_response(
-        &priv_key,
+        priv_key,
         &SignedSamlOptions {
             response_id: "_resp_1",
             assertion_id: "_assert_1",
@@ -455,7 +469,7 @@ async fn rejects_unsigned_tampered_xsw_replay_expired_audience_and_recipient() {
 
     // 3. Signature signed by rogue private key (not pinned in IdP record) fails.
     let rogue_xml = build_signed_saml_response(
-        &rogue_key,
+        rogue_key,
         &SignedSamlOptions {
             response_id: "_resp_r",
             assertion_id: "_assert_r",
@@ -560,7 +574,7 @@ async fn rejects_unsigned_tampered_xsw_replay_expired_audience_and_recipient() {
     // 9. Expired NotOnOrAfter rejected.
     let past_ts = (Utc::now() - chrono::Duration::minutes(10)).to_rfc3339();
     let expired_xml = build_signed_saml_response(
-        &priv_key,
+        priv_key,
         &SignedSamlOptions {
             response_id: "_resp_exp",
             assertion_id: "_assert_exp",
@@ -586,7 +600,7 @@ async fn rejects_unsigned_tampered_xsw_replay_expired_audience_and_recipient() {
 
     // 10. Wrong Audience rejected.
     let wrong_aud_xml = build_signed_saml_response(
-        &priv_key,
+        priv_key,
         &SignedSamlOptions {
             response_id: "_resp_aud",
             assertion_id: "_assert_aud",
@@ -612,7 +626,7 @@ async fn rejects_unsigned_tampered_xsw_replay_expired_audience_and_recipient() {
 
     // 11. Wrong Recipient rejected.
     let wrong_rec_xml = build_signed_saml_response(
-        &priv_key,
+        priv_key,
         &SignedSamlOptions {
             response_id: "_resp_rec",
             assertion_id: "_assert_rec",

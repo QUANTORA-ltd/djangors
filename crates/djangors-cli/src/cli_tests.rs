@@ -216,7 +216,9 @@ fn test_parse_openapi_typescript() {
             api_version,
             api_prefix,
             model,
+            routes,
         } => {
+            assert!(routes.is_none());
             assert!(typescript);
             assert_eq!(output, Some(PathBuf::from("client.ts")));
             assert_eq!(title, "Blog API");

@@ -6,6 +6,35 @@ use djangors_orm::Model as _;
 static DB_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 static FS_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// Persistent target directory inside the workspace `target/` folder so CLI tests
+/// that invoke `cargo` on temporary generated projects reuse compiled dependencies
+/// across tests and runs instead of rebuilding the entire dependency tree in `/tmp`.
+fn shared_cli_target_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/cli-test-cache")
+}
+
+struct CargoTargetDirGuard {
+    prev: Option<String>,
+}
+
+impl CargoTargetDirGuard {
+    fn enter() -> (Self, PathBuf) {
+        let dir = shared_cli_target_dir();
+        let prev = std::env::var("CARGO_TARGET_DIR").ok();
+        std::env::set_var("CARGO_TARGET_DIR", &dir);
+        (Self { prev }, dir)
+    }
+}
+
+impl Drop for CargoTargetDirGuard {
+    fn drop(&mut self) {
+        match &self.prev {
+            Some(v) => std::env::set_var("CARGO_TARGET_DIR", v),
+            None => std::env::remove_var("CARGO_TARGET_DIR"),
+        }
+    }
+}
+
 async fn superuser_test_database() -> Database {
     let sqlite = matches!(
         std::env::var("TEST_BACKEND").as_deref(),
@@ -365,6 +394,7 @@ fn test_new_app_generates_module() {
     .unwrap();
     let status = std::process::Command::new("cargo")
         .args(["build", "--offline"])
+        .env("CARGO_TARGET_DIR", shared_cli_target_dir())
         .current_dir(&project)
         .status()
         .unwrap();
@@ -448,6 +478,7 @@ cors_allowed_origins = ["*"]
 #[test]
 fn test_makemigrations_generated_project_introspects() {
     let _guard = FS_MUTEX.lock().unwrap();
+    let (_target_guard, _target_dir) = CargoTargetDirGuard::enter();
     let root = std::env::temp_dir().join(format!("dj_test_makemigrations_{}", std::process::id()));
     let project = root.join("project");
     let _ = std::fs::remove_dir_all(&root);
@@ -510,11 +541,24 @@ fn test_dbshell_psql_uri_connection() {
 #[test]
 fn test_dj_test_command() {
     let _guard = FS_MUTEX.lock().unwrap();
+    let (_target_guard, _target_dir) = CargoTargetDirGuard::enter();
     let root = std::env::temp_dir().join(format!("dj_test_cmd_{}", std::process::id()));
     let project = root.join("project");
     let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&root).unwrap();
-    new(project.to_str().unwrap()).unwrap();
+    std::fs::create_dir_all(project.join("src")).unwrap();
+    // Minimal zero-dep crate: `commands::test()` delegates to `cargo test` in the
+    // project root, so compiling the entire djangors dependency graph is unnecessary.
+    std::fs::write(
+        project.join("Cargo.toml"),
+        "[package]\nname = \"dj_test_smoke\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    std::fs::write(project.join("djangors.toml"), "debug = true\n").unwrap();
+    std::fs::write(
+        project.join("src/main.rs"),
+        "fn main() {}\n#[test]\nfn smoke() { assert_eq!(2 + 2, 4); }\n",
+    )
+    .unwrap();
     let old = std::env::current_dir().unwrap();
     std::env::set_current_dir(&project).unwrap();
 
@@ -616,8 +660,10 @@ fn test_new_generated_project_builds_and_serves() {
     let res = new(project_path.to_str().unwrap());
     assert!(res.is_ok(), "new() failed: {:?}", res);
 
+    let target_dir = shared_cli_target_dir();
     let build_status = std::process::Command::new("cargo")
         .args(["build", "--offline"])
+        .env("CARGO_TARGET_DIR", &target_dir)
         .current_dir(&project_path)
         .status()
         .expect("failed to run cargo build on generated project");
@@ -630,10 +676,7 @@ fn test_new_generated_project_builds_and_serves() {
     let port = listener.local_addr().unwrap().port();
     drop(listener);
 
-    let bin_path = project_path
-        .join("target")
-        .join("debug")
-        .join("test_e2e_serves");
+    let bin_path = target_dir.join("debug").join("test_e2e_serves");
     let mut child = std::process::Command::new(&bin_path)
         .env("DJANGORS_PORT", port.to_string())
         .spawn()
@@ -897,6 +940,114 @@ fn test_render_openapi_typescript_client() {
     assert!(ts.contains("export class DjangorsApiClient {"));
     assert!(ts.contains("async listPost("));
     assert!(ts.contains("async createPost(data: PostCreateInput): Promise<Post>"));
+}
+
+#[test]
+fn openapi_routes_file_sets_real_paths_and_only_served_ops() {
+    let model = |name: &str| djangors_orm::ModelSnapshot {
+        struct_name: name.into(),
+        app_label: "billing".into(),
+        table_name: name.to_lowercase(),
+        fields: vec![],
+        relations: vec![],
+        unique_together: vec![],
+        ordering: vec![],
+        indexes: vec![],
+    };
+    let mut routes = std::collections::BTreeMap::new();
+    routes.insert(
+        "FeeItem".to_string(),
+        OpenApiRoute {
+            path: "/api/v1/billing/fee-items".into(),
+            ops: vec!["list".into(), "create".into(), "retrieve".into()],
+        },
+    );
+    let models = [model("FeeItem"), model("Ledger")];
+
+    let ts = render_openapi_with_routes(&models, true, "API", "1", &routes, &[]).unwrap();
+    assert!(ts.contains("async listFeeItem("));
+    assert!(ts.contains("async createFeeItem("));
+    assert!(ts.contains("async retrieveFeeItem("));
+    assert!(ts.contains("`/api/v1/billing/fee-items${qs}`"));
+    assert!(!ts.contains("async updateFeeItem("));
+    assert!(!ts.contains("async partialUpdateFeeItem("));
+    assert!(!ts.contains("async destroyFeeItem("));
+    // unmapped model: types only
+    assert!(ts.contains("export interface Ledger {"));
+    assert!(!ts.contains("async listLedger("));
+    assert!(ts.contains("  page?: number;"));
+
+    let spec = render_openapi_with_routes(&models, false, "API", "1", &routes, &[]).unwrap();
+    let spec: serde_json::Value = serde_json::from_str(&spec).unwrap();
+    assert!(spec["paths"]["/api/v1/billing/fee-items/{pk}"]["get"].is_object());
+    assert!(spec["paths"]["/api/v1/billing/fee-items/{pk}"]["delete"].is_null());
+    assert!(spec["components"]["schemas"]["Ledger"].is_object());
+
+    routes.insert(
+        "Nope".to_string(),
+        OpenApiRoute {
+            path: "/x".into(),
+            ops: vec![],
+        },
+    );
+    assert!(
+        render_openapi_with_routes(&models, true, "API", "1", &routes, &[])
+            .unwrap_err()
+            .contains("Nope")
+    );
+    routes.remove("Nope");
+    routes
+        .get_mut("FeeItem")
+        .unwrap()
+        .ops
+        .push("explode".into());
+    assert!(
+        render_openapi_with_routes(&models, true, "API", "1", &routes, &[])
+            .unwrap_err()
+            .contains("explode")
+    );
+}
+
+#[test]
+fn openapi_includes_typed_endpoint_snapshots() {
+    let endpoints = vec![djangors_core::EndpointSnapshot {
+        fn_name: "health_ping".into(),
+        module_path: "my_app::views".into(),
+        method: "GET".into(),
+        path: "/ping".into(),
+        prefix: None,
+        tag: Some("ops".into()),
+        operation_name: None,
+        summary: Some("Health ping".into()),
+        status: 200,
+        handler_type_name: "my_app::views::health_ping".into(),
+        mounted_prefix: Some("/api/v1".into()),
+        mounted_full_path: Some("/api/v1/ping".into()),
+        mounted_app: Some("ops".into()),
+        request_schema: None,
+        query_schema: None,
+        response_schema: Some(djangors_core::EndpointSchema {
+            name: Some("PingOut".into()),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": { "ok": { "type": "boolean" } },
+                "required": ["ok"]
+            }),
+            definitions: Default::default(),
+        }),
+    }];
+    let ts = render_openapi_from_snapshots_and_endpoints(
+        &[],
+        &endpoints,
+        true,
+        "API",
+        "1.0.0",
+        "/api",
+        &[],
+    )
+    .unwrap();
+    assert!(ts.contains("export interface PingOut {"));
+    assert!(ts.contains("async healthPing(): Promise<PingOut>"));
 }
 
 #[test]

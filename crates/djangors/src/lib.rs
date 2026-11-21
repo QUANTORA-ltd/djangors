@@ -34,6 +34,8 @@ pub use djangors_contrib_saml as saml;
 pub use djangors_contrib_tenancy as tenancy;
 /// Core HTTP types: Router, Request, Response, middleware, and settings.
 pub use djangors_core as core;
+/// Re-export of `schemars` for OpenAPI schema generation.
+pub use djangors_core::schemars;
 /// Database configuration and connection abstractions.
 pub use djangors_db as db;
 /// Form fields, validation, and form errors.
@@ -56,6 +58,9 @@ pub use djangors_pdf as pdf;
 /// REST serialization, authentication, and permissions.
 #[cfg(feature = "rest")]
 pub use djangors_rest as rest;
+/// Typed endpoint attribute macros and `#[derive(JsonSchema)]` derive macro.
+#[cfg(feature = "rest")]
+pub use djangors_rest::{endpoint, router, JsonSchema};
 /// Session storage and signed cookie sessions.
 #[cfg(feature = "sessions")]
 pub use djangors_sessions as sessions;

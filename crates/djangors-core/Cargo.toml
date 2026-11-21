@@ -95,6 +95,7 @@ secrecy = { version = "0.10.3", optional = true }
 dotenvy = { version = "0.15.7", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
 inventory = "0.3.24"
+schemars = { version = "1.2.3", default-features = false, features = ["std", "chrono04", "rust_decimal1", "uuid1"] }
 
 [dev-dependencies]
 djangors-orm = { path = "../djangors-orm" }

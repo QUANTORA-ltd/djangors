@@ -58,6 +58,9 @@ async fn test_school_admin_crud_integration() {
     let _ = djangors_orm::sqlx::query("DROP TABLE IF EXISTS school_course")
         .execute(db.pool())
         .await;
+    let _ = djangors_orm::sqlx::query("DROP TABLE IF EXISTS auth_user_session_generation")
+        .execute(db.pool())
+        .await;
     let _ = djangors_orm::sqlx::query("DROP TABLE IF EXISTS auth_user")
         .execute(db.pool())
         .await;

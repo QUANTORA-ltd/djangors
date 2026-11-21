@@ -47,11 +47,17 @@ pub enum ResponseKind {
 
 #[derive(Clone)]
 struct Route {
+    route_id: u64,
     pattern: String,
+    local_pattern: String,
     method: Method,
     segments: Vec<Segment>,
     param_names: Vec<String>,
     handler: HandlerKind,
+    handler_type_id: Option<std::any::TypeId>,
+    handler_type_name: Option<&'static str>,
+    mount_prefix: String,
+    mount_segments: Vec<String>,
     name: Option<String>,
 }
 
@@ -186,18 +192,34 @@ impl Router {
     ///
     /// # Panics
     /// Panics if the path pattern contains invalid capture syntax.
-    pub fn route(mut self, path: &str, method: Method, handler: impl Handler + 'static) -> Self {
+    pub fn route<H: Handler + 'static>(mut self, path: &str, method: Method, handler: H) -> Self {
         let pattern = path
             .trim_start_matches('/')
             .trim_end_matches('/')
             .to_string();
         let (segments, param_names) = Self::parse_pattern(&pattern);
+        let route_id = crate::endpoint::next_route_id();
+        let handler_type_id = std::any::TypeId::of::<H>();
+        let handler_type_name = std::any::type_name::<H>();
+        crate::endpoint::record_route_registration(
+            route_id,
+            handler_type_id,
+            handler_type_name,
+            method.as_str(),
+            &pattern,
+        );
         Arc::make_mut(&mut self.routes).push(Route {
+            route_id,
+            local_pattern: pattern.clone(),
             pattern,
             method,
             segments,
             param_names,
             handler: HandlerKind::Standard(Arc::new(handler)),
+            handler_type_id: Some(handler_type_id),
+            handler_type_name: Some(handler_type_name),
+            mount_prefix: String::new(),
+            mount_segments: Vec::new(),
             name: None,
         });
         self
@@ -215,15 +237,67 @@ impl Router {
             .trim_end_matches('/')
             .to_string();
         let (segments, param_names) = Self::parse_pattern(&pattern);
+        let route_id = crate::endpoint::next_route_id();
         Arc::make_mut(&mut self.routes).push(Route {
+            route_id,
+            local_pattern: pattern.clone(),
             pattern,
             method,
             segments,
             param_names,
             handler: HandlerKind::Streaming(Arc::new(handler)),
+            handler_type_id: None,
+            handler_type_name: None,
+            mount_prefix: String::new(),
+            mount_segments: Vec::new(),
             name: None,
         });
         self
+    }
+
+    /// Register an `#[endpoint]`-annotated handler using the HTTP method and path declared on its
+    /// attribute.
+    ///
+    /// # Panics
+    /// Panics if `handler` has no `#[endpoint]` registration or declares an invalid HTTP method.
+    pub fn endpoint<H: Handler + 'static>(self, handler: H) -> Self {
+        let tid = std::any::TypeId::of::<H>();
+        let tname = std::any::type_name::<H>();
+        let reg = inventory::iter::<crate::endpoint::EndpointRegistration>()
+            .find(|r| (r.handler_type_id)() == tid || (r.handler_type_name)() == tname)
+            .unwrap_or_else(|| {
+                panic!(
+                    "Router::endpoint called with `{tname}`, which has no #[endpoint] registration"
+                )
+            });
+        let method = Method::from_bytes(reg.method.as_bytes()).unwrap_or_else(|e| {
+            panic!(
+                "invalid HTTP method '{}' on #[endpoint] `{tname}`: {e}",
+                reg.method
+            )
+        });
+        self.route(reg.path, method, handler)
+    }
+
+    /// Returns metadata for every standard route currently registered on this router, including
+    /// accumulated mount prefixes from outer [`mount`](Self::mount) calls.
+    pub fn mounted_routes(&self) -> Vec<crate::endpoint::MountedRouteEntry> {
+        self.routes
+            .iter()
+            .filter_map(|route| {
+                let type_id = route.handler_type_id?;
+                Some(crate::endpoint::MountedRouteEntry {
+                    route_id: route.route_id,
+                    handler_type_id: type_id,
+                    handler_type_name: route.handler_type_name.unwrap_or_default().to_string(),
+                    method: route.method.as_str().to_ascii_uppercase(),
+                    local_path: crate::endpoint::format_slash_path(&route.local_pattern),
+                    mount_prefix: route.mount_prefix.clone(),
+                    full_path: crate::endpoint::format_slash_path(&route.pattern),
+                    mount_segments: route.mount_segments.clone(),
+                })
+            })
+            .collect()
     }
 
     /// Assign a name to the most recently registered route.
@@ -372,6 +446,11 @@ impl Router {
         self.route(path, Method::PUT, handler)
     }
 
+    /// Register a PATCH handler.
+    pub fn patch(self, path: &str, handler: impl Handler + 'static) -> Self {
+        self.route(path, Method::PATCH, handler)
+    }
+
     /// Register a DELETE handler.
     pub fn delete(self, path: &str, handler: impl Handler + 'static) -> Self {
         self.route(path, Method::DELETE, handler)
@@ -384,24 +463,44 @@ impl Router {
     /// creates a route matching `/api/users/{id}`.
     pub fn mount(mut self, prefix: &str, sub_router: Router) -> Self {
         let prefix = prefix.trim_start_matches('/').trim_end_matches('/');
+        let prefix_segments = crate::endpoint::split_segments(prefix);
         for route in sub_router.routes.iter() {
-            let full_pattern = if route.pattern.is_empty() {
-                prefix.to_string()
-            } else {
-                format!("{}/{}", prefix, route.pattern)
+            let full_pattern = match (prefix.is_empty(), route.pattern.is_empty()) {
+                (true, _) => route.pattern.clone(),
+                (false, true) => prefix.to_string(),
+                (false, false) => format!("{}/{}", prefix, route.pattern),
             };
             if let Some(ref name) = route.name {
                 if self.routes.iter().any(|r| r.name.as_deref() == Some(name)) {
                     panic!("Duplicate route name '{name}'");
                 }
             }
+            let new_mount_prefix = crate::endpoint::join_mount_prefix(prefix, &route.mount_prefix);
+            let mut new_mount_segments = prefix_segments.clone();
+            new_mount_segments.extend(route.mount_segments.iter().cloned());
+            crate::endpoint::record_route_mount(
+                route.route_id,
+                route.handler_type_id,
+                route.handler_type_name,
+                route.method.as_str(),
+                &route.mount_prefix,
+                &new_mount_prefix,
+                &new_mount_segments,
+                &full_pattern,
+            );
             let (segments, param_names) = Self::parse_pattern(&full_pattern);
             Arc::make_mut(&mut self.routes).push(Route {
+                route_id: route.route_id,
                 pattern: full_pattern,
+                local_pattern: route.local_pattern.clone(),
                 method: route.method.clone(),
                 segments,
                 param_names,
                 handler: route.handler.clone(),
+                handler_type_id: route.handler_type_id,
+                handler_type_name: route.handler_type_name,
+                mount_prefix: new_mount_prefix,
+                mount_segments: new_mount_segments,
                 name: route.name.clone(),
             });
         }
