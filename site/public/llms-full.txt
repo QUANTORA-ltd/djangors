@@ -37,7 +37,7 @@ good enough.
 contrib batteries, a REST framework, WebSockets/SSE, background tasks, payments, multi-tenancy) is
 built and tested; see [`PLAN.md`](PLAN.md) for the full phase-by-phase roadmap and what's done vs.
 remaining. All 32 crates are published on
-[crates.io](https://crates.io/search?q=djangors) at `0.13.0`, including the full contrib battery:
+[crates.io](https://crates.io/search?q=djangors) at `0.14.0`, including the full contrib battery:
 PDF generation, deployment, payments, multi-tenancy, sitemaps, RSS/Atom syndication, flat pages,
 redirects, flash messages, object-level permissions, TOTP/2FA, and content types / generic FKs.
 
@@ -3318,11 +3318,11 @@ At compile time, `djangors-db` (and the `djangors` facade crate) gate each SQL d
 
 ```toml
 # PostgreSQL-only build (drops sqlx-sqlite and libsqlite3-sys)
-djangors = { version = "0.13", default-features = false, features = ["postgres", "rest"] }
+djangors = { version = "0.14", default-features = false, features = ["postgres", "rest"] }
 
 # Or when depending on djangors-db / djangors-orm directly:
-djangors-db = { version = "0.13", default-features = false, features = ["postgres"] }
-djangors-orm = { version = "0.13", default-features = false, features = ["postgres"] }
+djangors-db = { version = "0.14", default-features = false, features = ["postgres"] }
+djangors-orm = { version = "0.14", default-features = false, features = ["postgres"] }
 ```
 
 > [!NOTE]
@@ -3681,7 +3681,7 @@ When depending on the `djangors` facade crate, all subsystems and both database 
 
 ```toml
 [dependencies]
-djangors = { version = "0.13", default-features = false, features = [
+djangors = { version = "0.14", default-features = false, features = [
     "postgres",   # or "sqlite" — drops libsqlite3-sys when only "postgres" is enabled
     "migrations",
     "rest",
@@ -6005,7 +6005,7 @@ Add the `oauth-provider` feature to `djangors`:
 
 ```toml
 [dependencies]
-djangors = { version = "0.13", features = ["oauth-provider"] }
+djangors = { version = "0.14", features = ["oauth-provider"] }
 ```
 
 ## Database setup and signing keys
@@ -7109,7 +7109,7 @@ Djangors implements the server side of WebAuthn (the *relying party*) in pure Ru
 without OpenSSL. Enable it with the `passkeys` feature:
 
 ```toml
-djangors = { version = "0.13", features = ["passkeys"] }
+djangors = { version = "0.14", features = ["passkeys"] }
 ```
 
 ## What is supported
@@ -8724,7 +8724,7 @@ Add the `saml` feature to `djangors`:
 
 ```toml
 [dependencies]
-djangors = { version = "0.13", features = ["saml"] }
+djangors = { version = "0.14", features = ["saml"] }
 ```
 
 ## Database setup and identity provider configuration
@@ -11419,7 +11419,7 @@ The panel is behind the `debug-panel` Cargo feature, which is off by default:
 
 ```toml
 [dependencies]
-djangors = { version = "0.13", features = ["debug-panel"] }
+djangors = { version = "0.14", features = ["debug-panel"] }
 ```
 
 ### 2. Wrap your router with settings
@@ -11909,7 +11909,7 @@ Turn on `otel` on the facade crate:
 
 ```toml
 [dependencies]
-djangors = { version = "0.13", features = ["otel"] }
+djangors = { version = "0.14", features = ["otel"] }
 ```
 
 If you depend on `djangors-core` directly, enable `otel` there instead.
@@ -12119,9 +12119,9 @@ async fn charge_card(
 Remote secret backends (`VaultProvider`, `GcpSecretManagerProvider`, and `AwsSecretsManagerProvider`) are opt-in behind the `secrets-remote` feature (which adds `reqwest`):
 
 ```toml
-djangors = { version = "0.13", features = ["secrets-remote"] }
+djangors = { version = "0.14", features = ["secrets-remote"] }
 # or directly on djangors-core:
-# djangors-core = { version = "0.13", features = ["secrets-remote"] }
+# djangors-core = { version = "0.14", features = ["secrets-remote"] }
 ```
 
 All secret values are returned as `SecretString` (`secrecy::SecretString`), which redacts `Debug` output and zeroizes memory on drop.

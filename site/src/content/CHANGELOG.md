@@ -5,6 +5,30 @@ All notable changes to Djangors are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.14.0]
+
+Typed HTTP endpoints, OpenAPI 3.1 / TypeScript codegen improvements, and faster workspace tests.
+
+### Added
+
+- **Typed HTTP endpoints & JSON Schema** (`djangors-core`, `djangors-macros`, `djangors-rest`, `djangors`):
+  - `#[derive(JsonSchema)]` macro generating OpenAPI 3.1-compatible schemas with `serde` rename/tag/flatten support.
+  - `#[endpoint(METHOD, "/path", request = ..., query = ..., response = ..., status = ..., tag = ..., name = ...)]` and `#[router]` macros plus `Router::endpoint(...)` mount-prefix tracking.
+  - `OpenApiBuilder::register_endpoint` / `register_endpoints` and upgraded `generate_typescript_client` (`to_typescript`) supporting enums, unions, `$ref`s, nested objects, and typed async client methods for custom `#[endpoint]` routes.
+  - `DJANGORS_INTROSPECT_OPENAPI=1` introspection in `djangors-core` and `dj openapi` (with automatic fallback to `DJANGORS_INTROSPECT_MODELS=1`).
+- **Explicit route mapping for `dj openapi`** (`djangors-cli`, `djangors-rest`):
+  - `dj openapi --routes <file.json>` and `OpenApiBuilder::register_snapshot_with_ops` / `CrudOp` for emitting exact per-model mount paths and CRUD operations.
+
+### Changed
+
+- **Test suite speed (~32× faster)**:
+  - Enabled `opt-level = 3` in `[profile.dev.package.*]` for pure-Rust crypto/hashing leaf crates (`argon2`, `blake2`, `rsa`, `num-bigint-dig`, `crypto-bigint`, `p256`, `p384`, `sha2`, `curve25519-dalek`, `ed25519-dalek`).
+  - Cached 2048-bit RSA test keys in `djangors-contrib-saml` and `djangors-contrib-oauth`, shared a persistent `CARGO_TARGET_DIR` (`target/cli-test-cache`) across generated-project CLI tests, and added `.config/nextest.toml` test groups to eliminate build-lock and shared-DB contention.
+
+### Fixed
+
+- Drop `auth_user_session_generation` alongside `auth_user` in `examples/polls` and `examples/school` integration tests so prior auth tests in the same Postgres database cannot trigger false `401 session invalidated` failures.
+
 ## [0.13.0]
 
 New: identity and security. Server-side sessions, email verification, invitations, GDPR export,

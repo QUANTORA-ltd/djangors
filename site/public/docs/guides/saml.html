@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-5c9aec32.js";
+            window.path_to_searchindex_js = "../searchindex-f699685b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-37bf99b9.js"></script>
@@ -180,7 +180,7 @@
 <h2 id="enabling-the-feature"><a class="header" href="#enabling-the-feature">Enabling the feature</a></h2>
 <p>Add the <code>saml</code> feature to <code>djangors</code>:</p>
 <pre><code class="language-toml">[dependencies]
-djangors = { version = "0.13", features = ["saml"] }
+djangors = { version = "0.14", features = ["saml"] }
 </code></pre>
 <h2 id="database-setup-and-identity-provider-configuration"><a class="header" href="#database-setup-and-identity-provider-configuration">Database setup and identity provider configuration</a></h2>
 <p>Create the <code>saml_identity_provider</code> table once at startup (or in a migration), import an IdP’s <code>EntityDescriptor</code> metadata XML, and insert <a href="../../crates/djangors-contrib-saml/src/lib.rs"><code>SamlSpConfig</code></a> plus your replay <a href="../../crates/djangors-cache/src/lib.rs"><code>Cache</code></a> (<code>Arc&lt;dyn Cache&gt;</code>) into <code>AppState</code>:</p>

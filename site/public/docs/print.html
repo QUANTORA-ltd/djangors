@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-5c9aec32.js";
+            window.path_to_searchindex_js = "searchindex-f699685b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-37bf99b9.js"></script>
@@ -5861,7 +5861,7 @@ of a password. The private key never leaves the user’s device. The server stor
 public key, so there is nothing to phish and nothing useful to leak.</p>
 <p>Djangors implements the server side of WebAuthn (the <em>relying party</em>) in pure Rust,
 without OpenSSL. Enable it with the <code>passkeys</code> feature:</p>
-<pre><code class="language-toml">djangors = { version = "0.13", features = ["passkeys"] }
+<pre><code class="language-toml">djangors = { version = "0.14", features = ["passkeys"] }
 </code></pre>
 <h2 id="what-is-supported"><a class="header" href="#what-is-supported">What is supported</a></h2>
 <ul>
@@ -6181,7 +6181,7 @@ let app = Router::new().merge(oauth_client_router()).with_state(state);
 <h2 id="enabling-the-feature-1"><a class="header" href="#enabling-the-feature-1">Enabling the feature</a></h2>
 <p>Add the <code>oauth-provider</code> feature to <code>djangors</code>:</p>
 <pre><code class="language-toml">[dependencies]
-djangors = { version = "0.13", features = ["oauth-provider"] }
+djangors = { version = "0.14", features = ["oauth-provider"] }
 </code></pre>
 <h2 id="database-setup-and-signing-keys"><a class="header" href="#database-setup-and-signing-keys">Database setup and signing keys</a></h2>
 <p>Create the provider tables once at startup (or in a migration) and generate an asymmetric OIDC signing key (<code>RS256</code> or <code>ES256</code>). Ensure <code>DJANGORS_FIELD_ENCRYPTION_KEY</code> (or <code>DJANGORS_FIELD_ENCRYPTION_KEYS</code>) is configured because <code>SigningKey::private_key_pem</code> is stored with <code>#[djangors(encrypted)]</code>.</p>
@@ -6277,7 +6277,7 @@ let revoked = djangors::oauth::revoke_app_tokens(&amp;db, app.id).await?;
 <h2 id="enabling-the-feature-2"><a class="header" href="#enabling-the-feature-2">Enabling the feature</a></h2>
 <p>Add the <code>saml</code> feature to <code>djangors</code>:</p>
 <pre><code class="language-toml">[dependencies]
-djangors = { version = "0.13", features = ["saml"] }
+djangors = { version = "0.14", features = ["saml"] }
 </code></pre>
 <h2 id="database-setup-and-identity-provider-configuration"><a class="header" href="#database-setup-and-identity-provider-configuration">Database setup and identity provider configuration</a></h2>
 <p>Create the <code>saml_identity_provider</code> table once at startup (or in a migration), import an IdP’s <code>EntityDescriptor</code> metadata XML, and insert <a href="../crates/djangors-contrib-saml/src/lib.rs"><code>SamlSpConfig</code></a> plus your replay <a href="../crates/djangors-cache/src/lib.rs"><code>Cache</code></a> (<code>Arc&lt;dyn Cache&gt;</code>) into <code>AppState</code>:</p>
@@ -8074,7 +8074,7 @@ codegen-units = 1
 </code></pre>
 <p>When depending on the <code>djangors</code> facade crate, all subsystems and both database backends (<code>postgres</code> and <code>sqlite</code>) are enabled by default. To minimize compile times and binary size in production, disable default features and opt into only the database backend and subsystems your application uses:</p>
 <pre><code class="language-toml">[dependencies]
-djangors = { version = "0.13", default-features = false, features = [
+djangors = { version = "0.14", default-features = false, features = [
     "postgres",   # or "sqlite" — drops libsqlite3-sys when only "postgres" is enabled
     "migrations",
     "rest",
@@ -9382,11 +9382,11 @@ let db = djangors_db::Database::connect(&amp;config).await?;
 <h3 id="cargo-feature-flags-postgres-and-sqlite"><a class="header" href="#cargo-feature-flags-postgres-and-sqlite">Cargo Feature Flags (<code>postgres</code> and <code>sqlite</code>)</a></h3>
 <p>At compile time, <code>djangors-db</code> (and the <code>djangors</code> facade crate) gate each SQL driver behind its own Cargo feature flag (<code>postgres</code> and <code>sqlite</code>, both enabled by default). If your production deployment targets only one database engine, disable default features and enable only the backend you need to drop the unused driver (such as bundled <code>libsqlite3-sys</code> or <code>sqlx-postgres</code>) from your dependency graph and release binary:</p>
 <pre><code class="language-toml"># PostgreSQL-only build (drops sqlx-sqlite and libsqlite3-sys)
-djangors = { version = "0.13", default-features = false, features = ["postgres", "rest"] }
+djangors = { version = "0.14", default-features = false, features = ["postgres", "rest"] }
 
 # Or when depending on djangors-db / djangors-orm directly:
-djangors-db = { version = "0.13", default-features = false, features = ["postgres"] }
-djangors-orm = { version = "0.13", default-features = false, features = ["postgres"] }
+djangors-db = { version = "0.14", default-features = false, features = ["postgres"] }
+djangors-orm = { version = "0.14", default-features = false, features = ["postgres"] }
 </code></pre>
 <blockquote class="blockquote-tag blockquote-tag-note">
 <p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
@@ -11725,7 +11725,7 @@ its timing and a warning for each repeated one.</p>
 <h3 id="1-enable-the-feature"><a class="header" href="#1-enable-the-feature">1. Enable the feature</a></h3>
 <p>The panel is behind the <code>debug-panel</code> Cargo feature, which is off by default:</p>
 <pre><code class="language-toml">[dependencies]
-djangors = { version = "0.13", features = ["debug-panel"] }
+djangors = { version = "0.14", features = ["debug-panel"] }
 </code></pre>
 <h3 id="2-wrap-your-router-with-settings"><a class="header" href="#2-wrap-your-router-with-settings">2. Wrap your router with settings</a></h3>
 <p><code>DebugPanelLayer::for_settings(&amp;settings)</code> enables the panel only when <code>settings.debug</code>
@@ -11961,7 +11961,7 @@ OpenTelemetry code.</p>
 <h2 id="enable-the-feature"><a class="header" href="#enable-the-feature">Enable the feature</a></h2>
 <p>Turn on <code>otel</code> on the facade crate:</p>
 <pre><code class="language-toml">[dependencies]
-djangors = { version = "0.13", features = ["otel"] }
+djangors = { version = "0.14", features = ["otel"] }
 </code></pre>
 <p>If you depend on <code>djangors-core</code> directly, enable <code>otel</code> there instead.</p>
 <h2 id="code-example-5"><a class="header" href="#code-example-5">Code Example</a></h2>
@@ -12569,9 +12569,9 @@ let url = sign_url_for(&amp;signer, "GET", "/files/report.pdf?v=1", Duration::fr
 <h1 id="secrets-providers"><a class="header" href="#secrets-providers">Secrets providers</a></h1>
 <p><code>djangors_core::secrets</code> (enabled by the default <code>secrets</code> feature) loads secrets from environment variables and <code>.env</code> files, and interpolates <code>${secret:NAME}</code> placeholders in settings without pulling in an HTTP client.</p>
 <p>Remote secret backends (<code>VaultProvider</code>, <code>GcpSecretManagerProvider</code>, and <code>AwsSecretsManagerProvider</code>) are opt-in behind the <code>secrets-remote</code> feature (which adds <code>reqwest</code>):</p>
-<pre><code class="language-toml">djangors = { version = "0.13", features = ["secrets-remote"] }
+<pre><code class="language-toml">djangors = { version = "0.14", features = ["secrets-remote"] }
 # or directly on djangors-core:
-# djangors-core = { version = "0.13", features = ["secrets-remote"] }
+# djangors-core = { version = "0.14", features = ["secrets-remote"] }
 </code></pre>
 <p>All secret values are returned as <code>SecretString</code> (<code>secrecy::SecretString</code>), which redacts <code>Debug</code> output and zeroizes memory on drop.</p>
 <h2 id="built-in-providers"><a class="header" href="#built-in-providers">Built-in providers</a></h2>
