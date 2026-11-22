@@ -63,7 +63,7 @@ When depending on the `djangors` facade crate, all subsystems and both database 
 
 ```toml
 [dependencies]
-djangors = { version = "0.14", default-features = false, features = [
+djangors = { version = "1.0", default-features = false, features = [
     "postgres",   # or "sqlite" — drops libsqlite3-sys when only "postgres" is enabled
     "migrations",
     "rest",

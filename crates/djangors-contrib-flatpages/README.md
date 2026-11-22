@@ -6,7 +6,7 @@ Part of [Djangors](https://github.com/QUANTORA-ltd/djangors), a batteries-includ
 
 ```toml
 [dependencies]
-djangors-contrib-flatpages = "0.14"
+djangors-contrib-flatpages = "1.0"
 ```
 
 Provides admin-editable flat pages served as trusted HTML, matching Django's flatpages convention where staff-authored page bodies render as-is. Applications register flatpage routes explicitly via `flatpage_routes` to render database-backed static content pages.

@@ -6,7 +6,7 @@ Part of [Djangors](https://github.com/QUANTORA-ltd/djangors), a batteries-includ
 
 ```toml
 [dependencies]
-djangors-contrib-saml = "0.14"
+djangors-contrib-saml = "1.0"
 ```
 
 Serves SP metadata, starts logins, and verifies responses at the ACS endpoint. Signatures are checked against pinned IdP certificates (RSA-SHA256, RSA-SHA512, ECDSA-P256-SHA256) with exclusive canonicalization. DTDs, entities, duplicate IDs, extra or nested assertions, and encrypted assertions are rejected. Audience, recipient, timing, `InResponseTo` and replay are all checked.

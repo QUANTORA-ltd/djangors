@@ -6,7 +6,7 @@ Part of [Djangors](https://github.com/QUANTORA-ltd/djangors), a batteries-includ
 
 ```toml
 [dependencies]
-djangors-contrib-sites = "0.14"
+djangors-contrib-sites = "1.0"
 ```
 
 Mirrors `django.contrib.sites`: stores `Site` rows (`domain`, `name`) in the `django_site` table, resolves the active site from incoming request `Host` headers via [`get_current_site`] or [`CurrentSiteLayer`], and registers `Site` in `djangors-admin`.

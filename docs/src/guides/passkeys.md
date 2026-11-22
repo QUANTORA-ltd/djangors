@@ -8,7 +8,7 @@ Djangors implements the server side of WebAuthn (the *relying party*) in pure Ru
 without OpenSSL. Enable it with the `passkeys` feature:
 
 ```toml
-djangors = { version = "0.14", features = ["passkeys"] }
+djangors = { version = "1.0", features = ["passkeys"] }
 ```
 
 ## What is supported

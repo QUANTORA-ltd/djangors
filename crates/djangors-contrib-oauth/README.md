@@ -6,7 +6,7 @@ Part of [Djangors](https://github.com/QUANTORA-ltd/djangors), a batteries-includ
 
 ```toml
 [dependencies]
-djangors-contrib-oauth = "0.14"
+djangors-contrib-oauth = "1.0"
 ```
 
 - **`client`** (default): sign in with Google, Microsoft, Apple, GitHub or any OIDC provider. Uses `state`, PKCE (S256) and `nonce`, verifies ID tokens against the provider's JWKS, and links existing accounts by email only when the provider says the email is verified.
