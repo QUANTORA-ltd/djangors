@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-f699685b.js";
+            window.path_to_searchindex_js = "../searchindex-6be39a06.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-37bf99b9.js"></script>
+        <script src="../toc-08d624e0.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -207,11 +207,11 @@ let db = djangors_db::Database::connect(&amp;config).await?;
 <h3 id="cargo-feature-flags-postgres-and-sqlite"><a class="header" href="#cargo-feature-flags-postgres-and-sqlite">Cargo Feature Flags (<code>postgres</code> and <code>sqlite</code>)</a></h3>
 <p>At compile time, <code>djangors-db</code> (and the <code>djangors</code> facade crate) gate each SQL driver behind its own Cargo feature flag (<code>postgres</code> and <code>sqlite</code>, both enabled by default). If your production deployment targets only one database engine, disable default features and enable only the backend you need to drop the unused driver (such as bundled <code>libsqlite3-sys</code> or <code>sqlx-postgres</code>) from your dependency graph and release binary:</p>
 <pre><code class="language-toml"># PostgreSQL-only build (drops sqlx-sqlite and libsqlite3-sys)
-djangors = { version = "0.14", default-features = false, features = ["postgres", "rest"] }
+djangors = { version = "1.0", default-features = false, features = ["postgres", "rest"] }
 
 # Or when depending on djangors-db / djangors-orm directly:
-djangors-db = { version = "0.14", default-features = false, features = ["postgres"] }
-djangors-orm = { version = "0.14", default-features = false, features = ["postgres"] }
+djangors-db = { version = "1.0", default-features = false, features = ["postgres"] }
+djangors-orm = { version = "1.0", default-features = false, features = ["postgres"] }
 </code></pre>
 <blockquote class="blockquote-tag blockquote-tag-note">
 <p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
@@ -481,7 +481,104 @@ assert_eq!(v, Some(1));
 <li><code>Serializable</code></li>
 </ul>
 <p><code>transaction_with_isolation(level, f)</code> begins the transaction and issues the matching <code>SET TRANSACTION ISOLATION LEVEL ...</code> before running <code>f</code>.</p>
-<pre><code></code></pre>
+<hr>
+<h2 id="optional-mysql--mariadb-backend-mysql-feature"><a class="header" href="#optional-mysql--mariadb-backend-mysql-feature">Optional MySQL / MariaDB Backend (<code>mysql</code> Feature)</a></h2>
+<p>Djangors 1.0 adds optional MySQL / MariaDB support gated behind the <code>mysql</code> Cargo feature flag (off by default to keep compile times and binary sizes minimal when targeting PostgreSQL or SQLite).</p>
+<p>Enable it in <code>Cargo.toml</code>:</p>
+<pre><code class="language-toml"># Enable MySQL alongside default backends
+djangors = { version = "1.0", features = ["mysql"] }
+
+# Or build a MySQL-only binary
+djangors-db = { version = "1.0", default-features = false, features = ["mysql"] }
+djangors-orm = { version = "1.0", default-features = false, features = ["mysql"] }
+</code></pre>
+<h3 id="connection-strings--dialect-detection"><a class="header" href="#connection-strings--dialect-detection">Connection Strings &amp; Dialect Detection</a></h3>
+<p><code>Dialect::from_url</code> automatically selects <code>Dialect::MySql</code> for <code>mysql://</code> and <code>mariadb://</code> URLs, and <code>Database::connect</code> opens a <code>Database::MySql</code> pool (<code>sqlx::MySqlPool</code>):</p>
+<pre><code class="language-bash">export DATABASE_URL="mysql://user:password@localhost:3306/my_app"
+</code></pre>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_db::{Database, DatabaseConfig, Dialect};
+
+let url = "mysql://user:password@localhost:3306/my_app";
+assert_eq!(Dialect::from_url(url), Dialect::MySql);
+
+let db = Database::connect(&amp;DatabaseConfig::new(url)).await?;
+// `db.conn()` and `db.transaction_conn(...)` work transparently on MySQL, Postgres, and SQLite.
+<span class="boring">}</span></code></pre>
+<blockquote class="blockquote-tag blockquote-tag-note">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
+<p><code>Dialect::MySql</code> uses <code>?</code> placeholders, backtick identifier quoting (<code>`col`</code>), and MySQL-compatible DDL/date functions across the ORM, executor, and migration engine.</p>
+</blockquote>
+<hr>
+<h2 id="multi-database-routing"><a class="header" href="#multi-database-routing">Multi-Database Routing</a></h2>
+<p>Djangors 1.0 provides Django’s <code>DATABASE_ROUTERS</code> equivalent in <code>djangors_db::router</code> so applications can route reads, writes, and migrations across multiple named databases (such as a primary/replica pair or per-app databases).</p>
+<h3 id="core-types"><a class="header" href="#core-types">Core Types</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>DatabaseRouter</code></td><td>Trait with <code>db_for_read(&amp;self, model_table)</code>, <code>db_for_write(&amp;self, model_table)</code>, and <code>allow_migrate(&amp;self, db_alias, app_label)</code></td></tr>
+<tr><td><code>PrimaryReplicaRouter</code></td><td>Built-in router directing all reads to a replica alias and all writes/migrations to a primary alias</td></tr>
+<tr><td><code>MultiDatabase</code></td><td>Registry holding named <code>Database</code> handles (<code>"default"</code>, <code>"replica"</code>, <code>"analytics"</code>, …) and an ordered router chain</td></tr>
+<tr><td><code>QuerySet::using(&amp;multi, alias)</code></td><td>Resolves either an explicit alias (<code>Some("analytics")</code>) or the router-selected read database (<code>None</code>)</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="primary--replica-setup"><a class="header" href="#primary--replica-setup">Primary / Replica Setup</a></h3>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_db::{Database, DatabaseConfig, MultiDatabase, PrimaryReplicaRouter};
+use djangors_orm::Model;
+
+let primary = Database::connect(&amp;DatabaseConfig::new("postgres://.../app_primary")).await?;
+let replica = Database::connect(&amp;DatabaseConfig::new("postgres://.../app_replica")).await?;
+
+let dbs = MultiDatabase::new(primary)
+    .register("replica", replica)
+    .with_router(PrimaryReplicaRouter::new("default", "replica"));
+
+// Router-driven lookup: reads hit "replica", writes hit "default"
+let read_db = dbs.read_db("polls_question")?;
+let write_db = dbs.write_db("polls_question")?;
+
+// Or use QuerySet::using(&amp;dbs, alias):
+let qs = Question::objects();
+let questions = qs.all(qs.using(&amp;dbs, None)?).await?;            // uses router -&gt; "replica"
+let fresh = qs.all(qs.using(&amp;dbs, Some("default"))?).await?;     // explicit primary read
+<span class="boring">}</span></code></pre>
+<h3 id="custom-databaserouter"><a class="header" href="#custom-databaserouter">Custom <code>DatabaseRouter</code></a></h3>
+<p>Implement <code>DatabaseRouter</code> to pin specific tables or apps to dedicated databases; returning <code>None</code> defers to the next router in the chain (and ultimately <code>"default"</code>):</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_db::DatabaseRouter;
+
+struct AnalyticsRouter;
+
+impl DatabaseRouter for AnalyticsRouter {
+    fn db_for_read(&amp;self, model_table: &amp;str) -&gt; Option&lt;&amp;str&gt; {
+        if model_table.starts_with("analytics_") {
+            Some("analytics")
+        } else {
+            None
+        }
+    }
+
+    fn db_for_write(&amp;self, model_table: &amp;str) -&gt; Option&lt;&amp;str&gt; {
+        self.db_for_read(model_table)
+    }
+
+    fn allow_migrate(&amp;self, db_alias: &amp;str, app_label: &amp;str) -&gt; Option&lt;bool&gt; {
+        if app_label == "analytics" {
+            Some(db_alias == "analytics")
+        } else {
+            None
+        }
+    }
+}
+<span class="boring">}</span></code></pre>
 
                     </main>
 

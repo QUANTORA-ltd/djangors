@@ -5,6 +5,40 @@ All notable changes to Djangors are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [1.0.0]
+
+First stable release of Djangors — full Django 5.x/6.0 parity across ORM, multi-DB, MySQL, GIS,
+forms/formsets, templates/partials, i18n/l10n, generic views, core HTTP/middleware, pluggable
+password hashers, admin/admindocs, sites, migrations, testing utilities, and management CLI.
+
+### Added
+
+- **Database, ORM, Multi-DB, MySQL, and GIS** (`djangors-db`, `djangors-orm`, `djangors-contrib-gis`, `djangors`):
+  - Optional `mysql` Cargo feature (`Dialect::MySql`, `Database::MySql`, `Conn::MySqlPool`/`MySqlTx`, `DbRow::MySql`).
+  - Multi-database routing (`DatabaseRouter`, `PrimaryReplicaRouter`, `MultiDatabase`, `QuerySet::using`).
+  - Extended ORM lookups (`IStartsWith`, `IEndsWith`, `Range`, `Year`, `Month`, `Day`, `WeekDay`, `Date`, `Hour`, `JsonHasKey`, `JsonContains`).
+  - Extended SQL expressions (`Cast`, `Extract`, `Trunc`/`TruncKind`, `Case`/`WhenBranch`, `Window`/`WindowFunc`, `Subquery`, `TrigramSimilarity`, `RawSql`).
+  - Schema metadata for `IndexKind`, `ConstraintMeta`, `CompositePrimaryKey`, and `GeneratedFieldSpec`.
+  - New `QuerySet` methods: `distinct`, `distinct_on`, `defer`, `only`, `none`, `reverse`, `union`/`intersection`/`difference` (`SetOp`), `earliest`, `latest`, `in_bulk`, `bulk_update`, `raw`, `iterator`.
+  - New `djangors-contrib-gis` crate (`gis` facade feature): `Point`, `LineString`, `Polygon`, `Geometry`, WKT/EWKT parsing & formatting, Haversine distance, and PostGIS spatial SQL helpers.
+- **Forms, Widgets, Media, and FormSets** (`djangors-forms`):
+  - 17 standard Django fields (`FloatField`, `DecimalField`, `DateField`, `DateTimeField`, `TimeField`, `DurationField`, `UrlField`, `SlugField`, `UuidField`, `FileField`, `ImageField`, `MultipleChoiceField`, `TypedChoiceField`, `JsonField`, `GenericIpAddressField`, `ModelChoiceField`, `ModelMultipleChoiceField`).
+  - 8 widgets (`FileInput`, `ClearableFileInput`, `SelectMultiple`, `CheckboxSelectMultiple`, `DateTimeInput`, `TimeInput`, `UrlInput`, `SplitDateTimeWidget`), `FormMedia`, `ManagementForm`, `FormSet`, and `InlineFormSet`.
+- **Templates, i18n/l10n, and Generic Views** (`djangors-template`, `djangors-i18n`, `djangors-views`):
+  - Context processors (`TemplateEngine::add_context_processor`, `render_with_request`), Django 5.1 `querystring` function, Django 6.0 `render_partial` (`{# partialdef name #}`), and 13 filters (`json_script`, `timesince`, `timeuntil`, `linebreaks`, `linebreaksbr`, `slugify`, `urlize`, `striptags`, `yesno`, `ordinal`, `naturalday`, `apnumber`, `dictsort`).
+  - Locale-aware `format_number`/`format_date`/`format_datetime`, task-local timezone helpers (`with_timezone`, `activate_timezone`, `current_timezone`), `ActiveLocale`, `detect_locale`, and `i18n_patterns`.
+  - `TemplateView`, `RedirectView`, `FormView`, `DateArchiveConfig`, `ArchiveIndexView`, `YearArchiveView`, `MonthArchiveView`, and `DayArchiveView`.
+- **Core HTTP, Middleware, System Checks, Auth, Sites, and Testing** (`djangors-core`, `djangors-auth`, `djangors-contrib-sites`, `djangors-test`):
+  - `FileResponse` (Range/206/416, MIME, Content-Disposition), `TempFileUpload`, `ConditionalGetLayer` (ETag/Last-Modified/304), `LoginRequiredLayer`, `Response::vary_on_headers`/`vary_on_cookie`, and extensible `inventory`-backed System Check Framework (`run_system_checks`, `silenced_system_checks`).
+  - Pluggable `PasswordHasher` trait & `PasswordHasherRegistry` (`Argon2Hasher`, Django-compatible `Pbkdf2Sha256Hasher`, `Pbkdf2Sha512Hasher`) with transparent on-login re-hashing, plus turnkey HTML auth views (`login_view`, `logout_view`, `password_change_view`, `password_reset_view`, `auth_routes`).
+  - New `djangors-contrib-sites` crate (`sites` facade feature): `Site` model, `CurrentSite`, `get_current_site`, `CurrentSiteLayer`, `register_admin`.
+  - Testing helpers: `assert_num_queries`, `LiveServer`, `RequestFactory`, and `SettingsOverride`/`override_env`.
+- **Migrations, Admin/AdminDocs, and CLI** (`djangors-migrations`, `djangors-admin`, `djangors-cli`):
+  - Migration `Operation` additions (`RenameTable`, `AddConstraint`, `RemoveConstraint`, `AlterColumnNullability`, `AlterColumnDefault`, `RunSql`), `DataMigration`/`RunRust`, `MigrateOptions { fake, fake_initial, plan_only }`, topological `-- dependencies:` ordering, and `squash_migrations`.
+  - Admin `ModelAdminConfig` parity (`autocomplete_fields`, `prepopulated_fields`, `filter_horizontal`, `filter_vertical`, `list_select_related`, `ordering`, `sortable_by`, `show_facets`, `save_as`, `save_on_top`), `SimpleListFilter`, autocomplete JSON endpoint, facet counts, and AdminDocs (`/admin/doc/`).
+  - 11 new `dj` commands: `dumpdata`, `loaddata`, `flush`, `squashmigrations`, `diffsettings`, `sendtestemail`, `makemessages`, `compilemessages`, `changepassword`, `createcachetable`, and `showurls`.
+- **Repository Hygiene**: Added root `SECURITY.md`, `CONTRIBUTING.md`, and `CODE_OF_CONDUCT.md`.
+
 ## [0.14.0]
 
 Typed HTTP endpoints, OpenAPI 3.1 / TypeScript codegen improvements, and faster workspace tests.

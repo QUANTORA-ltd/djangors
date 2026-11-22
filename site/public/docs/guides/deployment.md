@@ -63,7 +63,7 @@ When depending on the `djangors` facade crate, all subsystems and both database 
 
 ```toml
 [dependencies]
-djangors = { version = "0.14", default-features = false, features = [
+djangors = { version = "1.0", default-features = false, features = [
     "postgres",   # or "sqlite" — drops libsqlite3-sys when only "postgres" is enabled
     "migrations",
     "rest",
@@ -259,3 +259,47 @@ app.run_with_shutdown(async {
 1. Upon receiving `SIGINT` or `SIGTERM`, the TCP accept loop stops listening for new connections.
 2. An active connection drain phase initiates, allowing in-flight HTTP requests to complete.
 3. If in-flight requests do not complete within 30 seconds, remaining connections are aborted to ensure timely process termination.
+
+---
+
+## Keeping Binaries and `target/` Small
+
+By default, Cargo emits full DWARF debug symbols for every dependency in `target/debug/` (which can
+grow to multiple gigabytes) and optimizes release binaries for speed rather than size. Djangors
+solves both out of the box when you scaffold with `dj new`:
+
+1. **Enable only the Cargo features you use** — instead of pulling every optional battery into your
+   dependency tree, use `default-features = false` on `djangors`:
+
+   ```toml
+   [dependencies]
+   djangors = { version = "1.0", default-features = false, features = ["postgres", "rest", "auth"] }
+   ```
+
+   A minimal `djangors` Postgres app compiles to a **~3–4 MiB** stripped static binary.
+
+2. **Shrink `target/debug/` by ~70%** — disable debug symbols for third-party crates while keeping
+   file + line backtraces for your own code (included automatically by `dj new`):
+
+   ```toml
+   [profile.dev]
+   debug = "line-tables-only"
+
+   [profile.dev.package."*"]
+   debug = 0
+   ```
+
+3. **Go-sized release binaries** — optimize for size, strip symbols, enable LTO, and abort on panic
+   (included automatically by `dj new`):
+
+   ```toml
+   [profile.release]
+   opt-level = "z"
+   lto = "thin"
+   strip = true
+   codegen-units = 1
+   panic = "abort"
+   ```
+
+4. **Share build artifacts across projects** — set a shared `CARGO_TARGET_DIR` (or `sccache`) so
+   common dependencies are compiled and stored once on disk rather than duplicated per project.

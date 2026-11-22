@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-f699685b.js";
+            window.path_to_searchindex_js = "../searchindex-6be39a06.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-37bf99b9.js"></script>
+        <script src="../toc-08d624e0.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -409,6 +409,101 @@ are not handled.</li>
 <li><strong>The <code>pk</code> name is fixed.</strong> Detail/update/delete look up the <code>pk</code> path
 parameter by name, so your route must use <code>{pk}</code>.</li>
 </ul>
+<hr>
+<h2 id="base-generic-views-templateview-redirectview-formview"><a class="header" href="#base-generic-views-templateview-redirectview-formview">Base Generic Views (<code>TemplateView</code>, <code>RedirectView</code>, <code>FormView</code>)</a></h2>
+<p>Djangors 1.0 adds Django’s three non-model base views:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>View</th><th>Purpose</th><th>Key Builder Methods</th></tr>
+</thead>
+<tbody>
+<tr><td><code>TemplateView</code></td><td>Renders a static or context-enriched template</td><td><code>TemplateView::new(engine, template_name).with_context(json!(...))</code></td></tr>
+<tr><td><code>RedirectView</code></td><td>Returns <code>302 Found</code> or <code>301 Moved Permanently</code></td><td><code>RedirectView::new(url).permanent(true).query_string(true)</code></td></tr>
+<tr><td><code>FormView</code></td><td><code>GET</code> renders form; <code>POST</code> validates via closure and redirects on success</td><td><code>FormView::new(engine, template_name, success_url).with_context(...)</code></td></tr>
+</tbody>
+</table>
+</div>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_core::Router;
+use djangors_views::{FormView, RedirectView, TemplateView};
+use std::collections::HashMap;
+
+fn base_view_routes() -&gt; Router {
+    Router::new()
+        .get("/about/", |req, params| async move {
+            TemplateView::new(&amp;*TEMPLATES, "about.html")
+                .with_context(serde_json::json!({ "version": "1.0" }))
+                .dispatch(req, params)
+                .await
+        })
+        .get("/old-home/", |req, params| async move {
+            RedirectView::new("/")
+                .permanent(true)
+                .query_string(true)
+                .dispatch(req, params)
+                .await
+        })
+        .post("/contact/", |req, params| async move {
+            FormView::new(&amp;*TEMPLATES, "contact.html", "/contact/thanks/")
+                .dispatch(req, params, |data| {
+                    if data.get("message").map(|s| s.trim().is_empty()).unwrap_or(true) {
+                        let mut errs = HashMap::new();
+                        errs.insert("message".into(), "Message is required.".into());
+                        Err(errs)
+                    } else {
+                        Ok(())
+                    }
+                })
+                .await
+        })
+}
+<span class="boring">}</span></code></pre>
+<h2 id="date-based-archive-views"><a class="header" href="#date-based-archive-views">Date-Based Archive Views</a></h2>
+<p>Djangors 1.0 provides four date-based archive views configured with <strong><code>DateArchiveConfig</code></strong>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>View</th><th>Path Parameters</th><th>Template Context</th></tr>
+</thead>
+<tbody>
+<tr><td><code>ArchiveIndexView&lt;M&gt;::list</code></td><td><em>(none)</em></td><td><code>object_list</code> (newest first), <code>date_field</code></td></tr>
+<tr><td><code>YearArchiveView&lt;M&gt;::list</code></td><td><code>{year}</code> (<code>i32</code>)</td><td><code>object_list</code>, <code>year</code>, <code>date_field</code></td></tr>
+<tr><td><code>MonthArchiveView&lt;M&gt;::list</code></td><td><code>{year}</code>, <code>{month}</code> (<code>1..=12</code>)</td><td><code>object_list</code>, <code>year</code>, <code>month</code>, <code>date_field</code></td></tr>
+<tr><td><code>DayArchiveView&lt;M&gt;::list</code></td><td><code>{year}</code>, <code>{month}</code>, <code>{day}</code></td><td><code>object_list</code>, <code>year</code>, <code>month</code>, <code>day</code>, <code>date_field</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>Set <code>.allow_empty(false)</code> on <code>DateArchiveConfig</code> to return <code>404 Not Found</code> when a date range has no matching rows (default <code>true</code>).</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_core::Router;
+use djangors_views::{
+    ArchiveIndexView, DateArchiveConfig, DayArchiveView, MonthArchiveView, YearArchiveView,
+};
+
+fn archive_routes() -&gt; Router {
+    Router::new()
+        .get("/archive/", |req, params| async move {
+            let cfg = DateArchiveConfig::new(&amp;*TEMPLATES, "polls/archive.html", "pub_date");
+            ArchiveIndexView::&lt;Question&gt;::list(req, params, &amp;cfg).await
+        })
+        .get("/archive/{year:i64}/", |req, params| async move {
+            let cfg = DateArchiveConfig::new(&amp;*TEMPLATES, "polls/archive_year.html", "pub_date")
+                .allow_empty(false);
+            YearArchiveView::&lt;Question&gt;::list(req, params, &amp;cfg).await
+        })
+        .get("/archive/{year:i64}/{month:i64}/", |req, params| async move {
+            let cfg = DateArchiveConfig::new(&amp;*TEMPLATES, "polls/archive_month.html", "pub_date");
+            MonthArchiveView::&lt;Question&gt;::list(req, params, &amp;cfg).await
+        })
+        .get("/archive/{year:i64}/{month:i64}/{day:i64}/", |req, params| async move {
+            let cfg = DateArchiveConfig::new(&amp;*TEMPLATES, "polls/archive_day.html", "pub_date");
+            DayArchiveView::&lt;Question&gt;::list(req, params, &amp;cfg).await
+        })
+}
+<span class="boring">}</span></code></pre>
 
                     </main>
 

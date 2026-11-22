@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-f699685b.js";
+            window.path_to_searchindex_js = "../searchindex-6be39a06.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-37bf99b9.js"></script>
+        <script src="../toc-08d624e0.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -300,6 +300,100 @@ engine.set_url_resolver(move |name, params| {
 });
 <span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
+<hr>
+<h2 id="djangors-10-template-additions"><a class="header" href="#djangors-10-template-additions">Djangors 1.0 Template Additions</a></h2>
+<h3 id="context-processors-add_context_processor--render_with_request"><a class="header" href="#context-processors-add_context_processor--render_with_request">Context Processors (<code>add_context_processor</code> &amp; <code>render_with_request</code>)</a></h3>
+<p>Context processors inject shared variables (CSRF token, static URL, request metadata, site config) into every rendered template automatically when rendering with <code>render_with_request</code>.</p>
+<p>Built-in processors in <code>djangors_template</code>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Processor</th><th>Injected Context</th></tr>
+</thead>
+<tbody>
+<tr><td><code>StaticUrlProcessor::new("/static/")</code></td><td><code>STATIC_URL</code></td></tr>
+<tr><td><code>CsrfContextProcessor::new()</code></td><td><code>csrf_token</code> (from request <code>CsrfToken</code> extension or cookie)</td></tr>
+<tr><td><code>RequestContextProcessor::new()</code></td><td><code>request</code> (<code>path</code>, <code>method</code>, <code>query</code>)</td></tr>
+<tr><td><code>ExtraContextProcessor::new(...)</code></td><td>Arbitrary static key/value pairs (<code>.with("site_name", "MyApp")</code>)</td></tr>
+</tbody>
+</table>
+</div>
+<p>Implement the <code>ContextProcessor</code> trait for custom per-request context, register processors with <code>TemplateEngine::add_context_processor</code>, and render via <code>render_with_request</code>:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use std::sync::Arc;
+use djangors_core::{DjangorsError, Request, Response};
+use djangors_template::{
+    render_with_request, CsrfContextProcessor, ExtraContextProcessor, RequestContextProcessor,
+    StaticUrlProcessor, TemplateEngine,
+};
+
+let mut engine = TemplateEngine::new(vec!["templates".into()])?;
+engine.add_context_processor(Arc::new(StaticUrlProcessor::new("/static/")));
+engine.add_context_processor(Arc::new(CsrfContextProcessor::new()));
+engine.add_context_processor(Arc::new(RequestContextProcessor::new()));
+engine.add_context_processor(Arc::new(
+    ExtraContextProcessor::new(Default::default()).with("site_name", "Polls"),
+));
+
+async fn home(req: Request, engine: &amp;TemplateEngine) -&gt; Result&lt;Response, DjangorsError&gt; {
+    render_with_request(
+        engine,
+        &amp;req,
+        "home.html",
+        minijinja::context! { title =&gt; "Welcome" },
+    )
+}
+<span class="boring">}</span></code></pre>
+<h3 id="querystring-function--template-partials-render_partial"><a class="header" href="#querystring-function--template-partials-render_partial"><code>querystring(...)</code> Function &amp; Template Partials (<code>render_partial</code>)</a></h3>
+<ul>
+<li><strong><code>querystring(...)</code></strong>: Builds a URL-encoded query string from keyword arguments (ideal for pagination/filter links):</li>
+</ul>
+<pre><code class="language-jinja">&lt;a href="?{{ querystring(page=2, sort='votes') }}"&gt;Next page&lt;/a&gt;
+</code></pre>
+<ul>
+<li><strong>Template Partials (<code>render_partial</code>)</strong>: Define named fragments inside any template using <code>{# partialdef name #}</code> … <code>{# endpartialdef #}</code> and render just that fragment (ideal for HTMX / partial page updates):</li>
+</ul>
+<pre><code class="language-jinja">{# templates/polls/list.html #}
+&lt;div id="poll-list"&gt;
+  {# partialdef items #}
+  &lt;ul&gt;
+    {% for q in questions %}&lt;li&gt;{{ q.question_text }}&lt;/li&gt;{% endfor %}
+  &lt;/ul&gt;
+  {# endpartialdef #}
+&lt;/div&gt;
+</code></pre>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>let fragment_html = engine.render_partial(
+    "polls/list.html",
+    "items",
+    minijinja::context! { questions =&gt; questions },
+)?;
+<span class="boring">}</span></code></pre>
+<h3 id="new-built-in-filters-10"><a class="header" href="#new-built-in-filters-10">New Built-in Filters (1.0)</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Filter</th><th>Example Usage</th><th>Description / Output</th></tr>
+</thead>
+<tbody>
+<tr><td><code>json_script</code></td><td><code>{{ data|json_script('app-data') }}</code></td><td>Renders XSS-safe <code>&lt;script id="app-data" type="application/json"&gt;...&lt;/script&gt;</code></td></tr>
+<tr><td><code>timesince</code></td><td><code>{{ created_at|timesince }}</code></td><td>Human-readable elapsed time (<code>"2 hours, 15 minutes"</code>)</td></tr>
+<tr><td><code>timeuntil</code></td><td><code>{{ starts_at|timeuntil }}</code></td><td>Human-readable time remaining until a future timestamp</td></tr>
+<tr><td><code>linebreaks</code></td><td><code>{{ body|linebreaks }}</code></td><td>Converts blank lines to <code>&lt;p&gt;...&lt;/p&gt;</code> and single newlines to <code>&lt;br&gt;</code></td></tr>
+<tr><td><code>linebreaksbr</code></td><td><code>{{ body|linebreaksbr }}</code></td><td>Converts all newlines to <code>&lt;br&gt;</code></td></tr>
+<tr><td><code>slugify</code></td><td><code>{{ title|slugify }}</code></td><td>Converts text to lowercase URL-safe ASCII slug (<code>"hello-world"</code>)</td></tr>
+<tr><td><code>urlize</code></td><td><code>{{ text|urlize }}</code></td><td>Turns plain-text URLs and emails into clickable <code>&lt;a&gt;</code> links</td></tr>
+<tr><td><code>striptags</code></td><td><code>{{ html|striptags }}</code></td><td>Strips all HTML tags from a string</td></tr>
+<tr><td><code>yesno</code></td><td><code>{{ flag|yesno('yes,no,maybe') }}</code></td><td>Maps <code>true</code> / <code>false</code> / <code>None</code> to custom labels</td></tr>
+<tr><td><code>ordinal</code></td><td><code>{{ 3|ordinal }}</code></td><td>Formats integers as English ordinals (<code>"1st"</code>, <code>"2nd"</code>, <code>"3rd"</code>, <code>"4th"</code>)</td></tr>
+<tr><td><code>naturalday</code></td><td><code>{{ dt|naturalday }}</code></td><td>Renders <code>"today"</code>, <code>"yesterday"</code>, <code>"tomorrow"</code>, or formatted date</td></tr>
+<tr><td><code>apnumber</code></td><td><code>{{ 5|apnumber }}</code></td><td>AP-style numbers: spells out 1–9 (<code>"five"</code>), leaves others numeric</td></tr>
+<tr><td><code>dictsort</code></td><td><code>{{ items|dictsort('name') }}</code></td><td>Sorts a list of objects/maps ascending by the given key</td></tr>
+</tbody>
+</table>
+</div>
 
                     </main>
 

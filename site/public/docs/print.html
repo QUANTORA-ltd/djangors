@@ -37,10 +37,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-f699685b.js";
+            window.path_to_searchindex_js = "searchindex-6be39a06.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-37bf99b9.js"></script>
+        <script src="toc-08d624e0.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -1413,6 +1413,18 @@ DetailView::&lt;Article&gt;::detail(req, params, &amp;config).await
 <tr><td style="text-align: left"><code>python manage.py check</code></td><td style="text-align: left"><code>dj check [--deploy]</code></td><td style="text-align: left">Runs static checks (with <code>--deploy</code>, production-safety checks)</td></tr>
 <tr><td style="text-align: left"><code>python manage.py createpermissions</code></td><td style="text-align: left"><code>dj createpermissions</code></td><td style="text-align: left">Generates the standard <code>view</code>/<code>add</code>/<code>change</code>/<code>delete</code> permissions per model</td></tr>
 <tr><td style="text-align: left"><code>python manage.py inspectdb</code></td><td style="text-align: left"><code>dj inspectdb</code></td><td style="text-align: left">Writes <code>#[derive(Model)]</code> structs for an existing database’s tables</td></tr>
+<tr><td style="text-align: left"><code>python manage.py clearsessions</code></td><td style="text-align: left"><code>dj clearsessions</code></td><td style="text-align: left">Deletes expired server-side sessions from <code>djangors_session</code></td></tr>
+<tr><td style="text-align: left"><code>python manage.py dumpdata</code></td><td style="text-align: left"><code>dj dumpdata</code></td><td style="text-align: left">Exports database rows as Django-style JSON fixtures</td></tr>
+<tr><td style="text-align: left"><code>python manage.py loaddata</code></td><td style="text-align: left"><code>dj loaddata &lt;files...&gt;</code></td><td style="text-align: left">Loads JSON fixture files into the database</td></tr>
+<tr><td style="text-align: left"><code>python manage.py flush</code></td><td style="text-align: left"><code>dj flush [--no-input]</code></td><td style="text-align: left">Removes all rows from non-migration tables</td></tr>
+<tr><td style="text-align: left"><code>python manage.py squashmigrations</code></td><td style="text-align: left"><code>dj squashmigrations &lt;start&gt; &lt;end&gt;</code></td><td style="text-align: left">Squashes a contiguous range of SQL migration files</td></tr>
+<tr><td style="text-align: left"><code>python manage.py diffsettings</code></td><td style="text-align: left"><code>dj diffsettings</code></td><td style="text-align: left">Prints settings that differ from Djangors defaults</td></tr>
+<tr><td style="text-align: left"><code>python manage.py sendtestemail</code></td><td style="text-align: left"><code>dj sendtestemail &lt;addrs...&gt;</code></td><td style="text-align: left">Sends a test email to verify email configuration</td></tr>
+<tr><td style="text-align: left"><code>python manage.py makemessages</code></td><td style="text-align: left"><code>dj makemessages -l &lt;locale&gt;</code></td><td style="text-align: left">Extracts <code>|trans</code> keys into <code>.ftl</code> locale catalogs</td></tr>
+<tr><td style="text-align: left"><code>python manage.py compilemessages</code></td><td style="text-align: left"><code>dj compilemessages</code></td><td style="text-align: left">Validates <code>.ftl</code> translation catalogs</td></tr>
+<tr><td style="text-align: left"><code>python manage.py changepassword</code></td><td style="text-align: left"><code>dj changepassword &lt;user&gt;</code></td><td style="text-align: left">Updates a user’s password hash in <code>auth_user</code></td></tr>
+<tr><td style="text-align: left"><code>python manage.py createcachetable</code></td><td style="text-align: left"><code>dj createcachetable [table]</code></td><td style="text-align: left">Creates the table required by <code>DatabaseCache</code></td></tr>
+<tr><td style="text-align: left"><code>python manage.py show_urls</code></td><td style="text-align: left"><code>dj showurls</code></td><td style="text-align: left">Lists registered HTTP routes in <code>src/</code></td></tr>
 <tr><td style="text-align: left"><code>python manage.py spectacular</code> (drf-spectacular)</td><td style="text-align: left"><code>dj openapi [--typescript]</code></td><td style="text-align: left">Writes the OpenAPI spec, or a typed TypeScript client</td></tr>
 <tr><td style="text-align: left"><em>(no built-in equivalent)</em></td><td style="text-align: left"><code>dj generate resource Post title:string</code></td><td style="text-align: left">Writes a model, serializer, REST views, admin, tests, and migration in one step</td></tr>
 </tbody>
@@ -2691,6 +2703,220 @@ then add focused worker tests for serialization, retries, and idempotency.</p>
 soon as duplication or business rules appear; architecture is a tool for
 clarity, not ceremony.</p>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="quick-reference-for-developers--ai-agents"><a class="header" href="#quick-reference-for-developers--ai-agents">Quick Reference for Developers &amp; AI Agents</a></h1>
+<p>This page is a single-page, copy-pasteable cheat sheet for both human developers and AI coding
+agents working with Djangors <code>1.0</code>.</p>
+<h2 id="1-crate--feature-map"><a class="header" href="#1-crate--feature-map">1. Crate &amp; Feature Map</a></h2>
+<p>Most applications depend only on the <code>djangors</code> facade crate (plus <code>djangors-macros</code> for derives):</p>
+<pre><code class="language-toml">[dependencies]
+djangors = "1.0"                  # default includes postgres, sqlite, migrations, rest, admin, auth, forms, sessions, template, staticfiles, s3, cache, mail, i18n, tasks, pdf, payments, tenancy, history, ws, password-strength, resilience, secrets
+djangors-macros = "1.0"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+</code></pre>
+<p>Opt-in facade features: <code>mysql</code>, <code>sites</code>, <code>gis</code>, <code>orgs</code>, <code>oauth-client</code>, <code>oauth-provider</code>, <code>saml</code>,
+<code>passkeys</code>, <code>ldap</code>, <code>captcha</code>, <code>redis</code>, <code>debug-panel</code>, <code>otel</code>, <code>secrets-remote</code>.</p>
+<h2 id="2-core-patterns"><a class="header" href="#2-core-patterns">2. Core Patterns</a></h2>
+<h3 id="define-a-model-explicit-primary-key-required"><a class="header" href="#define-a-model-explicit-primary-key-required">Define a Model (explicit primary key required)</a></h3>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_macros::Model;
+use djangors_orm::Model;
+
+#[derive(Model, Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[djangors(app = "blog", table_name = "blog_post", ordering = "-id")]
+pub struct Post {
+    #[djangors(primary_key, auto)]
+    pub id: i64,
+    #[djangors(max_length = 200)]
+    pub title: String,
+    pub published: bool,
+}
+<span class="boring">}</span></code></pre>
+<h3 id="queryset-orm"><a class="header" href="#queryset-orm">QuerySet (ORM)</a></h3>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_orm::{q, CompareOp, FuncExpr, Model, SetOp};
+
+// Filter, order, distinct, paginate, and execute
+let posts = Post::objects()
+    .filter(q!(published = true))?
+    .exclude(q!(title = ""))?
+    .distinct()
+    .defer(&amp;["body"])
+    .order_by(&amp;["-id"])
+    .limit(20)
+    .all(&amp;db)
+    .await?;
+
+// Bulk helpers &amp; multi-DB
+let by_id = Post::objects().in_bulk(&amp;db, Some(&amp;[1, 2, 3])).await?;
+Post::objects().bulk_update(&amp;db, &amp;posts, &amp;["title"]).await?;
+let replica_posts = Post::objects().using("replica").all(&amp;db).await?;
+let raw_posts = Post::objects().raw(&amp;db, "SELECT * FROM blog_post WHERE published = true", &amp;[]).await?;
+<span class="boring">}</span></code></pre>
+<h3 id="views-fileresponse--middleware"><a class="header" href="#views-fileresponse--middleware">Views, FileResponse &amp; Middleware</a></h3>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_core::{
+    ConditionalGetLayer, DjangorsError, FileResponse, LoginRequiredLayer, PathParams, Request,
+    Response, Router, StatusCode,
+};
+
+async fn health(_req: Request, _params: PathParams) -&gt; Result&lt;Response, DjangorsError&gt; {
+    Ok(Response::text(StatusCode::OK, "ok"))
+}
+
+let router = Router::new()
+    .get("/health", health)
+    .layer(ConditionalGetLayer::new())
+    .layer(LoginRequiredLayer::new("/accounts/login/"));
+<span class="boring">}</span></code></pre>
+<h3 id="typed-rest-endpoints--openapi-31"><a class="header" href="#typed-rest-endpoints--openapi-31">Typed REST Endpoints + OpenAPI 3.1</a></h3>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_core::Router;
+use djangors_macros::{endpoint, JsonSchema};
+use serde::{Deserialize, Serialize};
+
+#[derive(Deserialize, JsonSchema)]
+pub struct CreatePost { pub title: String }
+
+#[derive(Serialize, JsonSchema)]
+pub struct PostOut { pub id: i64, pub title: String }
+
+#[endpoint(POST, "/posts", request = CreatePost, response = PostOut, status = 201, tag = "posts")]
+pub async fn create_post(_req: djangors_core::Request, body: CreatePost) -&gt; Result&lt;PostOut, djangors_core::DjangorsError&gt; {
+    Ok(PostOut { id: 1, title: body.title })
+}
+<span class="boring">}</span></code></pre>
+<h3 id="auth--pluggable-password-hashers"><a class="header" href="#auth--pluggable-password-hashers">Auth &amp; Pluggable Password Hashers</a></h3>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_auth::{
+    auth_routes, Argon2Hasher, PasswordHasherRegistry, Pbkdf2Sha256Hasher,
+};
+
+// Transparently migrate Django PBKDF2 passwords to Argon2id on login:
+let mut registry = PasswordHasherRegistry::new();
+registry.register(Argon2Hasher::default());
+registry.register(Pbkdf2Sha256Hasher::default());
+
+// Mount turnkey HTML login/logout/password-change/password-reset routes:
+let router = Router::new().nest("/accounts", auth_routes());
+<span class="boring">}</span></code></pre>
+<h3 id="templates-partials--context-processors"><a class="header" href="#templates-partials--context-processors">Templates, Partials &amp; Context Processors</a></h3>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_template::TemplateEngine;
+
+let mut engine = TemplateEngine::new(vec!["templates".into()])?;
+engine.add_context_processor(|req| {
+    let mut map = std::collections::BTreeMap::new();
+    map.insert("path".to_string(), minijinja::Value::from(req.uri().path()));
+    map
+});
+// In templates: {{ querystring(page=2) }}, {{ val|json_script("data") }}, {# partialdef card #}...{# endpartialdef #}
+<span class="boring">}</span></code></pre>
+<h3 id="testing-sqlite-in-memory-or-postgres"><a class="header" href="#testing-sqlite-in-memory-or-postgres">Testing (SQLite in-memory or Postgres)</a></h3>
+<pre><code class="language-bash">TEST_BACKEND=sqlite cargo test
+</code></pre>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_test::{assert_num_queries, LiveServer, RequestFactory, SettingsOverride};
+<span class="boring">}</span></code></pre>
+<h2 id="3-rules--common-pitfalls"><a class="header" href="#3-rules--common-pitfalls">3. Rules &amp; Common Pitfalls</a></h2>
+<ol>
+<li><strong>Every <code>#[derive(Model)]</code> struct must declare an explicit <code>#[djangors(primary_key, auto)]</code> field</strong> (e.g. <code>pub id: i64</code>).</li>
+<li><strong>Database connections are passed explicitly (<code>&amp;db</code>)</strong> — there is no global mutable database singleton.</li>
+<li><strong>Use <code>TEST_BACKEND=sqlite</code></strong> for fast local unit/integration tests without a running Postgres server; set <code>DATABASE_URL=postgres://...</code> to exercise Postgres-specific features (FTS, <code>SKIP LOCKED</code>, PostGIS, advisory locks).</li>
+<li><strong>Always run <code>dj check --deploy</code></strong> before production deploys to verify <code>DEBUG = false</code>, <code>SECRET_KEY</code> length, <code>ALLOWED_HOSTS</code>, security headers, and registered system checks.</li>
+<li><strong>Never hardcode raw SQL strings with user input</strong> — always use <code>q!(...)</code>, <code>QuerySet</code>, or <code>BindValue</code> parameters.</li>
+<li><strong>Keep binaries &amp; <code>target/</code> small</strong> — use <code>djangors = { version = "1.0", default-features = false, features = [...] }</code> with only the features you need, and keep <code>[profile.dev.package."*"] debug = 0</code> + <code>[profile.release] opt-level = "z", lto = "thin", strip = true, codegen-units = 1, panic = "abort"</code> (generated automatically by <code>dj new</code>).</li>
+</ol>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="cli-reference-dj"><a class="header" href="#cli-reference-dj">CLI Reference (<code>dj</code>)</a></h1>
+<p>The <code>dj</code> binary (<code>djangors-cli</code>) is Djangors’s equivalent of Django’s <code>manage.py</code>. Install it from
+crates.io:</p>
+<pre><code class="language-bash">cargo install djangors-cli
+</code></pre>
+<h2 id="project--development"><a class="header" href="#project--development">Project &amp; Development</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Command</th><th>Description</th><th>Example</th></tr>
+</thead>
+<tbody>
+<tr><td><code>dj new &lt;name&gt;</code></td><td>Scaffold a new Djangors project</td><td><code>dj new mysite</code></td></tr>
+<tr><td><code>dj new-app &lt;name&gt;</code></td><td>Scaffold a new app module inside a project</td><td><code>dj new-app blog</code></td></tr>
+<tr><td><code>dj run [--port 8000]</code></td><td>Watch files, rebuild on change, and reload browser</td><td><code>dj run --port 8080</code></td></tr>
+<tr><td><code>dj check [--deploy]</code></td><td>Validate <code>djangors.toml</code>, system checks, and (with <code>--deploy</code>) production hardening</td><td><code>dj check --deploy</code></td></tr>
+<tr><td><code>dj diffsettings</code></td><td>Print settings that differ from <code>DjangorsSettings::default()</code></td><td><code>dj diffsettings</code></td></tr>
+<tr><td><code>dj showurls</code></td><td>List all registered HTTP routes in <code>src/</code></td><td><code>dj showurls</code></td></tr>
+<tr><td><code>dj test</code></td><td>Run the project test suite (<code>cargo test</code>)</td><td><code>dj test</code></td></tr>
+<tr><td><code>dj shell</code></td><td>Launch an interactive Rust REPL (<code>evcxr</code>)</td><td><code>dj shell</code></td></tr>
+<tr><td><code>dj dbshell</code></td><td>Open <code>psql</code> / <code>sqlite3</code> against <code>DATABASE_URL</code></td><td><code>dj dbshell</code></td></tr>
+<tr><td><code>dj seed [--force]</code></td><td>Run <code>src/bin/seed.rs</code> to populate dev data</td><td><code>dj seed</code></td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="database-migrations--fixtures"><a class="header" href="#database-migrations--fixtures">Database, Migrations &amp; Fixtures</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Command</th><th>Description</th><th>Example</th></tr>
+</thead>
+<tbody>
+<tr><td><code>dj makemigrations [--check]</code></td><td>Introspect models and generate numbered SQL migrations</td><td><code>dj makemigrations</code></td></tr>
+<tr><td><code>dj migrate [--rollback [N]] [--plan] [--fake]</code></td><td>Apply, preview, fake, or roll back migrations</td><td><code>dj migrate --plan</code></td></tr>
+<tr><td><code>dj sqlmigrate &lt;app&gt; &lt;migration&gt;</code></td><td>Print SQL statements for a migration without executing</td><td><code>dj sqlmigrate blog 0001</code></td></tr>
+<tr><td><code>dj showmigrations</code></td><td>List all migrations and their applied status</td><td><code>dj showmigrations</code></td></tr>
+<tr><td><code>dj squashmigrations &lt;start&gt; &lt;end&gt; [--name ...] [--dir migrations]</code></td><td>Combine a contiguous range of SQL migrations into one</td><td><code>dj squashmigrations 0001 0005 --name 0001_squashed_0005</code></td></tr>
+<tr><td><code>dj inspectdb [--database-url ...] [--output ...] [--app app]</code></td><td>Introspect an existing DB and emit <code>#[derive(Model)]</code> structs</td><td><code>dj inspectdb -o src/models.rs</code></td></tr>
+<tr><td><code>dj dumpdata [tables...] [-o file.json] [--database-url ...]</code></td><td>Export table rows as Django-style JSON fixtures</td><td><code>dj dumpdata auth_user -o users.json</code></td></tr>
+<tr><td><code>dj loaddata &lt;files...&gt; [--database-url ...]</code></td><td>Insert JSON fixture records into the database</td><td><code>dj loaddata fixtures/initial.json</code></td></tr>
+<tr><td><code>dj flush [--no-input] [--database-url ...]</code></td><td>Delete all rows from non-migration tables</td><td><code>dj flush --no-input</code></td></tr>
+<tr><td><code>dj createcachetable [table] [--database-url ...]</code></td><td>Create the table required by <code>DatabaseCache</code></td><td><code>dj createcachetable djangors_cache_entries</code></td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="auth-sessions-security--email"><a class="header" href="#auth-sessions-security--email">Auth, Sessions, Security &amp; Email</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Command</th><th>Description</th><th>Example</th></tr>
+</thead>
+<tbody>
+<tr><td><code>dj createsuperuser --username &lt;u1&gt; [--email ...] [--skip-validation]</code></td><td>Create an admin superuser in <code>auth_user</code></td><td><code>dj createsuperuser --username admin</code></td></tr>
+<tr><td><code>dj changepassword &lt;username&gt; [--password ...] [--database-url ...]</code></td><td>Hash (Argon2id) and update a user’s password in <code>auth_user</code></td><td><code>dj changepassword alice --password '...'</code></td></tr>
+<tr><td><code>dj createpermissions</code></td><td>Sync <code>view</code>/<code>add</code>/<code>change</code>/<code>delete</code> permissions for all models</td><td><code>dj createpermissions</code></td></tr>
+<tr><td><code>dj clearsessions [--database-url ...]</code></td><td>Delete expired server-side sessions from <code>djangors_session</code></td><td><code>dj clearsessions</code></td></tr>
+<tr><td><code>dj rotate-encryption-keys --model &lt;app.Model&gt; [--batch 500]</code></td><td>Re-encrypt <code>#[djangors(encrypted)]</code> columns with the primary key</td><td><code>dj rotate-encryption-keys --model billing.Card</code></td></tr>
+<tr><td><code>dj sendtestemail &lt;recipients...&gt; [--subject ...]</code></td><td>Verify email configuration and send a test message</td><td><code>dj sendtestemail ops@example.com</code></td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="code-generation-static-files-i18n--workers"><a class="header" href="#code-generation-static-files-i18n--workers">Code Generation, Static Files, i18n &amp; Workers</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Command</th><th>Description</th><th>Example</th></tr>
+</thead>
+<tbody>
+<tr><td><code>dj generate resource &lt;Name&gt; [field:type...]</code></td><td>Scaffold model, migration, REST ViewSet, admin, and tests</td><td><code>dj generate resource Post title:string body:text</code></td></tr>
+<tr><td><code>dj openapi [--typescript] [-o file] [--routes routes.json]</code></td><td>Generate OpenAPI 3.1 JSON or a typed TypeScript fetch client</td><td><code>dj openapi --typescript -o src/api.ts</code></td></tr>
+<tr><td><code>dj collectstatic [--source static] [--output staticfiles]</code></td><td>Hash and collect static assets + <code>manifest.json</code></td><td><code>dj collectstatic</code></td></tr>
+<tr><td><code>dj makemessages [-l en] [--output-dir locales]</code></td><td>Scan <code>templates/</code> and <code>src/</code> for <code>|trans</code> &amp; <code>t!()</code> keys into <code>.ftl</code></td><td><code>dj makemessages -l fr</code></td></tr>
+<tr><td><code>dj compilemessages [--dir locales]</code></td><td>Validate syntax and balanced braces in all <code>.ftl</code> catalogs</td><td><code>dj compilemessages</code></td></tr>
+<tr><td><code>dj runworker [--poll-interval-secs 1]</code></td><td>Run the background task worker loop</td><td><code>dj runworker</code></td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="custom-management-commands"><a class="header" href="#custom-management-commands">Custom Management Commands</a></h2>
+<p>Any unrecognized subcommand <code>dj &lt;my-command&gt; [args...]</code> is automatically routed to your project’s
+binary with <code>DJANGORS_RUN_COMMAND=&lt;my-command&gt;</code>, matching functions annotated with
+<code>#[management_command]</code>.</p>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="moving-from-actix-web-or-axum"><a class="header" href="#moving-from-actix-web-or-axum">Moving from Actix Web or Axum</a></h1>
 <p>This guide is for Rust developers who already know Actix Web or Axum and want
 to build a Djangors application without losing the patterns they already use.
@@ -3261,8 +3487,8 @@ the change and its motivation, open for comment before landing. This mirrors the
 used internally for every architecturally significant change in this project’s own history (every
 slice in <code>docs/design/</code> is exactly this kind of doc). Formalizing it here means outside
 contributors can propose and review API changes the same way, not just watch them happen.</p>
-<h2 id="pre-10-scope-note"><a class="header" href="#pre-10-scope-note">Pre-1.0 Scope Note</a></h2>
-<p>While Freeze Review Pass 1 and Pass 2 have audited the core and primary battery crates (including <code>#[non_exhaustive]</code> hardening and unified <code>&amp;Database</code> model CRUD signatures), Djangors is still pre-<code>1.0</code>. Before <code>1.0.0</code> is tagged, breaking changes may still land between <code>0.x</code> minor releases when documented in <code>CHANGELOG.md</code> and <code>docs/design/</code>.</p>
+<h2 id="10-stability-status"><a class="header" href="#10-stability-status">1.0 Stability Status</a></h2>
+<p>Djangors <code>1.0.0</code> is now released. Semantic Versioning guarantees, the <code>#[deprecated]</code> cycle, and the RFC process for breaking API changes described above are active for all public APIs.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="object-relational-mapping-orm"><a class="header" href="#object-relational-mapping-orm">Object-Relational Mapping (ORM)</a></h1>
 <p><code>djangors-orm</code> provides Django-style querysets, model metadata, expression macros, compile-time JSON writers, and database integration for PostgreSQL and SQLite (via <code>sqlx</code>).</p>
@@ -3927,6 +4153,181 @@ pub struct Product {
     pub attributes: Value,
 }
 <span class="boring">}</span></code></pre>
+<hr>
+<h2 id="djangors-10-orm-additions"><a class="header" href="#djangors-10-orm-additions">Djangors 1.0 ORM Additions</a></h2>
+<h3 id="extended-compareop-lookups"><a class="header" href="#extended-compareop-lookups">Extended <code>CompareOp</code> Lookups</a></h3>
+<p>Djangors 1.0 expands <code>CompareOp</code> (and <code>q!</code> lookup suffixes) with case-insensitive prefix/suffix matching, inclusive ranges, date/time component extraction, and JSON queries:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th><code>CompareOp</code> Variant</th><th><code>q!</code> Lookup Suffix</th><th>SQL Behavior</th></tr>
+</thead>
+<tbody>
+<tr><td><code>IStartsWith</code></td><td><code>__istartswith</code></td><td>Case-insensitive prefix match (<code>ILIKE 'val%'</code> / <code>LIKE</code>)</td></tr>
+<tr><td><code>IEndsWith</code></td><td><code>__iendswith</code></td><td>Case-insensitive suffix match (<code>ILIKE '%val'</code> / <code>LIKE</code>)</td></tr>
+<tr><td><code>Range</code></td><td><code>__range</code></td><td>Inclusive <code>BETWEEN $1 AND $2</code> (expects a 2-element <code>Vec</code>)</td></tr>
+<tr><td><code>Year</code></td><td><code>__year</code></td><td>Extract year from date/datetime (<code>EXTRACT(YEAR FROM col) = $1</code>)</td></tr>
+<tr><td><code>Month</code></td><td><code>__month</code></td><td>Extract month (<code>1..=12</code>)</td></tr>
+<tr><td><code>Day</code></td><td><code>__day</code></td><td>Extract day of month (<code>1..=31</code>)</td></tr>
+<tr><td><code>WeekDay</code></td><td><code>__week_day</code></td><td>Extract day of week (<code>1</code> = Sunday .. <code>7</code> = Saturday)</td></tr>
+<tr><td><code>Date</code></td><td><code>__date</code></td><td>Cast/extract calendar date (<code>DATE(col) = $1</code>)</td></tr>
+<tr><td><code>Hour</code></td><td><code>__hour</code></td><td>Extract hour (<code>0..=23</code>)</td></tr>
+<tr><td><code>JsonHasKey</code></td><td><code>__has_key</code></td><td>JSON key existence (Postgres <code>col ? $1</code>, SQLite <code>json_extract(col, '$.key') IS NOT NULL</code>)</td></tr>
+<tr><td><code>JsonContains</code></td><td><code>__json_contains</code></td><td>JSON containment (Postgres <code>col @&gt; $1::jsonb</code>, SQLite <code>LIKE</code> fallback)</td></tr>
+</tbody>
+</table>
+</div>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_orm::{q, Model};
+
+let recent = Question::objects()
+    .filter(q!(question_text__istartswith = "how"))?
+    .filter(q!(pub_date__year = 2026i64))?
+    .filter(q!(pub_date__month = 7i64))?
+    .filter(q!(id__range = vec![10i64, 50i64]))?
+    .all(db)
+    .await?;
+
+let tagged = Product::objects()
+    .filter(q!(attributes__has_key = "color"))?
+    .filter(q!(attributes__json_contains = r#"{"featured":true}"#))?
+    .all(db)
+    .await?;
+<span class="boring">}</span></code></pre>
+<h3 id="extended-funcexpr-expressions"><a class="header" href="#extended-funcexpr-expressions">Extended <code>FuncExpr</code> Expressions</a></h3>
+<p><code>FuncExpr</code> (in <code>djangors_orm::aggregate</code>) adds type casting, date extraction/truncation, conditional <code>CASE</code>/<code>WHEN</code>, SQL window functions, scalar subqueries, PostgreSQL trigram similarity, and raw SQL fragments:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Variant</th><th>Purpose</th><th>Key Supporting Types</th></tr>
+</thead>
+<tbody>
+<tr><td><code>FuncExpr::Cast { field, sql_type }</code></td><td><code>CAST(field AS sql_type)</code></td><td>—</td></tr>
+<tr><td><code>FuncExpr::Extract { field, part }</code></td><td>Extract date/time integer component</td><td><code>djangors_db::DatePart</code> (<code>Year</code>, <code>Month</code>, <code>Day</code>, <code>Hour</code>, <code>WeekDay</code>)</td></tr>
+<tr><td><code>FuncExpr::Trunc { field, kind }</code></td><td>Truncate timestamp/date (<code>DATE_TRUNC</code> / <code>strftime</code>)</td><td><code>TruncKind::{Year, Month, Day, Hour}</code></td></tr>
+<tr><td><code>FuncExpr::Case { whens, default, alias_name }</code></td><td><code>CASE WHEN ... THEN ... ELSE ... END</code></td><td><code>WhenBranch::new(condition_sql, then)</code></td></tr>
+<tr><td><code>FuncExpr::Window { func, partition_by, order_by, alias_name }</code></td><td><code>FUNC(...) OVER (PARTITION BY ... ORDER BY ...)</code></td><td><code>WindowFunc::{RowNumber, Rank, DenseRank, Lead, Lag}</code></td></tr>
+<tr><td><code>FuncExpr::Subquery { sql, alias_name }</code></td><td>Correlated or uncorrelated scalar <code>(SELECT ...)</code></td><td>—</td></tr>
+<tr><td><code>FuncExpr::TrigramSimilarity { field, query }</code></td><td>PostgreSQL <code>pg_trgm</code> <code>similarity(col, 'query')</code></td><td>—</td></tr>
+<tr><td><code>FuncExpr::RawSql { sql, alias_name }</code></td><td>Raw SQL expression fragment (<code>RawSQL</code>)</td><td>—</td></tr>
+</tbody>
+</table>
+</div>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_db::DatePart;
+use djangors_orm::{FuncExpr, TruncKind, Value, WhenBranch, WindowFunc};
+
+let cast_expr = FuncExpr::Cast { field: "votes", sql_type: "DOUBLE PRECISION" };
+let year_expr = FuncExpr::Extract { field: "pub_date", part: DatePart::Year };
+let month_bucket = FuncExpr::Trunc { field: "pub_date", kind: TruncKind::Month };
+
+let tier = FuncExpr::Case {
+    whens: vec![
+        WhenBranch::new(r#""votes" &gt;= 100"#, Value::Text("popular".into())),
+        WhenBranch::new(r#""votes" &gt;= 10"#, Value::Text("active".into())),
+    ],
+    default: Value::Text("new".into()),
+    alias_name: "tier".into(),
+};
+
+let rank = FuncExpr::Window {
+    func: WindowFunc::Rank,
+    partition_by: vec!["question"],
+    order_by: vec![("votes", true)],
+    alias_name: "vote_rank".into(),
+};
+<span class="boring">}</span></code></pre>
+<h3 id="schema-metadata-indexkind-constraintmeta-compositeprimarykey-generatedfieldspec"><a class="header" href="#schema-metadata-indexkind-constraintmeta-compositeprimarykey-generatedfieldspec">Schema Metadata (<code>IndexKind</code>, <code>ConstraintMeta</code>, <code>CompositePrimaryKey</code>, <code>GeneratedFieldSpec</code>)</a></h3>
+<p><code>djangors_orm::meta</code> provides rich declarative schema metadata used by migrations and introspection:</p>
+<ul>
+<li><strong><code>IndexKind</code></strong>: Selects the index access method — <code>BTree</code> (default), <code>Gin</code>, <code>Gist</code>, <code>Brin</code>, <code>Hash</code>.</li>
+<li><strong><code>ConstraintMeta</code></strong>: Declares table-level constraints:
+<ul>
+<li><code>ConstraintMeta::Check { name, expression }</code> — <code>CHECK (&lt;expression&gt;)</code>.</li>
+<li><code>ConstraintMeta::Unique { name, fields, condition }</code> — <code>UNIQUE (&lt;fields&gt;)</code> with an optional partial <code>WHERE &lt;condition&gt;</code> predicate.</li>
+</ul>
+</li>
+<li><strong><code>CompositePrimaryKey</code></strong>: Multi-column primary keys (<code>CompositePrimaryKey::new(&amp;["tenant_id", "item_id"])</code>, rendered via <code>.to_sql(dialect)</code>).</li>
+<li><strong><code>GeneratedFieldSpec</code></strong>: Database-computed columns (<code>GENERATED ALWAYS AS (&lt;expression&gt;) STORED | VIRTUAL</code>), rendered via <code>.to_column_ddl(dialect)</code>.</li>
+</ul>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_db::Dialect;
+use djangors_orm::{CompositePrimaryKey, ConstraintMeta, GeneratedFieldSpec, IndexKind};
+
+let kind = IndexKind::Gin;
+let partial_unique = ConstraintMeta::Unique {
+    name: "uq_active_email".into(),
+    fields: vec!["email".into()],
+    condition: Some("deleted_at IS NULL".into()),
+};
+let cpk = CompositePrimaryKey::new(&amp;["tenant_id", "sku"]);
+let generated = GeneratedFieldSpec {
+    column_name: "total_cents".into(),
+    sql_type: "BIGINT".into(),
+    expression: "unit_price_cents * quantity".into(),
+    stored: true,
+};
+let ddl = generated.to_column_ddl(Dialect::Postgres);
+<span class="boring">}</span></code></pre>
+<h3 id="new-queryset-methods"><a class="header" href="#new-queryset-methods">New <code>QuerySet</code> Methods</a></h3>
+<p>Djangors 1.0 adds Django’s full suite of <code>QuerySet</code> combinators, projections, bulk operations, and streaming helpers:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Method</th><th>Signature / Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>distinct()</code></td><td>Emits <code>SELECT DISTINCT</code></td></tr>
+<tr><td><code>distinct_on(&amp;[fields])</code></td><td>Emits PostgreSQL <code>SELECT DISTINCT ON (...)</code></td></tr>
+<tr><td><code>defer(&amp;[fields])</code> / <code>only(&amp;[fields])</code></td><td>Defers or restricts selected columns</td></tr>
+<tr><td><code>none()</code></td><td>Short-circuits to an empty queryset (returns no rows)</td></tr>
+<tr><td><code>reverse()</code></td><td>Reverses the active (or model default) ordering</td></tr>
+<tr><td><code>union(other, all)</code> / <code>intersection(other)</code> / <code>difference(other)</code></td><td>SQL set operations (<code>SetOp::{Union, UnionAll, Intersection, Difference}</code>)</td></tr>
+<tr><td><code>earliest(field, db)</code> / <code>latest(field, db)</code></td><td>Returns the single earliest or latest row ordered by <code>field</code></td></tr>
+<tr><td><code>in_bulk(db)</code></td><td>Returns <code>HashMap&lt;String, T&gt;</code> keyed by primary key string</td></tr>
+<tr><td><code>QuerySet::&lt;T&gt;::bulk_update(db, &amp;objs, &amp;fields)</code></td><td>Batches updates of specified fields across multiple model instances</td></tr>
+<tr><td><code>QuerySet::&lt;T&gt;::raw(db, sql, &amp;params)</code></td><td>Executes raw SQL and maps rows into <code>Vec&lt;T&gt;</code> via <code>FromRow</code></td></tr>
+<tr><td><code>iterator(db, chunk_size, f)</code></td><td>Streams rows in <code>chunk_size</code> batches to avoid loading large tables into memory</td></tr>
+<tr><td><code>using(&amp;multi, alias)</code></td><td>Resolves a <code>&amp;Database</code> handle from a <a href="#multi-database-routing"><code>MultiDatabase</code></a> registry</td></tr>
+</tbody>
+</table>
+</div>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_orm::{q, Model, QuerySet, Value};
+
+// Distinct, reverse, set operations, and earliest/latest
+let combined = Choice::objects()
+    .filter(q!(votes__gte = 10i32))?
+    .union(Choice::objects().filter(q!(choice_text__istartswith = "rust"))?, false)
+    .distinct()
+    .reverse()
+    .all(db)
+    .await?;
+
+let newest = Question::objects().latest("pub_date", db).await?;
+let by_pk = Question::objects().in_bulk(db).await?;
+
+// Bulk update specific fields &amp; raw SQL mapping
+QuerySet::&lt;Choice&gt;::bulk_update(db, &amp;updated_choices, &amp;["votes"]).await?;
+let raw_rows = QuerySet::&lt;Question&gt;::raw(
+    db,
+    "SELECT * FROM polls_question WHERE id &gt; $1",
+    &amp;[Value::I64(10)],
+).await?;
+
+// Stream large tables in chunks
+Question::objects()
+    .only(&amp;["id", "question_text"])?
+    .iterator(db, 500, |batch| async move {
+        println!("processed {} rows", batch.len());
+        Ok(())
+    })
+    .await?;
+<span class="boring">}</span></code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="encrypted-fields"><a class="header" href="#encrypted-fields">Encrypted Fields</a></h1>
 <p>Some text columns hold data that should not be readable in a database dump, such as API tokens, personal identifiers or notes. Mark those fields with <code>#[djangors(encrypted)]</code>. The ORM encrypts them with AES-256-GCM on every write and decrypts them when a row is loaded, so application code keeps working with plain <code>String</code> values.</p>
@@ -4340,6 +4741,101 @@ are not handled.</li>
 <li><strong>The <code>pk</code> name is fixed.</strong> Detail/update/delete look up the <code>pk</code> path
 parameter by name, so your route must use <code>{pk}</code>.</li>
 </ul>
+<hr>
+<h2 id="base-generic-views-templateview-redirectview-formview"><a class="header" href="#base-generic-views-templateview-redirectview-formview">Base Generic Views (<code>TemplateView</code>, <code>RedirectView</code>, <code>FormView</code>)</a></h2>
+<p>Djangors 1.0 adds Django’s three non-model base views:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>View</th><th>Purpose</th><th>Key Builder Methods</th></tr>
+</thead>
+<tbody>
+<tr><td><code>TemplateView</code></td><td>Renders a static or context-enriched template</td><td><code>TemplateView::new(engine, template_name).with_context(json!(...))</code></td></tr>
+<tr><td><code>RedirectView</code></td><td>Returns <code>302 Found</code> or <code>301 Moved Permanently</code></td><td><code>RedirectView::new(url).permanent(true).query_string(true)</code></td></tr>
+<tr><td><code>FormView</code></td><td><code>GET</code> renders form; <code>POST</code> validates via closure and redirects on success</td><td><code>FormView::new(engine, template_name, success_url).with_context(...)</code></td></tr>
+</tbody>
+</table>
+</div>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_core::Router;
+use djangors_views::{FormView, RedirectView, TemplateView};
+use std::collections::HashMap;
+
+fn base_view_routes() -&gt; Router {
+    Router::new()
+        .get("/about/", |req, params| async move {
+            TemplateView::new(&amp;*TEMPLATES, "about.html")
+                .with_context(serde_json::json!({ "version": "1.0" }))
+                .dispatch(req, params)
+                .await
+        })
+        .get("/old-home/", |req, params| async move {
+            RedirectView::new("/")
+                .permanent(true)
+                .query_string(true)
+                .dispatch(req, params)
+                .await
+        })
+        .post("/contact/", |req, params| async move {
+            FormView::new(&amp;*TEMPLATES, "contact.html", "/contact/thanks/")
+                .dispatch(req, params, |data| {
+                    if data.get("message").map(|s| s.trim().is_empty()).unwrap_or(true) {
+                        let mut errs = HashMap::new();
+                        errs.insert("message".into(), "Message is required.".into());
+                        Err(errs)
+                    } else {
+                        Ok(())
+                    }
+                })
+                .await
+        })
+}
+<span class="boring">}</span></code></pre>
+<h2 id="date-based-archive-views"><a class="header" href="#date-based-archive-views">Date-Based Archive Views</a></h2>
+<p>Djangors 1.0 provides four date-based archive views configured with <strong><code>DateArchiveConfig</code></strong>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>View</th><th>Path Parameters</th><th>Template Context</th></tr>
+</thead>
+<tbody>
+<tr><td><code>ArchiveIndexView&lt;M&gt;::list</code></td><td><em>(none)</em></td><td><code>object_list</code> (newest first), <code>date_field</code></td></tr>
+<tr><td><code>YearArchiveView&lt;M&gt;::list</code></td><td><code>{year}</code> (<code>i32</code>)</td><td><code>object_list</code>, <code>year</code>, <code>date_field</code></td></tr>
+<tr><td><code>MonthArchiveView&lt;M&gt;::list</code></td><td><code>{year}</code>, <code>{month}</code> (<code>1..=12</code>)</td><td><code>object_list</code>, <code>year</code>, <code>month</code>, <code>date_field</code></td></tr>
+<tr><td><code>DayArchiveView&lt;M&gt;::list</code></td><td><code>{year}</code>, <code>{month}</code>, <code>{day}</code></td><td><code>object_list</code>, <code>year</code>, <code>month</code>, <code>day</code>, <code>date_field</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>Set <code>.allow_empty(false)</code> on <code>DateArchiveConfig</code> to return <code>404 Not Found</code> when a date range has no matching rows (default <code>true</code>).</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_core::Router;
+use djangors_views::{
+    ArchiveIndexView, DateArchiveConfig, DayArchiveView, MonthArchiveView, YearArchiveView,
+};
+
+fn archive_routes() -&gt; Router {
+    Router::new()
+        .get("/archive/", |req, params| async move {
+            let cfg = DateArchiveConfig::new(&amp;*TEMPLATES, "polls/archive.html", "pub_date");
+            ArchiveIndexView::&lt;Question&gt;::list(req, params, &amp;cfg).await
+        })
+        .get("/archive/{year:i64}/", |req, params| async move {
+            let cfg = DateArchiveConfig::new(&amp;*TEMPLATES, "polls/archive_year.html", "pub_date")
+                .allow_empty(false);
+            YearArchiveView::&lt;Question&gt;::list(req, params, &amp;cfg).await
+        })
+        .get("/archive/{year:i64}/{month:i64}/", |req, params| async move {
+            let cfg = DateArchiveConfig::new(&amp;*TEMPLATES, "polls/archive_month.html", "pub_date");
+            MonthArchiveView::&lt;Question&gt;::list(req, params, &amp;cfg).await
+        })
+        .get("/archive/{year:i64}/{month:i64}/{day:i64}/", |req, params| async move {
+            let cfg = DateArchiveConfig::new(&amp;*TEMPLATES, "polls/archive_day.html", "pub_date");
+            DayArchiveView::&lt;Question&gt;::list(req, params, &amp;cfg).await
+        })
+}
+<span class="boring">}</span></code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="templates"><a class="header" href="#templates">Templates</a></h1>
 <p><code>djangors-template</code> provides Django-style HTML template rendering powered by MiniJinja.</p>
@@ -4466,6 +4962,100 @@ engine.set_url_resolver(move |name, params| {
 });
 <span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
+<hr>
+<h2 id="djangors-10-template-additions"><a class="header" href="#djangors-10-template-additions">Djangors 1.0 Template Additions</a></h2>
+<h3 id="context-processors-add_context_processor--render_with_request"><a class="header" href="#context-processors-add_context_processor--render_with_request">Context Processors (<code>add_context_processor</code> &amp; <code>render_with_request</code>)</a></h3>
+<p>Context processors inject shared variables (CSRF token, static URL, request metadata, site config) into every rendered template automatically when rendering with <code>render_with_request</code>.</p>
+<p>Built-in processors in <code>djangors_template</code>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Processor</th><th>Injected Context</th></tr>
+</thead>
+<tbody>
+<tr><td><code>StaticUrlProcessor::new("/static/")</code></td><td><code>STATIC_URL</code></td></tr>
+<tr><td><code>CsrfContextProcessor::new()</code></td><td><code>csrf_token</code> (from request <code>CsrfToken</code> extension or cookie)</td></tr>
+<tr><td><code>RequestContextProcessor::new()</code></td><td><code>request</code> (<code>path</code>, <code>method</code>, <code>query</code>)</td></tr>
+<tr><td><code>ExtraContextProcessor::new(...)</code></td><td>Arbitrary static key/value pairs (<code>.with("site_name", "MyApp")</code>)</td></tr>
+</tbody>
+</table>
+</div>
+<p>Implement the <code>ContextProcessor</code> trait for custom per-request context, register processors with <code>TemplateEngine::add_context_processor</code>, and render via <code>render_with_request</code>:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use std::sync::Arc;
+use djangors_core::{DjangorsError, Request, Response};
+use djangors_template::{
+    render_with_request, CsrfContextProcessor, ExtraContextProcessor, RequestContextProcessor,
+    StaticUrlProcessor, TemplateEngine,
+};
+
+let mut engine = TemplateEngine::new(vec!["templates".into()])?;
+engine.add_context_processor(Arc::new(StaticUrlProcessor::new("/static/")));
+engine.add_context_processor(Arc::new(CsrfContextProcessor::new()));
+engine.add_context_processor(Arc::new(RequestContextProcessor::new()));
+engine.add_context_processor(Arc::new(
+    ExtraContextProcessor::new(Default::default()).with("site_name", "Polls"),
+));
+
+async fn home(req: Request, engine: &amp;TemplateEngine) -&gt; Result&lt;Response, DjangorsError&gt; {
+    render_with_request(
+        engine,
+        &amp;req,
+        "home.html",
+        minijinja::context! { title =&gt; "Welcome" },
+    )
+}
+<span class="boring">}</span></code></pre>
+<h3 id="querystring-function--template-partials-render_partial"><a class="header" href="#querystring-function--template-partials-render_partial"><code>querystring(...)</code> Function &amp; Template Partials (<code>render_partial</code>)</a></h3>
+<ul>
+<li><strong><code>querystring(...)</code></strong>: Builds a URL-encoded query string from keyword arguments (ideal for pagination/filter links):</li>
+</ul>
+<pre><code class="language-jinja">&lt;a href="?{{ querystring(page=2, sort='votes') }}"&gt;Next page&lt;/a&gt;
+</code></pre>
+<ul>
+<li><strong>Template Partials (<code>render_partial</code>)</strong>: Define named fragments inside any template using <code>{# partialdef name #}</code> … <code>{# endpartialdef #}</code> and render just that fragment (ideal for HTMX / partial page updates):</li>
+</ul>
+<pre><code class="language-jinja">{# templates/polls/list.html #}
+&lt;div id="poll-list"&gt;
+  {# partialdef items #}
+  &lt;ul&gt;
+    {% for q in questions %}&lt;li&gt;{{ q.question_text }}&lt;/li&gt;{% endfor %}
+  &lt;/ul&gt;
+  {# endpartialdef #}
+&lt;/div&gt;
+</code></pre>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>let fragment_html = engine.render_partial(
+    "polls/list.html",
+    "items",
+    minijinja::context! { questions =&gt; questions },
+)?;
+<span class="boring">}</span></code></pre>
+<h3 id="new-built-in-filters-10"><a class="header" href="#new-built-in-filters-10">New Built-in Filters (1.0)</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Filter</th><th>Example Usage</th><th>Description / Output</th></tr>
+</thead>
+<tbody>
+<tr><td><code>json_script</code></td><td><code>{{ data|json_script('app-data') }}</code></td><td>Renders XSS-safe <code>&lt;script id="app-data" type="application/json"&gt;...&lt;/script&gt;</code></td></tr>
+<tr><td><code>timesince</code></td><td><code>{{ created_at|timesince }}</code></td><td>Human-readable elapsed time (<code>"2 hours, 15 minutes"</code>)</td></tr>
+<tr><td><code>timeuntil</code></td><td><code>{{ starts_at|timeuntil }}</code></td><td>Human-readable time remaining until a future timestamp</td></tr>
+<tr><td><code>linebreaks</code></td><td><code>{{ body|linebreaks }}</code></td><td>Converts blank lines to <code>&lt;p&gt;...&lt;/p&gt;</code> and single newlines to <code>&lt;br&gt;</code></td></tr>
+<tr><td><code>linebreaksbr</code></td><td><code>{{ body|linebreaksbr }}</code></td><td>Converts all newlines to <code>&lt;br&gt;</code></td></tr>
+<tr><td><code>slugify</code></td><td><code>{{ title|slugify }}</code></td><td>Converts text to lowercase URL-safe ASCII slug (<code>"hello-world"</code>)</td></tr>
+<tr><td><code>urlize</code></td><td><code>{{ text|urlize }}</code></td><td>Turns plain-text URLs and emails into clickable <code>&lt;a&gt;</code> links</td></tr>
+<tr><td><code>striptags</code></td><td><code>{{ html|striptags }}</code></td><td>Strips all HTML tags from a string</td></tr>
+<tr><td><code>yesno</code></td><td><code>{{ flag|yesno('yes,no,maybe') }}</code></td><td>Maps <code>true</code> / <code>false</code> / <code>None</code> to custom labels</td></tr>
+<tr><td><code>ordinal</code></td><td><code>{{ 3|ordinal }}</code></td><td>Formats integers as English ordinals (<code>"1st"</code>, <code>"2nd"</code>, <code>"3rd"</code>, <code>"4th"</code>)</td></tr>
+<tr><td><code>naturalday</code></td><td><code>{{ dt|naturalday }}</code></td><td>Renders <code>"today"</code>, <code>"yesterday"</code>, <code>"tomorrow"</code>, or formatted date</td></tr>
+<tr><td><code>apnumber</code></td><td><code>{{ 5|apnumber }}</code></td><td>AP-style numbers: spells out 1–9 (<code>"five"</code>), leaves others numeric</td></tr>
+<tr><td><code>dictsort</code></td><td><code>{{ items|dictsort('name') }}</code></td><td>Sorts a list of objects/maps ascending by the given key</td></tr>
+</tbody>
+</table>
+</div>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="forms--form-processing"><a class="header" href="#forms--form-processing">Forms &amp; Form Processing</a></h1>
 <p><code>djangors-forms</code> provides field validation, HTML widgets, layout renderers, and formsets, while <code>djangors-core</code> provides typed request body extraction for URL-encoded form POST submissions.</p>
@@ -4751,6 +5341,102 @@ exactly the shape <code>djangors-views</code>’ <code>UpdateView</code> impleme
 <p>Use with <code>djangors-views</code>’ generic <code>CreateView</code>/<code>UpdateView</code> (see the
 <a href="#class-based-views-djangors-views">Class-Based Views guide</a>) to get a full
 form-render-and-submit flow without writing a handler by hand.</p>
+<hr>
+<h2 id="djangors-10-field-types-widgets-media--inline-formsets"><a class="header" href="#djangors-10-field-types-widgets-media--inline-formsets">Djangors 1.0 Field Types, Widgets, Media &amp; Inline FormSets</a></h2>
+<h3 id="built-in-form-field-types"><a class="header" href="#built-in-form-field-types">Built-in Form Field Types</a></h3>
+<p>In addition to <code>CharField</code>, <code>IntegerField</code>, <code>BooleanField</code>, <code>EmailField</code>, and <code>ChoiceField</code>, Djangors 1.0 ships 17 new <code>FormField</code> types in <code>djangors_forms</code>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field Type</th><th>Parsed / Cleaned Value</th><th>Key Validations</th></tr>
+</thead>
+<tbody>
+<tr><td><code>FloatField</code></td><td><code>f64</code></td><td>Rejects NaN/Inf; optional <code>min_value</code> / <code>max_value</code></td></tr>
+<tr><td><code>DecimalField</code></td><td><code>rust_decimal::Decimal</code></td><td><code>max_digits</code>, <code>decimal_places</code>, min/max bounds</td></tr>
+<tr><td><code>DateField</code></td><td><code>chrono::NaiveDate</code></td><td>Parses ISO <code>YYYY-MM-DD</code> (and custom formats)</td></tr>
+<tr><td><code>DateTimeField</code></td><td><code>chrono::NaiveDateTime</code> / <code>DateTime</code></td><td>Parses ISO-8601 and HTML <code>datetime-local</code> strings</td></tr>
+<tr><td><code>TimeField</code></td><td><code>chrono::NaiveTime</code></td><td>Parses <code>HH:MM</code> and <code>HH:MM:SS</code></td></tr>
+<tr><td><code>DurationField</code></td><td><code>chrono::Duration</code></td><td>Parses ISO-8601 or <code>HH:MM:SS</code> / seconds</td></tr>
+<tr><td><code>UrlField</code></td><td><code>String</code></td><td>Validates <code>http://</code> / <code>https://</code> scheme and host</td></tr>
+<tr><td><code>SlugField</code></td><td><code>String</code></td><td>Allows ASCII letters, digits, hyphens, and underscores</td></tr>
+<tr><td><code>UuidField</code></td><td><code>uuid::Uuid</code></td><td>Validates canonical UUID strings</td></tr>
+<tr><td><code>FileField</code></td><td><code>String</code> / upload metadata</td><td>Optional <code>max_length</code> and allowed extensions</td></tr>
+<tr><td><code>ImageField</code></td><td><code>String</code> / image upload metadata</td><td>Validates image MIME/extension allowlist</td></tr>
+<tr><td><code>MultipleChoiceField</code></td><td><code>Vec&lt;String&gt;</code></td><td>Ensures every submitted choice is in <code>choices</code></td></tr>
+<tr><td><code>TypedChoiceField&lt;T&gt;</code></td><td><code>T</code></td><td>Validates choice membership and coerces via custom parser</td></tr>
+<tr><td><code>JsonField</code></td><td><code>serde_json::Value</code></td><td>Parses valid JSON payloads</td></tr>
+<tr><td><code>GenericIpAddressField</code></td><td><code>std::net::IpAddr</code></td><td>Configurable <code>IpProtocol::{Both, IPv4, IPv6}</code></td></tr>
+<tr><td><code>ModelChoiceField</code></td><td><code>i64</code> / PK string</td><td>Validates against an allowed set of model primary keys</td></tr>
+<tr><td><code>ModelMultipleChoiceField</code></td><td><code>Vec&lt;i64&gt;</code> / PK list</td><td>Validates multiple selected model primary keys</td></tr>
+</tbody>
+</table>
+</div>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_forms::{
+    DateField, DecimalField, FormField, GenericIpAddressField, IpProtocol, JsonField, SlugField,
+    UrlField, UuidField,
+};
+
+let slug = SlugField::new().clean("hello-djangors-1-0")?;
+let url = UrlField::new().clean("https://djangors.dev")?;
+let ip = GenericIpAddressField::new(IpProtocol::Both).clean("2001:db8::1")?;
+let payload = JsonField::new().clean(r#"{"active": true}"#)?;
+let date = DateField::new().clean("2026-07-30")?;
+<span class="boring">}</span></code></pre>
+<h3 id="new-widgets--formmedia"><a class="header" href="#new-widgets--formmedia">New Widgets &amp; <code>FormMedia</code></a></h3>
+<p>Djangors 1.0 adds 8 new HTML widgets (all XSS-escaped):</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Widget</th><th>Rendered HTML</th></tr>
+</thead>
+<tbody>
+<tr><td><code>FileInput</code></td><td><code>&lt;input type="file"&gt;</code></td></tr>
+<tr><td><code>ClearableFileInput</code></td><td>File input plus current file link and clear checkbox</td></tr>
+<tr><td><code>SelectMultiple</code></td><td><code>&lt;select multiple&gt;</code> with multi-value selection</td></tr>
+<tr><td><code>CheckboxSelectMultiple</code></td><td>List of <code>&lt;input type="checkbox"&gt;</code> options</td></tr>
+<tr><td><code>DateTimeInput</code></td><td><code>&lt;input type="datetime-local"&gt;</code></td></tr>
+<tr><td><code>TimeInput</code></td><td><code>&lt;input type="time"&gt;</code></td></tr>
+<tr><td><code>UrlInput</code></td><td><code>&lt;input type="url"&gt;</code></td></tr>
+<tr><td><code>SplitDateTimeWidget</code></td><td>Paired <code>&lt;input type="date"&gt;</code> and <code>&lt;input type="time"&gt;</code> inputs</td></tr>
+</tbody>
+</table>
+</div>
+<p>Use <strong><code>FormMedia</code></strong> (<code>djangors_forms::FormMedia</code>) to declare, merge, and render CSS/JS assets required by custom widgets or forms:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_forms::FormMedia;
+
+let media = FormMedia::new()
+    .add_css("all", "/static/widgets/datepicker.css")
+    .add_js("/static/widgets/datepicker.js");
+
+let combined = media.merge(&amp;FormMedia::new().add_js("/static/app.js"));
+let head_tags = combined.render(); // &lt;link rel="stylesheet" ...&gt; and &lt;script src="..."&gt;&lt;/script&gt;
+<span class="boring">}</span></code></pre>
+<h3 id="managementform--inlineformset"><a class="header" href="#managementform--inlineformset"><code>ManagementForm</code> &amp; <code>InlineFormSet</code></a></h3>
+<ul>
+<li><strong><code>ManagementForm</code></strong> models and validates the hidden <code>TOTAL_FORMS</code>, <code>INITIAL_FORMS</code>, <code>MIN_NUM_FORMS</code>, and <code>MAX_NUM_FORMS</code> fields for any <code>FormSet</code>.</li>
+<li><strong><code>InlineFormSet</code></strong> wraps a <code>FormSet</code> bound to a parent record’s foreign-key field (<code>parent_fk_name</code>) and primary key (<code>parent_pk</code>), automatically injecting the parent FK into every child form during cleaning:</li>
+</ul>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_forms::{FormSet, InlineFormSet};
+use std::collections::HashMap;
+
+let inline: InlineFormSet&lt;()&gt; = InlineFormSet::new(
+    FormSet::new().with_prefix("items").with_can_delete(true),
+    "order_id",
+    "42",
+);
+
+let mgmt_html = inline.formset.render_management_form();
+let cleaned = inline.clean_with(&amp;post_data, |child_map| {
+    // `child_map["order_id"]` is automatically populated with `"42"`
+    Ok(child_map.get("sku").cloned().unwrap_or_default())
+})?;
+<span class="boring">}</span></code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="flash-messages-djangors-contrib-messages"><a class="header" href="#flash-messages-djangors-contrib-messages">Flash Messages (<code>djangors-contrib-messages</code>)</a></h1>
 <p>One-shot, session-backed notifications (“Profile updated successfully”, “Payment declined”) that you queue during one request and render during the next. Views add messages, and the page-rendering call site drains them into template context.</p>
@@ -5519,6 +6205,109 @@ Ok(Response::text("ok"))
 <span class="boring">}
 </span><span class="boring">}</span></code></pre>
 <p>Implement <code>RateLimitKey</code> for custom keying strategies (e.g. by API key or user ID).</p>
+<h2 id="file-responses--spooling-uploads-fileresponse-tempfileupload"><a class="header" href="#file-responses--spooling-uploads-fileresponse-tempfileupload">File Responses &amp; Spooling Uploads (<code>FileResponse</code>, <code>TempFileUpload</code>)</a></h2>
+<h3 id="fileresponse"><a class="header" href="#fileresponse"><code>FileResponse</code></a></h3>
+<p><code>djangors_core::file_response::FileResponse</code> serves files or byte buffers with automatic MIME detection (<code>detect_mime_type</code>), <code>Content-Disposition</code> (<code>inline</code> or <code>attachment</code> with filename), and HTTP <code>Range</code> request support (<code>206 Partial Content</code> and <code>416 Range Not Satisfiable</code>):</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_core::{DjangorsError, FileResponse, PathParams, Request, Response};
+
+async fn download_report(req: Request, _params: PathParams) -&gt; Result&lt;Response, DjangorsError&gt; {
+    let file = FileResponse::from_path("reports/q3.pdf")?
+        .filename("q3-report.pdf")
+        .as_attachment(true);
+
+    // Evaluates the incoming `Range` header -&gt; 200 OK, 206 Partial Content, or 416 Range Not Satisfiable
+    Ok(file.into_response_for_request(&amp;req))
+}
+<span class="boring">}</span></code></pre>
+<p>For large files, call <code>.into_streaming_response(64 * 1024)</code> to stream in fixed-size chunks.</p>
+<h3 id="tempfileupload"><a class="header" href="#tempfileupload"><code>TempFileUpload</code></a></h3>
+<p><code>djangors_core::upload::TempFileUpload</code> buffers small uploads in memory and automatically spills to a temporary file on disk once the byte threshold is exceeded (cleaning up the temp file on <code>Drop</code> unless persisted):</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_core::TempFileUpload;
+
+let mut upload = TempFileUpload::new(256 * 1024); // spill to disk above 256 KiB
+upload.write_chunk(b"chunk-1")?;
+upload.write_chunk(b"chunk-2")?;
+
+if upload.is_spilled() {
+    println!("spilled to {:?}", upload.temp_path());
+}
+upload.persist_to("uploads/final.bin")?;
+<span class="boring">}</span></code></pre>
+<h2 id="conditional-get-login-required-middleware--vary-headers"><a class="header" href="#conditional-get-login-required-middleware--vary-headers">Conditional GET, Login-Required Middleware &amp; <code>Vary</code> Headers</a></h2>
+<h3 id="conditionalgetlayer"><a class="header" href="#conditionalgetlayer"><code>ConditionalGetLayer</code></a></h3>
+<p><code>djangors_core::middleware::ConditionalGetLayer</code> (or <code>conditional_get_layer()</code>) computes an <code>ETag</code> (SHA-256 of the response body, strong by default or weak via <code>.weak_etag(true)</code>) and evaluates <code>If-None-Match</code> / <code>If-Modified-Since</code> headers on <code>GET</code>/<code>HEAD</code> requests, returning <code>304 Not Modified</code> with an empty body when unchanged.</p>
+<h3 id="loginrequiredlayer"><a class="header" href="#loginrequiredlayer"><code>LoginRequiredLayer</code></a></h3>
+<p><code>djangors_core::middleware::LoginRequiredLayer</code> (or <code>login_required_layer("/login")</code>) guards an entire router or sub-router by redirecting unauthenticated requests to <code>login_url?next=&lt;path&gt;</code>:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_core::middleware::{conditional_get_layer, login_required_layer};
+use tower::ServiceBuilder;
+
+let service = ServiceBuilder::new()
+    .layer(conditional_get_layer())
+    .layer(
+        login_required_layer("/accounts/login/")
+            .exempt_path("/accounts/login/")
+            .exempt_prefix("/static/"),
+    )
+    .service(router_service);
+<span class="boring">}</span></code></pre>
+<h3 id="responsevary_on_headers--vary_on_cookie"><a class="header" href="#responsevary_on_headers--vary_on_cookie"><code>Response::vary_on_headers</code> &amp; <code>vary_on_cookie</code></a></h3>
+<p>Append deduplicated, case-insensitive <code>Vary</code> header values directly on any <code>Response</code>:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_core::{Response, StatusCode};
+
+let resp = Response::html(StatusCode::OK, "&lt;h1&gt;Dashboard&lt;/h1&gt;")
+    .vary_on_headers(&amp;["Accept-Encoding", "Accept-Language"])
+    .vary_on_cookie();
+// Vary: Accept-Encoding, Accept-Language, Cookie
+<span class="boring">}</span></code></pre>
+<h2 id="extensible-system-check-framework"><a class="header" href="#extensible-system-check-framework">Extensible System Check Framework</a></h2>
+<p><code>djangors_core::checks</code> mirrors Django’s <code>django.core.checks</code> framework. Any crate or application can register startup/deployment checks via <code>inventory::submit!</code>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Type / Function</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><code>CheckLevel</code></td><td>Severity enum: <code>Debug</code>, <code>Info</code>, <code>Warning</code>, <code>Error</code>, <code>Critical</code></td></tr>
+<tr><td><code>CheckMessage</code></td><td>Finding with <code>id</code>, <code>level</code>, <code>message</code>, and optional <code>.with_hint(...)</code></td></tr>
+<tr><td><code>SystemCheckRegistration</code></td><td>Compile-time registration (<code>name</code>, <code>check: fn() -&gt; Vec&lt;CheckMessage&gt;</code>)</td></tr>
+<tr><td><code>run_system_checks(&amp;silenced)</code></td><td>Runs all registered checks and filters out IDs present in <code>silenced</code></td></tr>
+<tr><td><code>DjangorsSettings::silenced_system_checks</code></td><td>Setting (<code>silenced_system_checks = ["security.W009"]</code> in <code>djangors.toml</code>) listing suppressed check IDs</td></tr>
+</tbody>
+</table>
+</div>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_core::checks::{run_system_checks, CheckMessage, SystemCheckRegistration};
+
+fn check_payments_key() -&gt; Vec&lt;CheckMessage&gt; {
+    if std::env::var("STRIPE_API_KEY").is_err() {
+        vec![
+            CheckMessage::warning("payments.W001", "STRIPE_API_KEY is not configured")
+                .with_hint("Set STRIPE_API_KEY in your environment before deploying."),
+        ]
+    } else {
+        vec![]
+    }
+}
+
+djangors_core::inventory::submit! {
+    SystemCheckRegistration {
+        name: "payments.check_api_key",
+        check: check_payments_key,
+    }
+}
+
+// Run all registered checks, honouring settings.silenced_system_checks:
+let findings = run_system_checks(&amp;settings.silenced_system_checks);
+<span class="boring">}</span></code></pre>
 <h2 id="where-to-go-next"><a class="header" href="#where-to-go-next">Where to go next</a></h2>
 <ul>
 <li><a href="#tutorial-part-1-requests-and-responses">Requests and Responses tutorial</a> — the fast path to a first endpoint.</li>
@@ -5854,6 +6643,77 @@ send_login_link(
 </span><span class="boring">Ok(())
 </span><span class="boring">}
 </span><span class="boring">}</span></code></pre>
+<hr>
+<h2 id="pluggable-password-hashers-passwordhasher--passwordhasherregistry"><a class="header" href="#pluggable-password-hashers-passwordhasher--passwordhasherregistry">Pluggable Password Hashers (<code>PasswordHasher</code> &amp; <code>PasswordHasherRegistry</code>)</a></h2>
+<p>Djangors 1.0 introduces a pluggable <code>PasswordHasher</code> trait and <code>PasswordHasherRegistry</code> mirroring Django’s <code>PASSWORD_HASHERS</code> setting. The first registered hasher is the preferred algorithm used for new hashes; older hashers remain verifiable and are transparently upgraded on login.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Built-in Hasher</th><th>Algorithm ID</th><th>Format / Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>Argon2Hasher</code></td><td><code>"argon2"</code></td><td>PHC Argon2id (default preferred hasher)</td></tr>
+<tr><td><code>Pbkdf2Sha256Hasher</code></td><td><code>"pbkdf2_sha256"</code></td><td>Django-compatible <code>pbkdf2_sha256$&lt;iterations&gt;$&lt;salt&gt;$&lt;hash&gt;</code></td></tr>
+<tr><td><code>Pbkdf2Sha512Hasher</code></td><td><code>"pbkdf2_sha512"</code></td><td>Django-compatible <code>pbkdf2_sha512$&lt;iterations&gt;$&lt;salt&gt;$&lt;hash&gt;</code></td></tr>
+</tbody>
+</table>
+</div>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_auth::{
+    Argon2Hasher, PasswordHasherRegistry, Pbkdf2Sha256Hasher, Pbkdf2Sha512Hasher,
+};
+
+// Default registry prefers Argon2Hasher and accepts PBKDF2-SHA256 &amp; PBKDF2-SHA512 legacy hashes
+let registry = PasswordHasherRegistry::new(vec![
+    Box::new(Argon2Hasher),
+    Box::new(Pbkdf2Sha256Hasher::default()),
+    Box::new(Pbkdf2Sha512Hasher::default()),
+]);
+
+let encoded = registry.hash("correct-horse-battery-staple")?;
+assert!(registry.verify("correct-horse-battery-staple", &amp;encoded)?);
+
+// Transparent on-login re-hashing: returns Ok((valid, Some(new_hash))) if legacy hash needs upgrade
+let (valid, upgraded) = registry.verify_and_upgrade("user-password", &amp;stored_hash)?;
+if valid {
+    if let Some(new_hash) = upgraded {
+        user.set_password_hash(new_hash);
+        user.update_user(&amp;db).await?;
+    }
+}
+<span class="boring">}</span></code></pre>
+<p>Implement <code>PasswordHasher</code> (<code>algorithm</code>, <code>encode</code>, <code>verify</code>, <code>identify</code>, <code>must_update</code>) to support custom or migrated legacy hash formats.</p>
+<hr>
+<h2 id="turnkey-html-auth-views-auth_routes"><a class="header" href="#turnkey-html-auth-views-auth_routes">Turnkey HTML Auth Views (<code>auth_routes</code>)</a></h2>
+<p><code>djangors-auth</code> ships ready-to-mount server-rendered HTML views and a router builder (<code>auth_routes</code>) for standard account flows:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>View / Helper</th><th>Default Route</th><th>Behavior</th></tr>
+</thead>
+<tbody>
+<tr><td><code>login_view</code></td><td><code>GET</code>/<code>POST /accounts/login/</code></td><td>Renders login form, authenticates user, rotates session, honors <code>?next=</code> redirect</td></tr>
+<tr><td><code>logout_view</code></td><td><code>POST</code> (or <code>GET</code>) <code>/accounts/logout/</code></td><td>Clears session and redirects to <code>logout_redirect_url</code></td></tr>
+<tr><td><code>password_change_view</code></td><td><code>GET</code>/<code>POST /accounts/password_change/</code></td><td>Requires authenticated user, verifies old password, validates &amp; hashes new password</td></tr>
+<tr><td><code>password_reset_view</code></td><td><code>GET</code>/<code>POST /accounts/password_reset/</code></td><td>Initiates password reset flow without enumerating accounts</td></tr>
+<tr><td><code>auth_routes(config)</code></td><td>Mounts all 4 views</td><td>Attaches <code>AuthViewsConfig</code> to the returned <code>Router</code></td></tr>
+</tbody>
+</table>
+</div>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_auth::{auth_routes, AuthViewsConfig};
+use djangors_core::Router;
+
+let auth_config = AuthViewsConfig::new()
+    .login_redirect_url("/dashboard/")
+    .logout_redirect_url("/")
+    .site_name("My App");
+
+let router = Router::new()
+    .mount("", auth_routes(auth_config));
+<span class="boring">}</span></code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="passkeys-webauthn"><a class="header" href="#passkeys-webauthn">Passkeys (WebAuthn)</a></h1>
 <p>Passkeys let users sign in with a fingerprint, face, device PIN or security key instead
@@ -5861,7 +6721,7 @@ of a password. The private key never leaves the user’s device. The server stor
 public key, so there is nothing to phish and nothing useful to leak.</p>
 <p>Djangors implements the server side of WebAuthn (the <em>relying party</em>) in pure Rust,
 without OpenSSL. Enable it with the <code>passkeys</code> feature:</p>
-<pre><code class="language-toml">djangors = { version = "0.14", features = ["passkeys"] }
+<pre><code class="language-toml">djangors = { version = "1.0", features = ["passkeys"] }
 </code></pre>
 <h2 id="what-is-supported"><a class="header" href="#what-is-supported">What is supported</a></h2>
 <ul>
@@ -6181,7 +7041,7 @@ let app = Router::new().merge(oauth_client_router()).with_state(state);
 <h2 id="enabling-the-feature-1"><a class="header" href="#enabling-the-feature-1">Enabling the feature</a></h2>
 <p>Add the <code>oauth-provider</code> feature to <code>djangors</code>:</p>
 <pre><code class="language-toml">[dependencies]
-djangors = { version = "0.14", features = ["oauth-provider"] }
+djangors = { version = "1.0", features = ["oauth-provider"] }
 </code></pre>
 <h2 id="database-setup-and-signing-keys"><a class="header" href="#database-setup-and-signing-keys">Database setup and signing keys</a></h2>
 <p>Create the provider tables once at startup (or in a migration) and generate an asymmetric OIDC signing key (<code>RS256</code> or <code>ES256</code>). Ensure <code>DJANGORS_FIELD_ENCRYPTION_KEY</code> (or <code>DJANGORS_FIELD_ENCRYPTION_KEYS</code>) is configured because <code>SigningKey::private_key_pem</code> is stored with <code>#[djangors(encrypted)]</code>.</p>
@@ -6277,7 +7137,7 @@ let revoked = djangors::oauth::revoke_app_tokens(&amp;db, app.id).await?;
 <h2 id="enabling-the-feature-2"><a class="header" href="#enabling-the-feature-2">Enabling the feature</a></h2>
 <p>Add the <code>saml</code> feature to <code>djangors</code>:</p>
 <pre><code class="language-toml">[dependencies]
-djangors = { version = "0.14", features = ["saml"] }
+djangors = { version = "1.0", features = ["saml"] }
 </code></pre>
 <h2 id="database-setup-and-identity-provider-configuration"><a class="header" href="#database-setup-and-identity-provider-configuration">Database setup and identity provider configuration</a></h2>
 <p>Create the <code>saml_identity_provider</code> table once at startup (or in a migration), import an IdP’s <code>EntityDescriptor</code> metadata XML, and insert <a href="../crates/djangors-contrib-saml/src/lib.rs"><code>SamlSpConfig</code></a> plus your replay <a href="../crates/djangors-cache/src/lib.rs"><code>Cache</code></a> (<code>Arc&lt;dyn Cache&gt;</code>) into <code>AppState</code>:</p>
@@ -7535,6 +8395,76 @@ let _router = Router::new().mount("", impersonation_router());
 <span class="boring">Ok(())
 </span><span class="boring">}
 </span><span class="boring">}</span></code></pre>
+<hr>
+<h2 id="djangors-10-admin-additions"><a class="header" href="#djangors-10-admin-additions">Djangors 1.0 Admin Additions</a></h2>
+<h3 id="extended-modeladminconfig-options"><a class="header" href="#extended-modeladminconfig-options">Extended <code>ModelAdminConfig</code> Options</a></h3>
+<p>Djangors 1.0 expands <code>ModelAdminConfig</code> with ten new Django-parity options:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Option</th><th>Type</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><code>autocomplete_fields</code></td><td><code>Option&lt;&amp;'static [&amp;'static str]&gt;</code></td><td>FK / M2M fields backed by the admin autocomplete JSON endpoint</td></tr>
+<tr><td><code>prepopulated_fields</code></td><td><code>Option&lt;&amp;'static [(&amp;'static str, &amp;'static [&amp;'static str])]&gt;</code></td><td>Auto-populates target slug fields from source fields on the add/change form</td></tr>
+<tr><td><code>filter_horizontal</code></td><td><code>Option&lt;&amp;'static [&amp;'static str]&gt;</code></td><td>Renders M2M fields with a horizontal two-box filter widget</td></tr>
+<tr><td><code>filter_vertical</code></td><td><code>Option&lt;&amp;'static [&amp;'static str]&gt;</code></td><td>Renders M2M fields with a vertical two-box filter widget</td></tr>
+<tr><td><code>list_select_related</code></td><td><code>Option&lt;&amp;'static [&amp;'static str]&gt;</code></td><td>Eagerly loads related FK fields on the changelist query</td></tr>
+<tr><td><code>ordering</code></td><td><code>Option&lt;&amp;'static [&amp;'static str]&gt;</code></td><td>Default changelist ordering (e.g. <code>&amp;["-created_at"]</code>)</td></tr>
+<tr><td><code>sortable_by</code></td><td><code>Option&lt;&amp;'static [&amp;'static str]&gt;</code></td><td>Restricts which changelist columns allow <code>?o=</code> sorting</td></tr>
+<tr><td><code>show_facets</code></td><td><code>bool</code></td><td>Displays Django 5.0-style facet counts <code>(N)</code> next to sidebar filter options</td></tr>
+<tr><td><code>save_as</code></td><td><code>bool</code></td><td>Adds a <strong>“Save as new”</strong> button on the change form</td></tr>
+<tr><td><code>save_on_top</code></td><td><code>bool</code></td><td>Renders a second save button bar at the top of the change form</td></tr>
+</tbody>
+</table>
+</div>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_admin::{AdminSite, ModelAdminConfig};
+
+let admin = AdminSite::new();
+admin.register_with::&lt;Article&gt;(ModelAdminConfig {
+    list_display: Some(&amp;["title", "author", "published", "created_at"]),
+    list_select_related: Some(&amp;["author"]),
+    autocomplete_fields: Some(&amp;["author"]),
+    prepopulated_fields: Some(&amp;[("slug", &amp;["title"])]),
+    filter_horizontal: Some(&amp;["tags"]),
+    ordering: Some(&amp;["-created_at"]),
+    sortable_by: Some(&amp;["title", "created_at"]),
+    show_facets: true,
+    save_as: true,
+    save_on_top: true,
+    ..Default::default()
+});
+<span class="boring">}</span></code></pre>
+<h3 id="simplelistfilter-autocomplete-endpoint--facet-counts"><a class="header" href="#simplelistfilter-autocomplete-endpoint--facet-counts"><code>SimpleListFilter</code>, Autocomplete Endpoint &amp; Facet Counts</a></h3>
+<ul>
+<li><strong><code>SimpleListFilter</code></strong>: Define custom sidebar filters with a title, query parameter name, and <code>(value, label)</code> lookup choices:</li>
+</ul>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_admin::SimpleListFilter;
+
+let status_filter = SimpleListFilter::new(
+    "Publication status",
+    "status",
+    vec![
+        ("draft".into(), "Draft".into()),
+        ("published".into(), "Published".into()),
+    ],
+);
+<span class="boring">}</span></code></pre>
+<ul>
+<li><strong>Autocomplete JSON Endpoint</strong>: <code>AdminSite::urls()</code> automatically registers <code>GET /{app}/{model}/autocomplete/?term=&lt;query&gt;</code> for staff users (respecting <code>TenantScope</code>), returning <code>{ "results": [{ "id": ..., "text": ... }] }</code> for fields listed in <code>autocomplete_fields</code>.</li>
+<li><strong>Facet Counts</strong>: Enabling <code>show_facets: true</code> annotates each sidebar filter choice with its matching row count <code>(N)</code> under the current query.</li>
+</ul>
+<h3 id="admindocs-admindoc"><a class="header" href="#admindocs-admindoc">AdminDocs (<code>/admin/doc/</code>)</a></h3>
+<p><code>AdminSite::urls()</code> includes built-in model and schema documentation routes (mirroring <code>django.contrib.admindocs</code>) accessible to staff users:</p>
+<ul>
+<li><code>/admin/doc/</code> — Documentation index.</li>
+<li><code>/admin/doc/models/</code> — List of all registered models grouped by app.</li>
+<li><code>/admin/doc/models/{app}.{model}/</code> — Detailed field types, constraints, relations, and table metadata for a single model.</li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="testing"><a class="header" href="#testing">Testing</a></h1>
 <p>Djangors supports two testing paradigms: <strong>in-process route testing</strong> via <code>djangors-test</code> (<code>TestClient</code>) and <strong>real-socket integration testing</strong> over localhost TCP sockets.</p>
@@ -8026,6 +8956,102 @@ identifiers with <code>quote_ident()</code>.</li>
 <li>Run under <strong>both</strong> backends (<code>cargo test --workspace</code> and the SQLite env-invocation) before
 relying on it staying green.</li>
 </ul>
+<hr>
+<h2 id="4-djangors-10-testing-utilities"><a class="header" href="#4-djangors-10-testing-utilities">4. Djangors 1.0 Testing Utilities</a></h2>
+<p>Djangors 1.0 adds four high-level testing helpers in <code>djangors_test</code> mirroring Django’s <code>django.test</code> toolkit:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Utility</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><code>assert_num_queries(expected, fut)</code></td><td>Executes an async block with task-local SQL query logging and panics if the executed query count differs from <code>expected</code></td></tr>
+<tr><td><code>LiveServer::start(router)</code></td><td>Spawns <code>router</code> on an ephemeral <code>127.0.0.1:0</code> TCP port and shuts down cleanly on <code>Drop</code></td></tr>
+<tr><td><code>RequestFactory</code></td><td>Builds standalone <code>Request</code> objects directly for unit-testing view handlers without a <code>Router</code></td></tr>
+<tr><td><code>SettingsOverride</code> / <code>override_env</code></td><td>Mutex-serialized RAII guard that overrides environment variables (<code>DJANGORS_*</code>) and restores them on <code>Drop</code></td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="asserting-sql-query-counts-assert_num_queries"><a class="header" href="#asserting-sql-query-counts-assert_num_queries">Asserting SQL Query Counts (<code>assert_num_queries</code>)</a></h3>
+<p>Catch N+1 regressions by asserting the exact number of SQL statements executed inside an async block:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_orm::Model;
+use djangors_test::assert_num_queries;
+
+#[tokio::test]
+async fn test_no_n_plus_one() {
+    let rows = assert_num_queries(2, async {
+        Choice::objects()
+            .select_related::&lt;Question, _&gt;(&amp;db, "question")
+            .await
+            .unwrap()
+    })
+    .await;
+    assert!(!rows.is_empty());
+}
+<span class="boring">}</span></code></pre>
+<h3 id="ephemeral-tcp-server-liveserver"><a class="header" href="#ephemeral-tcp-server-liveserver">Ephemeral TCP Server (<code>LiveServer</code>)</a></h3>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_core::{Response, Router, StatusCode};
+use djangors_test::LiveServer;
+
+#[tokio::test]
+async fn test_live_http_server() {
+    let router = Router::new().get("/health", |_, _| async {
+        Ok(Response::text(StatusCode::OK, "ok"))
+    });
+
+    let server = LiveServer::start(router).await;
+    let url = server.url("/health"); // e.g. "http://127.0.0.1:54321/health"
+    // Send real HTTP requests to `url` with reqwest / hyper / browser tests;
+    // `server` shuts down automatically when dropped.
+    assert!(url.starts_with(&amp;server.base_url()));
+}
+<span class="boring">}</span></code></pre>
+<h3 id="unit-testing-handlers-requestfactory"><a class="header" href="#unit-testing-handlers-requestfactory">Unit-Testing Handlers (<code>RequestFactory</code>)</a></h3>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_core::PathParams;
+use djangors_sessions::Session;
+use djangors_test::RequestFactory;
+
+#[tokio::test]
+async fn test_handler_directly() {
+    let rf = RequestFactory::new();
+    let req = rf
+        .post("/submit")
+        .form(&amp;[("title", "Hello")])
+        .header("X-Requested-With", "XMLHttpRequest")
+        .with_session(Session::new_empty())
+        .with_state(my_db.clone())
+        .build();
+
+    let resp = submit_handler(req, PathParams::default()).await.unwrap();
+    assert_eq!(resp.status(), djangors_core::StatusCode::CREATED);
+}
+<span class="boring">}</span></code></pre>
+<h3 id="scoped-environment-overrides-settingsoverride--override_env"><a class="header" href="#scoped-environment-overrides-settingsoverride--override_env">Scoped Environment Overrides (<code>SettingsOverride</code> / <code>override_env</code>)</a></h3>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_test::{override_env, SettingsOverride};
+
+#[test]
+fn test_production_settings_branch() {
+    let _guard = override_env(&amp;[
+        ("DJANGORS_DEBUG", Some("false")),
+        ("DJANGORS_SECRET_KEY", Some("super-secret-test-key")),
+        ("OPTIONAL_FLAG", None), // temporarily unset
+    ]);
+
+    // Single-variable shorthand:
+    // let _guard = SettingsOverride::set("DJANGORS_DEBUG", "false");
+
+    assert_eq!(std::env::var("DJANGORS_DEBUG").unwrap(), "false");
+    // Original values are automatically restored when `_guard` drops.
+}
+<span class="boring">}</span></code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="deployment"><a class="header" href="#deployment">Deployment</a></h1>
 <p><code>djangors</code> applications compile into standalone native binaries, making production deployment simple and lightweight.</p>
@@ -8074,7 +9100,7 @@ codegen-units = 1
 </code></pre>
 <p>When depending on the <code>djangors</code> facade crate, all subsystems and both database backends (<code>postgres</code> and <code>sqlite</code>) are enabled by default. To minimize compile times and binary size in production, disable default features and opt into only the database backend and subsystems your application uses:</p>
 <pre><code class="language-toml">[dependencies]
-djangors = { version = "0.14", default-features = false, features = [
+djangors = { version = "1.0", default-features = false, features = [
     "postgres",   # or "sqlite" — drops libsqlite3-sys when only "postgres" is enabled
     "migrations",
     "rest",
@@ -8255,6 +9281,46 @@ breadcrumbs, and panics are captured via Sentry’s built-in panic integration.<
 <li>Upon receiving <code>SIGINT</code> or <code>SIGTERM</code>, the TCP accept loop stops listening for new connections.</li>
 <li>An active connection drain phase initiates, allowing in-flight HTTP requests to complete.</li>
 <li>If in-flight requests do not complete within 30 seconds, remaining connections are aborted to ensure timely process termination.</li>
+</ol>
+<hr>
+<h2 id="keeping-binaries-and-target-small"><a class="header" href="#keeping-binaries-and-target-small">Keeping Binaries and <code>target/</code> Small</a></h2>
+<p>By default, Cargo emits full DWARF debug symbols for every dependency in <code>target/debug/</code> (which can
+grow to multiple gigabytes) and optimizes release binaries for speed rather than size. Djangors
+solves both out of the box when you scaffold with <code>dj new</code>:</p>
+<ol>
+<li>
+<p><strong>Enable only the Cargo features you use</strong> — instead of pulling every optional battery into your
+dependency tree, use <code>default-features = false</code> on <code>djangors</code>:</p>
+<pre><code class="language-toml">[dependencies]
+djangors = { version = "1.0", default-features = false, features = ["postgres", "rest", "auth"] }
+</code></pre>
+<p>A minimal <code>djangors</code> Postgres app compiles to a <strong>~3–4 MiB</strong> stripped static binary.</p>
+</li>
+<li>
+<p><strong>Shrink <code>target/debug/</code> by ~70%</strong> — disable debug symbols for third-party crates while keeping
+file + line backtraces for your own code (included automatically by <code>dj new</code>):</p>
+<pre><code class="language-toml">[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = 0
+</code></pre>
+</li>
+<li>
+<p><strong>Go-sized release binaries</strong> — optimize for size, strip symbols, enable LTO, and abort on panic
+(included automatically by <code>dj new</code>):</p>
+<pre><code class="language-toml">[profile.release]
+opt-level = "z"
+lto = "thin"
+strip = true
+codegen-units = 1
+panic = "abort"
+</code></pre>
+</li>
+<li>
+<p><strong>Share build artifacts across projects</strong> — set a shared <code>CARGO_TARGET_DIR</code> (or <code>sccache</code>) so
+common dependencies are compiled and stored once on disk rather than duplicated per project.</p>
+</li>
 </ol>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="security"><a class="header" href="#security">Security</a></h1>
@@ -9382,11 +10448,11 @@ let db = djangors_db::Database::connect(&amp;config).await?;
 <h3 id="cargo-feature-flags-postgres-and-sqlite"><a class="header" href="#cargo-feature-flags-postgres-and-sqlite">Cargo Feature Flags (<code>postgres</code> and <code>sqlite</code>)</a></h3>
 <p>At compile time, <code>djangors-db</code> (and the <code>djangors</code> facade crate) gate each SQL driver behind its own Cargo feature flag (<code>postgres</code> and <code>sqlite</code>, both enabled by default). If your production deployment targets only one database engine, disable default features and enable only the backend you need to drop the unused driver (such as bundled <code>libsqlite3-sys</code> or <code>sqlx-postgres</code>) from your dependency graph and release binary:</p>
 <pre><code class="language-toml"># PostgreSQL-only build (drops sqlx-sqlite and libsqlite3-sys)
-djangors = { version = "0.14", default-features = false, features = ["postgres", "rest"] }
+djangors = { version = "1.0", default-features = false, features = ["postgres", "rest"] }
 
 # Or when depending on djangors-db / djangors-orm directly:
-djangors-db = { version = "0.14", default-features = false, features = ["postgres"] }
-djangors-orm = { version = "0.14", default-features = false, features = ["postgres"] }
+djangors-db = { version = "1.0", default-features = false, features = ["postgres"] }
+djangors-orm = { version = "1.0", default-features = false, features = ["postgres"] }
 </code></pre>
 <blockquote class="blockquote-tag blockquote-tag-note">
 <p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
@@ -9656,7 +10722,104 @@ assert_eq!(v, Some(1));
 <li><code>Serializable</code></li>
 </ul>
 <p><code>transaction_with_isolation(level, f)</code> begins the transaction and issues the matching <code>SET TRANSACTION ISOLATION LEVEL ...</code> before running <code>f</code>.</p>
-<pre><code></code></pre>
+<hr>
+<h2 id="optional-mysql--mariadb-backend-mysql-feature"><a class="header" href="#optional-mysql--mariadb-backend-mysql-feature">Optional MySQL / MariaDB Backend (<code>mysql</code> Feature)</a></h2>
+<p>Djangors 1.0 adds optional MySQL / MariaDB support gated behind the <code>mysql</code> Cargo feature flag (off by default to keep compile times and binary sizes minimal when targeting PostgreSQL or SQLite).</p>
+<p>Enable it in <code>Cargo.toml</code>:</p>
+<pre><code class="language-toml"># Enable MySQL alongside default backends
+djangors = { version = "1.0", features = ["mysql"] }
+
+# Or build a MySQL-only binary
+djangors-db = { version = "1.0", default-features = false, features = ["mysql"] }
+djangors-orm = { version = "1.0", default-features = false, features = ["mysql"] }
+</code></pre>
+<h3 id="connection-strings--dialect-detection"><a class="header" href="#connection-strings--dialect-detection">Connection Strings &amp; Dialect Detection</a></h3>
+<p><code>Dialect::from_url</code> automatically selects <code>Dialect::MySql</code> for <code>mysql://</code> and <code>mariadb://</code> URLs, and <code>Database::connect</code> opens a <code>Database::MySql</code> pool (<code>sqlx::MySqlPool</code>):</p>
+<pre><code class="language-bash">export DATABASE_URL="mysql://user:password@localhost:3306/my_app"
+</code></pre>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_db::{Database, DatabaseConfig, Dialect};
+
+let url = "mysql://user:password@localhost:3306/my_app";
+assert_eq!(Dialect::from_url(url), Dialect::MySql);
+
+let db = Database::connect(&amp;DatabaseConfig::new(url)).await?;
+// `db.conn()` and `db.transaction_conn(...)` work transparently on MySQL, Postgres, and SQLite.
+<span class="boring">}</span></code></pre>
+<blockquote class="blockquote-tag blockquote-tag-note">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
+<p><code>Dialect::MySql</code> uses <code>?</code> placeholders, backtick identifier quoting (<code>`col`</code>), and MySQL-compatible DDL/date functions across the ORM, executor, and migration engine.</p>
+</blockquote>
+<hr>
+<h2 id="multi-database-routing"><a class="header" href="#multi-database-routing">Multi-Database Routing</a></h2>
+<p>Djangors 1.0 provides Django’s <code>DATABASE_ROUTERS</code> equivalent in <code>djangors_db::router</code> so applications can route reads, writes, and migrations across multiple named databases (such as a primary/replica pair or per-app databases).</p>
+<h3 id="core-types"><a class="header" href="#core-types">Core Types</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>DatabaseRouter</code></td><td>Trait with <code>db_for_read(&amp;self, model_table)</code>, <code>db_for_write(&amp;self, model_table)</code>, and <code>allow_migrate(&amp;self, db_alias, app_label)</code></td></tr>
+<tr><td><code>PrimaryReplicaRouter</code></td><td>Built-in router directing all reads to a replica alias and all writes/migrations to a primary alias</td></tr>
+<tr><td><code>MultiDatabase</code></td><td>Registry holding named <code>Database</code> handles (<code>"default"</code>, <code>"replica"</code>, <code>"analytics"</code>, …) and an ordered router chain</td></tr>
+<tr><td><code>QuerySet::using(&amp;multi, alias)</code></td><td>Resolves either an explicit alias (<code>Some("analytics")</code>) or the router-selected read database (<code>None</code>)</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="primary--replica-setup"><a class="header" href="#primary--replica-setup">Primary / Replica Setup</a></h3>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_db::{Database, DatabaseConfig, MultiDatabase, PrimaryReplicaRouter};
+use djangors_orm::Model;
+
+let primary = Database::connect(&amp;DatabaseConfig::new("postgres://.../app_primary")).await?;
+let replica = Database::connect(&amp;DatabaseConfig::new("postgres://.../app_replica")).await?;
+
+let dbs = MultiDatabase::new(primary)
+    .register("replica", replica)
+    .with_router(PrimaryReplicaRouter::new("default", "replica"));
+
+// Router-driven lookup: reads hit "replica", writes hit "default"
+let read_db = dbs.read_db("polls_question")?;
+let write_db = dbs.write_db("polls_question")?;
+
+// Or use QuerySet::using(&amp;dbs, alias):
+let qs = Question::objects();
+let questions = qs.all(qs.using(&amp;dbs, None)?).await?;            // uses router -&gt; "replica"
+let fresh = qs.all(qs.using(&amp;dbs, Some("default"))?).await?;     // explicit primary read
+<span class="boring">}</span></code></pre>
+<h3 id="custom-databaserouter"><a class="header" href="#custom-databaserouter">Custom <code>DatabaseRouter</code></a></h3>
+<p>Implement <code>DatabaseRouter</code> to pin specific tables or apps to dedicated databases; returning <code>None</code> defers to the next router in the chain (and ultimately <code>"default"</code>):</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_db::DatabaseRouter;
+
+struct AnalyticsRouter;
+
+impl DatabaseRouter for AnalyticsRouter {
+    fn db_for_read(&amp;self, model_table: &amp;str) -&gt; Option&lt;&amp;str&gt; {
+        if model_table.starts_with("analytics_") {
+            Some("analytics")
+        } else {
+            None
+        }
+    }
+
+    fn db_for_write(&amp;self, model_table: &amp;str) -&gt; Option&lt;&amp;str&gt; {
+        self.db_for_read(model_table)
+    }
+
+    fn allow_migrate(&amp;self, db_alias: &amp;str, app_label: &amp;str) -&gt; Option&lt;bool&gt; {
+        if app_label == "analytics" {
+            Some(db_alias == "analytics")
+        } else {
+            None
+        }
+    }
+}
+<span class="boring">}</span></code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="schema-migrations"><a class="header" href="#schema-migrations">Schema Migrations</a></h1>
 <p>Djangors provides a robust, declarative database schema migration system inspired by Django’s migration engine. It tracks changes to your Rust model definitions and generates database-agnostic SQL migrations that can be applied to both PostgreSQL and SQLite.</p>
@@ -9971,6 +11134,112 @@ dj sqlmigrate polls 0001
 <p><code>--fake</code> can silently desynchronise the migration history table from the actual database schema. Use with caution when schema changes have been made out of band.</p>
 </blockquote>
 <p>Note that <code>--fake</code>, <code>--plan</code>, and <code>--rollback</code> are mutually exclusive flags.</p>
+<hr>
+<h2 id="djangors-10-migration-additions"><a class="header" href="#djangors-10-migration-additions">Djangors 1.0 Migration Additions</a></h2>
+<h3 id="extended-operation-variants"><a class="header" href="#extended-operation-variants">Extended <code>Operation</code> Variants</a></h3>
+<p>Djangors 1.0 adds six new DDL and custom-SQL <code>Operation</code> variants in <code>djangors_migrations</code>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Variant</th><th>Fields</th><th>Reversible?</th></tr>
+</thead>
+<tbody>
+<tr><td><code>RenameTable</code></td><td><code>old_name</code>, <code>new_name</code></td><td><strong>Yes</strong> (<code>RenameTable</code> swapped)</td></tr>
+<tr><td><code>AddConstraint</code></td><td><code>table_name</code>, <code>constraint: ConstraintMeta</code></td><td><strong>Yes</strong> (<code>RemoveConstraint</code>)</td></tr>
+<tr><td><code>RemoveConstraint</code></td><td><code>table_name</code>, <code>constraint_name</code></td><td><strong>No</strong></td></tr>
+<tr><td><code>AlterColumnNullability</code></td><td><code>table_name</code>, <code>column_name</code>, <code>nullable: bool</code></td><td><strong>Yes</strong> (flips <code>nullable</code>)</td></tr>
+<tr><td><code>AlterColumnDefault</code></td><td><code>table_name</code>, <code>column_name</code>, <code>default_sql: Option&lt;String&gt;</code></td><td><strong>No</strong></td></tr>
+<tr><td><code>RunSql</code></td><td><code>sql</code>, <code>reverse_sql: Option&lt;String&gt;</code></td><td><strong>Yes</strong> when <code>reverse_sql</code> is <code>Some</code></td></tr>
+</tbody>
+</table>
+</div>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_db::Dialect;
+use djangors_migrations::Operation;
+use djangors_orm::ConstraintMeta;
+
+let ops = vec![
+    Operation::RenameTable {
+        old_name: "blog_post".into(),
+        new_name: "blog_article".into(),
+    },
+    Operation::AddConstraint {
+        table_name: "blog_article".into(),
+        constraint: ConstraintMeta::Check {
+            name: "chk_views_nonneg".into(),
+            expression: "views &gt;= 0".into(),
+        },
+    },
+    Operation::AlterColumnNullability {
+        table_name: "blog_article".into(),
+        column_name: "subtitle".into(),
+        nullable: true,
+    },
+    Operation::AlterColumnDefault {
+        table_name: "blog_article".into(),
+        column_name: "views".into(),
+        default_sql: Some("0".into()),
+    },
+    Operation::RunSql {
+        sql: "UPDATE blog_article SET views = 0 WHERE views IS NULL;".into(),
+        reverse_sql: Some("SELECT 1;".into()),
+    },
+];
+
+for op in &amp;ops {
+    println!("{}", op.to_sql(Dialect::Postgres)?);
+}
+<span class="boring">}</span></code></pre>
+<h3 id="rust-data-migrations-datamigration--runrust"><a class="header" href="#rust-data-migrations-datamigration--runrust">Rust Data Migrations (<code>DataMigration</code> &amp; <code>RunRust</code>)</a></h3>
+<p>For migrations that require Rust business logic inside a transaction (Django’s <code>RunPython</code> equivalent), implement <code>DataMigration</code> or construct a <code>RunRust</code> step and execute it with <code>apply_data_migration</code> / <code>rollback_data_migration</code>:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_migrations::{apply_data_migration, rollback_data_migration, RunRust};
+
+let backfill = RunRust {
+    name: "0003_backfill_slugs",
+    up: |conn| {
+        Box::pin(async move {
+            conn.execute("UPDATE blog_article SET slug = lower(title) WHERE slug IS NULL", &amp;[])
+                .await?;
+            Ok(())
+        })
+    },
+    down: Some(|_conn| Box::pin(async move { Ok(()) })),
+};
+
+apply_data_migration(&amp;db, backfill).await?;
+<span class="boring">}</span></code></pre>
+<h3 id="migrateoptions-dependency-ordering--squashing"><a class="header" href="#migrateoptions-dependency-ordering--squashing"><code>MigrateOptions</code>, Dependency Ordering &amp; Squashing</a></h3>
+<ul>
+<li><strong><code>MigrateOptions { fake, fake_initial, plan_only }</code></strong>: Pass to <code>migrate_from_dir_with_options(&amp;db, dir, opts)</code> to preview a plan (<code>plan_only</code>), record without running (<code>fake</code>), or skip already-existing initial tables (<code>fake_initial</code>, Django’s <code>--fake-initial</code>).</li>
+<li><strong>Topological Dependency Headers (<code>-- dependencies:</code>)</strong>: Declare cross-file prerequisites at the top of any <code>.sql</code> migration file; <code>migrate_from_dir_with_options</code> resolves them via topological sort before falling back to filename order:</li>
+</ul>
+<pre><code class="language-sql">-- dependencies: 0001_initial, 0002_auth_tables
+-- up
+ALTER TABLE "polls_question" ADD COLUMN "author_id" BIGINT;
+-- down
+ALTER TABLE "polls_question" DROP COLUMN "author_id";
+</code></pre>
+<ul>
+<li><strong>Squashing Migrations (<code>squash_migrations</code> &amp; <code>dj squashmigrations</code>)</strong>: Combine a range of sequential migration files into a single squashed <code>.sql</code> file:</li>
+</ul>
+<pre><code class="language-bash"># Combine migrations from 0001 through 0005 into a single squashed file
+dj squashmigrations 0001 0005 --name 0001_squashed_0005
+</code></pre>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_migrations::squash_migrations;
+use std::path::Path;
+
+let squashed_path = squash_migrations(
+    Path::new("migrations"),
+    "0001",
+    "0005",
+    "0001_squashed_0005",
+)?;
+<span class="boring">}</span></code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="code-generation-resources-inspectdb-and-typescript-clients"><a class="header" href="#code-generation-resources-inspectdb-and-typescript-clients">Code Generation: Resources, <code>inspectdb</code>, and TypeScript Clients</a></h1>
 <p>Three <code>dj</code> commands write code for you, so you don’t type the same boilerplate for
@@ -10726,6 +11995,83 @@ let ctx = minijinja::context! {
 <pre><code class="language-html">&lt;!-- Translates the "welcome" message ID --&gt;
 &lt;h1&gt;{{ "welcome" | trans(locales, locale) }}&lt;/h1&gt;
 </code></pre>
+<hr>
+<h2 id="djangors-10-i18n--timezone-additions"><a class="header" href="#djangors-10-i18n--timezone-additions">Djangors 1.0 i18n &amp; Timezone Additions</a></h2>
+<h3 id="locale-formatting-format_number-format_date-format_datetime"><a class="header" href="#locale-formatting-format_number-format_date-format_datetime">Locale Formatting (<code>format_number</code>, <code>format_date</code>, <code>format_datetime</code>)</a></h3>
+<p><code>djangors-i18n</code> provides locale-aware number, date, and datetime formatters:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Function</th><th>Example</th><th>Output</th></tr>
+</thead>
+<tbody>
+<tr><td><code>format_number(1234567.89, "en-US")</code></td><td>US grouping &amp; decimal</td><td><code>"1,234,567.89"</code></td></tr>
+<tr><td><code>format_number(1234567.89, "de-DE")</code></td><td>German grouping &amp; decimal</td><td><code>"1.234.567,89"</code></td></tr>
+<tr><td><code>format_date(date, "de-DE")</code></td><td>German date</td><td><code>"30.07.2026"</code></td></tr>
+<tr><td><code>format_datetime(dt, "en-GB")</code></td><td>UK date + time</td><td><code>"30/07/2026 14:30:00"</code></td></tr>
+</tbody>
+</table>
+</div>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use chrono::{NaiveDate, Utc};
+use djangors_i18n::{format_date, format_datetime, format_number};
+
+let amount = format_number(12345.67, "fr-FR");
+let day = format_date(NaiveDate::from_ymd_opt(2026, 7, 30).unwrap(), "de-DE");
+let stamp = format_datetime(Utc::now(), "en-US");
+<span class="boring">}</span></code></pre>
+<h3 id="task-local-timezone-helpers"><a class="header" href="#task-local-timezone-helpers">Task-Local Timezone Helpers</a></h3>
+<p>Scope an active timezone to an async request task (or current thread) without passing it manually through every helper:</p>
+<ul>
+<li><strong><code>with_timezone(tz, fut)</code></strong>: Runs an async future with <code>tz</code> active in Tokio task-local storage.</li>
+<li><strong><code>activate_timezone(tz)</code></strong>: Sets the active timezone for the current task/thread.</li>
+<li><strong><code>deactivate_timezone()</code></strong>: Clears the active timezone back to <code>None</code> (UTC default).</li>
+<li><strong><code>current_timezone()</code></strong>: Returns <code>Option&lt;String&gt;</code> for the currently active timezone.</li>
+</ul>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_i18n::{activate_timezone, current_timezone, deactivate_timezone, with_timezone};
+
+let label = with_timezone("America/New_York", async {
+    assert_eq!(current_timezone().as_deref(), Some("America/New_York"));
+    activate_timezone("Europe/Berlin");
+    let tz = current_timezone();
+    deactivate_timezone();
+    tz
+})
+.await;
+<span class="boring">}</span></code></pre>
+<h3 id="activelocale-detect_locale-and-i18n_patterns"><a class="header" href="#activelocale-detect_locale-and-i18n_patterns"><code>ActiveLocale</code>, <code>detect_locale</code>, and <code>i18n_patterns</code></a></h3>
+<ul>
+<li><strong><code>ActiveLocale(pub String)</code></strong>: Inserted into request extensions alongside <code>ResolvedLocale</code> by <code>LocaleLayer</code> so handlers can inspect <code>req.ext::&lt;ActiveLocale&gt;()</code>.</li>
+<li><strong><code>detect_locale(accept_language, cookie_locale, url_prefix, supported, default)</code></strong>: Resolves the best matching supported locale from URL prefix, cookie, and <code>Accept-Language</code> header in priority order.</li>
+<li><strong><code>i18n_patterns(locales, paths, prefix_default_language, default_locale)</code></strong>: Expands a list of route paths into locale-prefixed URL patterns (e.g. <code>"/fr/about"</code>, <code>"/de/about"</code>, and optionally unprefixed <code>"/about"</code> for the default language).</li>
+</ul>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_i18n::{detect_locale, i18n_patterns};
+
+let locale = detect_locale(
+    Some("fr-FR,en;q=0.8"),
+    None,
+    None,
+    &amp;["en-US", "fr-FR", "de-DE"],
+    "en-US",
+);
+assert_eq!(locale, "fr-FR");
+
+let routes = i18n_patterns(&amp;["en", "fr", "de"], &amp;["/about", "/pricing"], false, Some("en"));
+// Generates "/about", "/pricing", "/fr/about", "/fr/pricing", "/de/about", "/de/pricing"
+<span class="boring">}</span></code></pre>
+<h3 id="message-extraction--compilation-cli-dj-makemessages--dj-compilemessages"><a class="header" href="#message-extraction--compilation-cli-dj-makemessages--dj-compilemessages">Message Extraction &amp; Compilation CLI (<code>dj makemessages</code> / <code>dj compilemessages</code>)</a></h3>
+<p>Manage Fluent (<code>.ftl</code>) translation catalogs from the command line:</p>
+<pre><code class="language-bash"># Scan templates and Rust sources for translatable strings and update/create locale .ftl files
+dj makemessages --locale fr-FR
+
+# Validate and compile .ftl catalogs for deployment
+dj compilemessages
+</code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="sessions"><a class="header" href="#sessions">Sessions</a></h1>
 <p>Djangors provides pluggable session storage through <code>djangors-sessions</code> (<code>djangors::sessions</code>).</p>
@@ -11102,6 +12448,129 @@ identically.</p>
 <li>Halt the main request handler or transaction.</li>
 </ul>
 <p>Instead, the system catches the panic, logs a trace to <code>stderr</code> (e.g. <code>Signal handler panicked: ...</code>), and safely continues executing.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="sites-framework-djangors-contrib-sites"><a class="header" href="#sites-framework-djangors-contrib-sites">Sites Framework (<code>djangors-contrib-sites</code>)</a></h1>
+<p><code>djangors-contrib-sites</code> mirrors <code>django.contrib.sites</code>: it lets a single Djangors application
+associate models, URLs, sitemaps, and configuration with one or more domain-backed <code>Site</code> records
+stored in the <code>django_site</code> table.</p>
+<h2 id="installation"><a class="header" href="#installation">Installation</a></h2>
+<p>Enable the <code>sites</code> feature on <code>djangors</code>:</p>
+<pre><code class="language-toml">[dependencies]
+djangors = { version = "1.0", features = ["sites"] }
+</code></pre>
+<h2 id="the-site-model"><a class="header" href="#the-site-model">The <code>Site</code> Model</a></h2>
+<p><code>Site</code> maps to the <code>django_site</code> table with three fields:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>id</code></td><td><code>i64</code></td><td>Primary key (<code>auto</code>)</td></tr>
+<tr><td><code>domain</code></td><td><code>String</code></td><td>Unique domain name (e.g. <code>"example.com"</code>, max 100 chars)</td></tr>
+<tr><td><code>name</code></td><td><code>String</code></td><td>Human-readable display name (e.g. <code>"Example"</code>, max 50 chars)</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="middleware--request-extractor"><a class="header" href="#middleware--request-extractor">Middleware &amp; Request Extractor</a></h2>
+<p>Mount <code>CurrentSiteLayer</code> on your <code>Router</code> to resolve the active <code>Site</code> from the incoming <code>Host</code>
+header (with automatic fallback to <code>DJANGORS_SITE_ID</code> or the configured default site ID):</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_contrib_sites::{CurrentSite, CurrentSiteLayer, Site};
+use djangors_core::{DjangorsError, Request, Response, Router, StatusCode};
+
+async fn home(req: Request) -&gt; Result&lt;Response, DjangorsError&gt; {
+    let site = req
+        .extensions()
+        .get::&lt;CurrentSite&gt;()
+        .map(|cs| cs.0.name.clone())
+        .unwrap_or_else(|| "Default".to_string());
+
+    Ok(Response::text(StatusCode::OK, format!("Welcome to {site}")))
+}
+
+pub fn routes() -&gt; Router {
+    Router::new()
+        .get("/", home)
+        .layer(CurrentSiteLayer::new())
+}
+<span class="boring">}</span></code></pre>
+<p>You can also resolve the current site directly in any handler or service using
+<code>get_current_site(&amp;db, host_header, fallback_site_id).await</code>.</p>
+<h2 id="admin-integration"><a class="header" href="#admin-integration">Admin Integration</a></h2>
+<p>Register <code>Site</code> in your admin site with one line:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_admin::AdminSite;
+
+let mut admin = AdminSite::new();
+djangors_contrib_sites::register_admin(&amp;mut admin);
+<span class="boring">}</span></code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="geospatial--postgis-djangors-contrib-gis"><a class="header" href="#geospatial--postgis-djangors-contrib-gis">Geospatial &amp; PostGIS (<code>djangors-contrib-gis</code>)</a></h1>
+<p><code>djangors-contrib-gis</code> is Djangors’s GeoDjango equivalent. It provides pure-Rust geometry types,
+WKT / EWKT parsing and serialization, great-circle (Haversine) distance calculation, and PostGIS
+SQL predicate helpers.</p>
+<h2 id="installation-1"><a class="header" href="#installation-1">Installation</a></h2>
+<p>Enable the <code>gis</code> feature on the <code>djangors</code> facade crate (or depend on <code>djangors-contrib-gis</code> directly):</p>
+<pre><code class="language-toml">[dependencies]
+djangors = { version = "1.0", features = ["gis"] }
+</code></pre>
+<h2 id="geometry-types"><a class="header" href="#geometry-types">Geometry Types</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Type</th><th>Description</th><th>Example</th></tr>
+</thead>
+<tbody>
+<tr><td><code>Point</code></td><td>2D <code>(x, y)</code> / <code>(lon, lat)</code> coordinate with SRID (default <code>4326</code> WGS84)</td><td><code>Point::wgs84(-0.1276, 51.5072)</code></td></tr>
+<tr><td><code>LineString</code></td><td>Ordered sequence of <code>Point</code> vertices</td><td><code>LineString::new(vec![a, b], 4326)</code></td></tr>
+<tr><td><code>Polygon</code></td><td>Exterior ring plus optional interior hole rings</td><td><code>Polygon::new(exterior, vec![], 4326)</code></td></tr>
+<tr><td><code>Geometry</code></td><td>Enum wrapping <code>Point</code>, <code>LineString</code>, or <code>Polygon</code></td><td><code>Geometry::Point(p)</code></td></tr>
+</tbody>
+</table>
+</div>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_contrib_gis::{Geometry, LineString, Point, Polygon};
+
+// WGS84 (SRID 4326): longitude first, latitude second (matches PostGIS &amp; GeoJSON)
+let london = Point::wgs84(-0.1276, 51.5072);
+let paris = Point::wgs84(2.3522, 48.8566);
+
+// Great-circle distance in meters (no database required)
+let meters = london.haversine_distance_meters(&amp;paris);
+assert!(meters &gt; 340_000.0 &amp;&amp; meters &lt; 346_000.0);
+
+// Format as WKT or PostGIS EWKT
+assert_eq!(london.to_wkt(), "POINT(-0.1276 51.5072)");
+assert_eq!(london.to_ewkt(), "SRID=4326;POINT(-0.1276 51.5072)");
+
+// Parse WKT or EWKT back into a Geometry
+let parsed = Geometry::from_ewkt("SRID=4326;POINT(3.3792 6.5244)").unwrap();
+assert_eq!(parsed.srid(), 4326);
+<span class="boring">}</span></code></pre>
+<h2 id="postgis-sql-helpers"><a class="header" href="#postgis-sql-helpers">PostGIS SQL Helpers</a></h2>
+<p><code>djangors_contrib_gis::postgis</code> generates parameterized PostGIS SQL expressions that pair with
+<code>djangors-db</code> or <code>QuerySet::raw</code>:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_contrib_gis::postgis;
+
+// Column DDL helper
+let col_ddl = postgis::column_type("Point", 4326);
+// =&gt; "geometry(Point, 4326)"
+
+// Spatial predicates using bind parameter placeholders ($1, $2, ...)
+let within_5km = postgis::st_dwithin_meters("location", "$1", "$2");
+let contains = postgis::st_contains("boundary", "$1");
+let within = postgis::st_within("location", "$1");
+let intersects = postgis::st_intersects("area", "$1");
+let dist_expr = postgis::st_distance_meters("location", "$1");
+<span class="boring">}</span></code></pre>
+<p>Pass the target geometry as an EWKT string (<code>point.to_ewkt()</code>) for <code>$1</code> and the radius in meters
+as a float for <code>$2</code>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="sites-feeds-and-two-factor-auth"><a class="header" href="#sites-feeds-and-two-factor-auth">Sites, Feeds, and Two-Factor Auth</a></h1>
 <p>Three small <code>djangors-contrib-*</code> crates cover chatty-but-mechanical web plumbing:
@@ -11725,7 +13194,7 @@ its timing and a warning for each repeated one.</p>
 <h3 id="1-enable-the-feature"><a class="header" href="#1-enable-the-feature">1. Enable the feature</a></h3>
 <p>The panel is behind the <code>debug-panel</code> Cargo feature, which is off by default:</p>
 <pre><code class="language-toml">[dependencies]
-djangors = { version = "0.14", features = ["debug-panel"] }
+djangors = { version = "1.0", features = ["debug-panel"] }
 </code></pre>
 <h3 id="2-wrap-your-router-with-settings"><a class="header" href="#2-wrap-your-router-with-settings">2. Wrap your router with settings</a></h3>
 <p><code>DebugPanelLayer::for_settings(&amp;settings)</code> enables the panel only when <code>settings.debug</code>
@@ -11961,7 +13430,7 @@ OpenTelemetry code.</p>
 <h2 id="enable-the-feature"><a class="header" href="#enable-the-feature">Enable the feature</a></h2>
 <p>Turn on <code>otel</code> on the facade crate:</p>
 <pre><code class="language-toml">[dependencies]
-djangors = { version = "0.14", features = ["otel"] }
+djangors = { version = "1.0", features = ["otel"] }
 </code></pre>
 <p>If you depend on <code>djangors-core</code> directly, enable <code>otel</code> there instead.</p>
 <h2 id="code-example-5"><a class="header" href="#code-example-5">Code Example</a></h2>
@@ -12569,9 +14038,9 @@ let url = sign_url_for(&amp;signer, "GET", "/files/report.pdf?v=1", Duration::fr
 <h1 id="secrets-providers"><a class="header" href="#secrets-providers">Secrets providers</a></h1>
 <p><code>djangors_core::secrets</code> (enabled by the default <code>secrets</code> feature) loads secrets from environment variables and <code>.env</code> files, and interpolates <code>${secret:NAME}</code> placeholders in settings without pulling in an HTTP client.</p>
 <p>Remote secret backends (<code>VaultProvider</code>, <code>GcpSecretManagerProvider</code>, and <code>AwsSecretsManagerProvider</code>) are opt-in behind the <code>secrets-remote</code> feature (which adds <code>reqwest</code>):</p>
-<pre><code class="language-toml">djangors = { version = "0.14", features = ["secrets-remote"] }
+<pre><code class="language-toml">djangors = { version = "1.0", features = ["secrets-remote"] }
 # or directly on djangors-core:
-# djangors-core = { version = "0.14", features = ["secrets-remote"] }
+# djangors-core = { version = "1.0", features = ["secrets-remote"] }
 </code></pre>
 <p>All secret values are returned as <code>SecretString</code> (<code>secrecy::SecretString</code>), which redacts <code>Debug</code> output and zeroizes memory on drop.</p>
 <h2 id="built-in-providers"><a class="header" href="#built-in-providers">Built-in providers</a></h2>

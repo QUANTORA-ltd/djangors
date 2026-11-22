@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-f699685b.js";
+            window.path_to_searchindex_js = "../searchindex-6be39a06.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-37bf99b9.js"></script>
+        <script src="../toc-08d624e0.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -488,6 +488,112 @@ dj sqlmigrate polls 0001
 <p><code>--fake</code> can silently desynchronise the migration history table from the actual database schema. Use with caution when schema changes have been made out of band.</p>
 </blockquote>
 <p>Note that <code>--fake</code>, <code>--plan</code>, and <code>--rollback</code> are mutually exclusive flags.</p>
+<hr>
+<h2 id="djangors-10-migration-additions"><a class="header" href="#djangors-10-migration-additions">Djangors 1.0 Migration Additions</a></h2>
+<h3 id="extended-operation-variants"><a class="header" href="#extended-operation-variants">Extended <code>Operation</code> Variants</a></h3>
+<p>Djangors 1.0 adds six new DDL and custom-SQL <code>Operation</code> variants in <code>djangors_migrations</code>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Variant</th><th>Fields</th><th>Reversible?</th></tr>
+</thead>
+<tbody>
+<tr><td><code>RenameTable</code></td><td><code>old_name</code>, <code>new_name</code></td><td><strong>Yes</strong> (<code>RenameTable</code> swapped)</td></tr>
+<tr><td><code>AddConstraint</code></td><td><code>table_name</code>, <code>constraint: ConstraintMeta</code></td><td><strong>Yes</strong> (<code>RemoveConstraint</code>)</td></tr>
+<tr><td><code>RemoveConstraint</code></td><td><code>table_name</code>, <code>constraint_name</code></td><td><strong>No</strong></td></tr>
+<tr><td><code>AlterColumnNullability</code></td><td><code>table_name</code>, <code>column_name</code>, <code>nullable: bool</code></td><td><strong>Yes</strong> (flips <code>nullable</code>)</td></tr>
+<tr><td><code>AlterColumnDefault</code></td><td><code>table_name</code>, <code>column_name</code>, <code>default_sql: Option&lt;String&gt;</code></td><td><strong>No</strong></td></tr>
+<tr><td><code>RunSql</code></td><td><code>sql</code>, <code>reverse_sql: Option&lt;String&gt;</code></td><td><strong>Yes</strong> when <code>reverse_sql</code> is <code>Some</code></td></tr>
+</tbody>
+</table>
+</div>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_db::Dialect;
+use djangors_migrations::Operation;
+use djangors_orm::ConstraintMeta;
+
+let ops = vec![
+    Operation::RenameTable {
+        old_name: "blog_post".into(),
+        new_name: "blog_article".into(),
+    },
+    Operation::AddConstraint {
+        table_name: "blog_article".into(),
+        constraint: ConstraintMeta::Check {
+            name: "chk_views_nonneg".into(),
+            expression: "views &gt;= 0".into(),
+        },
+    },
+    Operation::AlterColumnNullability {
+        table_name: "blog_article".into(),
+        column_name: "subtitle".into(),
+        nullable: true,
+    },
+    Operation::AlterColumnDefault {
+        table_name: "blog_article".into(),
+        column_name: "views".into(),
+        default_sql: Some("0".into()),
+    },
+    Operation::RunSql {
+        sql: "UPDATE blog_article SET views = 0 WHERE views IS NULL;".into(),
+        reverse_sql: Some("SELECT 1;".into()),
+    },
+];
+
+for op in &amp;ops {
+    println!("{}", op.to_sql(Dialect::Postgres)?);
+}
+<span class="boring">}</span></code></pre>
+<h3 id="rust-data-migrations-datamigration--runrust"><a class="header" href="#rust-data-migrations-datamigration--runrust">Rust Data Migrations (<code>DataMigration</code> &amp; <code>RunRust</code>)</a></h3>
+<p>For migrations that require Rust business logic inside a transaction (Django’s <code>RunPython</code> equivalent), implement <code>DataMigration</code> or construct a <code>RunRust</code> step and execute it with <code>apply_data_migration</code> / <code>rollback_data_migration</code>:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_migrations::{apply_data_migration, rollback_data_migration, RunRust};
+
+let backfill = RunRust {
+    name: "0003_backfill_slugs",
+    up: |conn| {
+        Box::pin(async move {
+            conn.execute("UPDATE blog_article SET slug = lower(title) WHERE slug IS NULL", &amp;[])
+                .await?;
+            Ok(())
+        })
+    },
+    down: Some(|_conn| Box::pin(async move { Ok(()) })),
+};
+
+apply_data_migration(&amp;db, backfill).await?;
+<span class="boring">}</span></code></pre>
+<h3 id="migrateoptions-dependency-ordering--squashing"><a class="header" href="#migrateoptions-dependency-ordering--squashing"><code>MigrateOptions</code>, Dependency Ordering &amp; Squashing</a></h3>
+<ul>
+<li><strong><code>MigrateOptions { fake, fake_initial, plan_only }</code></strong>: Pass to <code>migrate_from_dir_with_options(&amp;db, dir, opts)</code> to preview a plan (<code>plan_only</code>), record without running (<code>fake</code>), or skip already-existing initial tables (<code>fake_initial</code>, Django’s <code>--fake-initial</code>).</li>
+<li><strong>Topological Dependency Headers (<code>-- dependencies:</code>)</strong>: Declare cross-file prerequisites at the top of any <code>.sql</code> migration file; <code>migrate_from_dir_with_options</code> resolves them via topological sort before falling back to filename order:</li>
+</ul>
+<pre><code class="language-sql">-- dependencies: 0001_initial, 0002_auth_tables
+-- up
+ALTER TABLE "polls_question" ADD COLUMN "author_id" BIGINT;
+-- down
+ALTER TABLE "polls_question" DROP COLUMN "author_id";
+</code></pre>
+<ul>
+<li><strong>Squashing Migrations (<code>squash_migrations</code> &amp; <code>dj squashmigrations</code>)</strong>: Combine a range of sequential migration files into a single squashed <code>.sql</code> file:</li>
+</ul>
+<pre><code class="language-bash"># Combine migrations from 0001 through 0005 into a single squashed file
+dj squashmigrations 0001 0005 --name 0001_squashed_0005
+</code></pre>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_migrations::squash_migrations;
+use std::path::Path;
+
+let squashed_path = squash_migrations(
+    Path::new("migrations"),
+    "0001",
+    "0005",
+    "0001_squashed_0005",
+)?;
+<span class="boring">}</span></code></pre>
 
                     </main>
 

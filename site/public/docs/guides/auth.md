@@ -361,3 +361,69 @@ send_login_link(
 # Ok(())
 # }
 ```
+
+---
+
+## Pluggable Password Hashers (`PasswordHasher` & `PasswordHasherRegistry`)
+
+Djangors 1.0 introduces a pluggable `PasswordHasher` trait and `PasswordHasherRegistry` mirroring Django's `PASSWORD_HASHERS` setting. The first registered hasher is the preferred algorithm used for new hashes; older hashers remain verifiable and are transparently upgraded on login.
+
+| Built-in Hasher | Algorithm ID | Format / Notes |
+| --- | --- | --- |
+| `Argon2Hasher` | `"argon2"` | PHC Argon2id (default preferred hasher) |
+| `Pbkdf2Sha256Hasher` | `"pbkdf2_sha256"` | Django-compatible `pbkdf2_sha256$<iterations>$<salt>$<hash>` |
+| `Pbkdf2Sha512Hasher` | `"pbkdf2_sha512"` | Django-compatible `pbkdf2_sha512$<iterations>$<salt>$<hash>` |
+
+```rust,illustrative
+use djangors_auth::{
+    Argon2Hasher, PasswordHasherRegistry, Pbkdf2Sha256Hasher, Pbkdf2Sha512Hasher,
+};
+
+// Default registry prefers Argon2Hasher and accepts PBKDF2-SHA256 & PBKDF2-SHA512 legacy hashes
+let registry = PasswordHasherRegistry::new(vec![
+    Box::new(Argon2Hasher),
+    Box::new(Pbkdf2Sha256Hasher::default()),
+    Box::new(Pbkdf2Sha512Hasher::default()),
+]);
+
+let encoded = registry.hash("correct-horse-battery-staple")?;
+assert!(registry.verify("correct-horse-battery-staple", &encoded)?);
+
+// Transparent on-login re-hashing: returns Ok((valid, Some(new_hash))) if legacy hash needs upgrade
+let (valid, upgraded) = registry.verify_and_upgrade("user-password", &stored_hash)?;
+if valid {
+    if let Some(new_hash) = upgraded {
+        user.set_password_hash(new_hash);
+        user.update_user(&db).await?;
+    }
+}
+```
+
+Implement `PasswordHasher` (`algorithm`, `encode`, `verify`, `identify`, `must_update`) to support custom or migrated legacy hash formats.
+
+---
+
+## Turnkey HTML Auth Views (`auth_routes`)
+
+`djangors-auth` ships ready-to-mount server-rendered HTML views and a router builder (`auth_routes`) for standard account flows:
+
+| View / Helper | Default Route | Behavior |
+| --- | --- | --- |
+| `login_view` | `GET`/`POST /accounts/login/` | Renders login form, authenticates user, rotates session, honors `?next=` redirect |
+| `logout_view` | `POST` (or `GET`) `/accounts/logout/` | Clears session and redirects to `logout_redirect_url` |
+| `password_change_view` | `GET`/`POST /accounts/password_change/` | Requires authenticated user, verifies old password, validates & hashes new password |
+| `password_reset_view` | `GET`/`POST /accounts/password_reset/` | Initiates password reset flow without enumerating accounts |
+| `auth_routes(config)` | Mounts all 4 views | Attaches `AuthViewsConfig` to the returned `Router` |
+
+```rust,illustrative
+use djangors_auth::{auth_routes, AuthViewsConfig};
+use djangors_core::Router;
+
+let auth_config = AuthViewsConfig::new()
+    .login_redirect_url("/dashboard/")
+    .logout_redirect_url("/")
+    .site_name("My App");
+
+let router = Router::new()
+    .mount("", auth_routes(auth_config));
+```

@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-f699685b.js";
+            window.path_to_searchindex_js = "../searchindex-6be39a06.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-37bf99b9.js"></script>
+        <script src="../toc-08d624e0.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -501,6 +501,77 @@ send_login_link(
 </span><span class="boring">Ok(())
 </span><span class="boring">}
 </span><span class="boring">}</span></code></pre>
+<hr>
+<h2 id="pluggable-password-hashers-passwordhasher--passwordhasherregistry"><a class="header" href="#pluggable-password-hashers-passwordhasher--passwordhasherregistry">Pluggable Password Hashers (<code>PasswordHasher</code> &amp; <code>PasswordHasherRegistry</code>)</a></h2>
+<p>Djangors 1.0 introduces a pluggable <code>PasswordHasher</code> trait and <code>PasswordHasherRegistry</code> mirroring Django’s <code>PASSWORD_HASHERS</code> setting. The first registered hasher is the preferred algorithm used for new hashes; older hashers remain verifiable and are transparently upgraded on login.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Built-in Hasher</th><th>Algorithm ID</th><th>Format / Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>Argon2Hasher</code></td><td><code>"argon2"</code></td><td>PHC Argon2id (default preferred hasher)</td></tr>
+<tr><td><code>Pbkdf2Sha256Hasher</code></td><td><code>"pbkdf2_sha256"</code></td><td>Django-compatible <code>pbkdf2_sha256$&lt;iterations&gt;$&lt;salt&gt;$&lt;hash&gt;</code></td></tr>
+<tr><td><code>Pbkdf2Sha512Hasher</code></td><td><code>"pbkdf2_sha512"</code></td><td>Django-compatible <code>pbkdf2_sha512$&lt;iterations&gt;$&lt;salt&gt;$&lt;hash&gt;</code></td></tr>
+</tbody>
+</table>
+</div>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_auth::{
+    Argon2Hasher, PasswordHasherRegistry, Pbkdf2Sha256Hasher, Pbkdf2Sha512Hasher,
+};
+
+// Default registry prefers Argon2Hasher and accepts PBKDF2-SHA256 &amp; PBKDF2-SHA512 legacy hashes
+let registry = PasswordHasherRegistry::new(vec![
+    Box::new(Argon2Hasher),
+    Box::new(Pbkdf2Sha256Hasher::default()),
+    Box::new(Pbkdf2Sha512Hasher::default()),
+]);
+
+let encoded = registry.hash("correct-horse-battery-staple")?;
+assert!(registry.verify("correct-horse-battery-staple", &amp;encoded)?);
+
+// Transparent on-login re-hashing: returns Ok((valid, Some(new_hash))) if legacy hash needs upgrade
+let (valid, upgraded) = registry.verify_and_upgrade("user-password", &amp;stored_hash)?;
+if valid {
+    if let Some(new_hash) = upgraded {
+        user.set_password_hash(new_hash);
+        user.update_user(&amp;db).await?;
+    }
+}
+<span class="boring">}</span></code></pre>
+<p>Implement <code>PasswordHasher</code> (<code>algorithm</code>, <code>encode</code>, <code>verify</code>, <code>identify</code>, <code>must_update</code>) to support custom or migrated legacy hash formats.</p>
+<hr>
+<h2 id="turnkey-html-auth-views-auth_routes"><a class="header" href="#turnkey-html-auth-views-auth_routes">Turnkey HTML Auth Views (<code>auth_routes</code>)</a></h2>
+<p><code>djangors-auth</code> ships ready-to-mount server-rendered HTML views and a router builder (<code>auth_routes</code>) for standard account flows:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>View / Helper</th><th>Default Route</th><th>Behavior</th></tr>
+</thead>
+<tbody>
+<tr><td><code>login_view</code></td><td><code>GET</code>/<code>POST /accounts/login/</code></td><td>Renders login form, authenticates user, rotates session, honors <code>?next=</code> redirect</td></tr>
+<tr><td><code>logout_view</code></td><td><code>POST</code> (or <code>GET</code>) <code>/accounts/logout/</code></td><td>Clears session and redirects to <code>logout_redirect_url</code></td></tr>
+<tr><td><code>password_change_view</code></td><td><code>GET</code>/<code>POST /accounts/password_change/</code></td><td>Requires authenticated user, verifies old password, validates &amp; hashes new password</td></tr>
+<tr><td><code>password_reset_view</code></td><td><code>GET</code>/<code>POST /accounts/password_reset/</code></td><td>Initiates password reset flow without enumerating accounts</td></tr>
+<tr><td><code>auth_routes(config)</code></td><td>Mounts all 4 views</td><td>Attaches <code>AuthViewsConfig</code> to the returned <code>Router</code></td></tr>
+</tbody>
+</table>
+</div>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_auth::{auth_routes, AuthViewsConfig};
+use djangors_core::Router;
+
+let auth_config = AuthViewsConfig::new()
+    .login_redirect_url("/dashboard/")
+    .logout_redirect_url("/")
+    .site_name("My App");
+
+let router = Router::new()
+    .mount("", auth_routes(auth_config));
+<span class="boring">}</span></code></pre>
 
                     </main>
 

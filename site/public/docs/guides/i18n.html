@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-f699685b.js";
+            window.path_to_searchindex_js = "../searchindex-6be39a06.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-37bf99b9.js"></script>
+        <script src="../toc-08d624e0.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -304,6 +304,83 @@ let ctx = minijinja::context! {
 <p>Use the <code>trans</code> filter to resolve translated strings inside your HTML templates:</p>
 <pre><code class="language-html">&lt;!-- Translates the "welcome" message ID --&gt;
 &lt;h1&gt;{{ "welcome" | trans(locales, locale) }}&lt;/h1&gt;
+</code></pre>
+<hr>
+<h2 id="djangors-10-i18n--timezone-additions"><a class="header" href="#djangors-10-i18n--timezone-additions">Djangors 1.0 i18n &amp; Timezone Additions</a></h2>
+<h3 id="locale-formatting-format_number-format_date-format_datetime"><a class="header" href="#locale-formatting-format_number-format_date-format_datetime">Locale Formatting (<code>format_number</code>, <code>format_date</code>, <code>format_datetime</code>)</a></h3>
+<p><code>djangors-i18n</code> provides locale-aware number, date, and datetime formatters:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Function</th><th>Example</th><th>Output</th></tr>
+</thead>
+<tbody>
+<tr><td><code>format_number(1234567.89, "en-US")</code></td><td>US grouping &amp; decimal</td><td><code>"1,234,567.89"</code></td></tr>
+<tr><td><code>format_number(1234567.89, "de-DE")</code></td><td>German grouping &amp; decimal</td><td><code>"1.234.567,89"</code></td></tr>
+<tr><td><code>format_date(date, "de-DE")</code></td><td>German date</td><td><code>"30.07.2026"</code></td></tr>
+<tr><td><code>format_datetime(dt, "en-GB")</code></td><td>UK date + time</td><td><code>"30/07/2026 14:30:00"</code></td></tr>
+</tbody>
+</table>
+</div>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use chrono::{NaiveDate, Utc};
+use djangors_i18n::{format_date, format_datetime, format_number};
+
+let amount = format_number(12345.67, "fr-FR");
+let day = format_date(NaiveDate::from_ymd_opt(2026, 7, 30).unwrap(), "de-DE");
+let stamp = format_datetime(Utc::now(), "en-US");
+<span class="boring">}</span></code></pre>
+<h3 id="task-local-timezone-helpers"><a class="header" href="#task-local-timezone-helpers">Task-Local Timezone Helpers</a></h3>
+<p>Scope an active timezone to an async request task (or current thread) without passing it manually through every helper:</p>
+<ul>
+<li><strong><code>with_timezone(tz, fut)</code></strong>: Runs an async future with <code>tz</code> active in Tokio task-local storage.</li>
+<li><strong><code>activate_timezone(tz)</code></strong>: Sets the active timezone for the current task/thread.</li>
+<li><strong><code>deactivate_timezone()</code></strong>: Clears the active timezone back to <code>None</code> (UTC default).</li>
+<li><strong><code>current_timezone()</code></strong>: Returns <code>Option&lt;String&gt;</code> for the currently active timezone.</li>
+</ul>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_i18n::{activate_timezone, current_timezone, deactivate_timezone, with_timezone};
+
+let label = with_timezone("America/New_York", async {
+    assert_eq!(current_timezone().as_deref(), Some("America/New_York"));
+    activate_timezone("Europe/Berlin");
+    let tz = current_timezone();
+    deactivate_timezone();
+    tz
+})
+.await;
+<span class="boring">}</span></code></pre>
+<h3 id="activelocale-detect_locale-and-i18n_patterns"><a class="header" href="#activelocale-detect_locale-and-i18n_patterns"><code>ActiveLocale</code>, <code>detect_locale</code>, and <code>i18n_patterns</code></a></h3>
+<ul>
+<li><strong><code>ActiveLocale(pub String)</code></strong>: Inserted into request extensions alongside <code>ResolvedLocale</code> by <code>LocaleLayer</code> so handlers can inspect <code>req.ext::&lt;ActiveLocale&gt;()</code>.</li>
+<li><strong><code>detect_locale(accept_language, cookie_locale, url_prefix, supported, default)</code></strong>: Resolves the best matching supported locale from URL prefix, cookie, and <code>Accept-Language</code> header in priority order.</li>
+<li><strong><code>i18n_patterns(locales, paths, prefix_default_language, default_locale)</code></strong>: Expands a list of route paths into locale-prefixed URL patterns (e.g. <code>"/fr/about"</code>, <code>"/de/about"</code>, and optionally unprefixed <code>"/about"</code> for the default language).</li>
+</ul>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_i18n::{detect_locale, i18n_patterns};
+
+let locale = detect_locale(
+    Some("fr-FR,en;q=0.8"),
+    None,
+    None,
+    &amp;["en-US", "fr-FR", "de-DE"],
+    "en-US",
+);
+assert_eq!(locale, "fr-FR");
+
+let routes = i18n_patterns(&amp;["en", "fr", "de"], &amp;["/about", "/pricing"], false, Some("en"));
+// Generates "/about", "/pricing", "/fr/about", "/fr/pricing", "/de/about", "/de/pricing"
+<span class="boring">}</span></code></pre>
+<h3 id="message-extraction--compilation-cli-dj-makemessages--dj-compilemessages"><a class="header" href="#message-extraction--compilation-cli-dj-makemessages--dj-compilemessages">Message Extraction &amp; Compilation CLI (<code>dj makemessages</code> / <code>dj compilemessages</code>)</a></h3>
+<p>Manage Fluent (<code>.ftl</code>) translation catalogs from the command line:</p>
+<pre><code class="language-bash"># Scan templates and Rust sources for translatable strings and update/create locale .ftl files
+dj makemessages --locale fr-FR
+
+# Validate and compile .ftl catalogs for deployment
+dj compilemessages
 </code></pre>
 
                     </main>

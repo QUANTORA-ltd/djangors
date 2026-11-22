@@ -342,3 +342,71 @@ let _router = Router::new().mount("", impersonation_router());
 # }
 ```
 
+---
+
+## Djangors 1.0 Admin Additions
+
+### Extended `ModelAdminConfig` Options
+
+Djangors 1.0 expands `ModelAdminConfig` with ten new Django-parity options:
+
+| Option | Type | Purpose |
+| --- | --- | --- |
+| `autocomplete_fields` | `Option<&'static [&'static str]>` | FK / M2M fields backed by the admin autocomplete JSON endpoint |
+| `prepopulated_fields` | `Option<&'static [(&'static str, &'static [&'static str])]>` | Auto-populates target slug fields from source fields on the add/change form |
+| `filter_horizontal` | `Option<&'static [&'static str]>` | Renders M2M fields with a horizontal two-box filter widget |
+| `filter_vertical` | `Option<&'static [&'static str]>` | Renders M2M fields with a vertical two-box filter widget |
+| `list_select_related` | `Option<&'static [&'static str]>` | Eagerly loads related FK fields on the changelist query |
+| `ordering` | `Option<&'static [&'static str]>` | Default changelist ordering (e.g. `&["-created_at"]`) |
+| `sortable_by` | `Option<&'static [&'static str]>` | Restricts which changelist columns allow `?o=` sorting |
+| `show_facets` | `bool` | Displays Django 5.0-style facet counts `(N)` next to sidebar filter options |
+| `save_as` | `bool` | Adds a **"Save as new"** button on the change form |
+| `save_on_top` | `bool` | Renders a second save button bar at the top of the change form |
+
+```rust,illustrative
+use djangors_admin::{AdminSite, ModelAdminConfig};
+
+let admin = AdminSite::new();
+admin.register_with::<Article>(ModelAdminConfig {
+    list_display: Some(&["title", "author", "published", "created_at"]),
+    list_select_related: Some(&["author"]),
+    autocomplete_fields: Some(&["author"]),
+    prepopulated_fields: Some(&[("slug", &["title"])]),
+    filter_horizontal: Some(&["tags"]),
+    ordering: Some(&["-created_at"]),
+    sortable_by: Some(&["title", "created_at"]),
+    show_facets: true,
+    save_as: true,
+    save_on_top: true,
+    ..Default::default()
+});
+```
+
+### `SimpleListFilter`, Autocomplete Endpoint & Facet Counts
+
+- **`SimpleListFilter`**: Define custom sidebar filters with a title, query parameter name, and `(value, label)` lookup choices:
+
+```rust,illustrative
+use djangors_admin::SimpleListFilter;
+
+let status_filter = SimpleListFilter::new(
+    "Publication status",
+    "status",
+    vec![
+        ("draft".into(), "Draft".into()),
+        ("published".into(), "Published".into()),
+    ],
+);
+```
+
+- **Autocomplete JSON Endpoint**: `AdminSite::urls()` automatically registers `GET /{app}/{model}/autocomplete/?term=<query>` for staff users (respecting `TenantScope`), returning `{ "results": [{ "id": ..., "text": ... }] }` for fields listed in `autocomplete_fields`.
+- **Facet Counts**: Enabling `show_facets: true` annotates each sidebar filter choice with its matching row count `(N)` under the current query.
+
+### AdminDocs (`/admin/doc/`)
+
+`AdminSite::urls()` includes built-in model and schema documentation routes (mirroring `django.contrib.admindocs`) accessible to staff users:
+
+- `/admin/doc/` — Documentation index.
+- `/admin/doc/models/` — List of all registered models grouped by app.
+- `/admin/doc/models/{app}.{model}/` — Detailed field types, constraints, relations, and table metadata for a single model.
+

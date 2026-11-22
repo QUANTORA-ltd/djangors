@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-f699685b.js";
+            window.path_to_searchindex_js = "../searchindex-6be39a06.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-37bf99b9.js"></script>
+        <script src="../toc-08d624e0.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -180,7 +180,7 @@
 <h2 id="enabling-the-feature"><a class="header" href="#enabling-the-feature">Enabling the feature</a></h2>
 <p>Add the <code>oauth-provider</code> feature to <code>djangors</code>:</p>
 <pre><code class="language-toml">[dependencies]
-djangors = { version = "0.14", features = ["oauth-provider"] }
+djangors = { version = "1.0", features = ["oauth-provider"] }
 </code></pre>
 <h2 id="database-setup-and-signing-keys"><a class="header" href="#database-setup-and-signing-keys">Database setup and signing keys</a></h2>
 <p>Create the provider tables once at startup (or in a migration) and generate an asymmetric OIDC signing key (<code>RS256</code> or <code>ES256</code>). Ensure <code>DJANGORS_FIELD_ENCRYPTION_KEY</code> (or <code>DJANGORS_FIELD_ENCRYPTION_KEYS</code>) is configured because <code>SigningKey::private_key_pem</code> is stored with <code>#[djangors(encrypted)]</code>.</p>

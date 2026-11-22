@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-f699685b.js";
+            window.path_to_searchindex_js = "../searchindex-6be39a06.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-37bf99b9.js"></script>
+        <script src="../toc-08d624e0.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -837,6 +837,181 @@ pub struct Product {
     pub id: i64,
     pub attributes: Value,
 }
+<span class="boring">}</span></code></pre>
+<hr>
+<h2 id="djangors-10-orm-additions"><a class="header" href="#djangors-10-orm-additions">Djangors 1.0 ORM Additions</a></h2>
+<h3 id="extended-compareop-lookups"><a class="header" href="#extended-compareop-lookups">Extended <code>CompareOp</code> Lookups</a></h3>
+<p>Djangors 1.0 expands <code>CompareOp</code> (and <code>q!</code> lookup suffixes) with case-insensitive prefix/suffix matching, inclusive ranges, date/time component extraction, and JSON queries:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th><code>CompareOp</code> Variant</th><th><code>q!</code> Lookup Suffix</th><th>SQL Behavior</th></tr>
+</thead>
+<tbody>
+<tr><td><code>IStartsWith</code></td><td><code>__istartswith</code></td><td>Case-insensitive prefix match (<code>ILIKE 'val%'</code> / <code>LIKE</code>)</td></tr>
+<tr><td><code>IEndsWith</code></td><td><code>__iendswith</code></td><td>Case-insensitive suffix match (<code>ILIKE '%val'</code> / <code>LIKE</code>)</td></tr>
+<tr><td><code>Range</code></td><td><code>__range</code></td><td>Inclusive <code>BETWEEN $1 AND $2</code> (expects a 2-element <code>Vec</code>)</td></tr>
+<tr><td><code>Year</code></td><td><code>__year</code></td><td>Extract year from date/datetime (<code>EXTRACT(YEAR FROM col) = $1</code>)</td></tr>
+<tr><td><code>Month</code></td><td><code>__month</code></td><td>Extract month (<code>1..=12</code>)</td></tr>
+<tr><td><code>Day</code></td><td><code>__day</code></td><td>Extract day of month (<code>1..=31</code>)</td></tr>
+<tr><td><code>WeekDay</code></td><td><code>__week_day</code></td><td>Extract day of week (<code>1</code> = Sunday .. <code>7</code> = Saturday)</td></tr>
+<tr><td><code>Date</code></td><td><code>__date</code></td><td>Cast/extract calendar date (<code>DATE(col) = $1</code>)</td></tr>
+<tr><td><code>Hour</code></td><td><code>__hour</code></td><td>Extract hour (<code>0..=23</code>)</td></tr>
+<tr><td><code>JsonHasKey</code></td><td><code>__has_key</code></td><td>JSON key existence (Postgres <code>col ? $1</code>, SQLite <code>json_extract(col, '$.key') IS NOT NULL</code>)</td></tr>
+<tr><td><code>JsonContains</code></td><td><code>__json_contains</code></td><td>JSON containment (Postgres <code>col @&gt; $1::jsonb</code>, SQLite <code>LIKE</code> fallback)</td></tr>
+</tbody>
+</table>
+</div>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_orm::{q, Model};
+
+let recent = Question::objects()
+    .filter(q!(question_text__istartswith = "how"))?
+    .filter(q!(pub_date__year = 2026i64))?
+    .filter(q!(pub_date__month = 7i64))?
+    .filter(q!(id__range = vec![10i64, 50i64]))?
+    .all(db)
+    .await?;
+
+let tagged = Product::objects()
+    .filter(q!(attributes__has_key = "color"))?
+    .filter(q!(attributes__json_contains = r#"{"featured":true}"#))?
+    .all(db)
+    .await?;
+<span class="boring">}</span></code></pre>
+<h3 id="extended-funcexpr-expressions"><a class="header" href="#extended-funcexpr-expressions">Extended <code>FuncExpr</code> Expressions</a></h3>
+<p><code>FuncExpr</code> (in <code>djangors_orm::aggregate</code>) adds type casting, date extraction/truncation, conditional <code>CASE</code>/<code>WHEN</code>, SQL window functions, scalar subqueries, PostgreSQL trigram similarity, and raw SQL fragments:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Variant</th><th>Purpose</th><th>Key Supporting Types</th></tr>
+</thead>
+<tbody>
+<tr><td><code>FuncExpr::Cast { field, sql_type }</code></td><td><code>CAST(field AS sql_type)</code></td><td>—</td></tr>
+<tr><td><code>FuncExpr::Extract { field, part }</code></td><td>Extract date/time integer component</td><td><code>djangors_db::DatePart</code> (<code>Year</code>, <code>Month</code>, <code>Day</code>, <code>Hour</code>, <code>WeekDay</code>)</td></tr>
+<tr><td><code>FuncExpr::Trunc { field, kind }</code></td><td>Truncate timestamp/date (<code>DATE_TRUNC</code> / <code>strftime</code>)</td><td><code>TruncKind::{Year, Month, Day, Hour}</code></td></tr>
+<tr><td><code>FuncExpr::Case { whens, default, alias_name }</code></td><td><code>CASE WHEN ... THEN ... ELSE ... END</code></td><td><code>WhenBranch::new(condition_sql, then)</code></td></tr>
+<tr><td><code>FuncExpr::Window { func, partition_by, order_by, alias_name }</code></td><td><code>FUNC(...) OVER (PARTITION BY ... ORDER BY ...)</code></td><td><code>WindowFunc::{RowNumber, Rank, DenseRank, Lead, Lag}</code></td></tr>
+<tr><td><code>FuncExpr::Subquery { sql, alias_name }</code></td><td>Correlated or uncorrelated scalar <code>(SELECT ...)</code></td><td>—</td></tr>
+<tr><td><code>FuncExpr::TrigramSimilarity { field, query }</code></td><td>PostgreSQL <code>pg_trgm</code> <code>similarity(col, 'query')</code></td><td>—</td></tr>
+<tr><td><code>FuncExpr::RawSql { sql, alias_name }</code></td><td>Raw SQL expression fragment (<code>RawSQL</code>)</td><td>—</td></tr>
+</tbody>
+</table>
+</div>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_db::DatePart;
+use djangors_orm::{FuncExpr, TruncKind, Value, WhenBranch, WindowFunc};
+
+let cast_expr = FuncExpr::Cast { field: "votes", sql_type: "DOUBLE PRECISION" };
+let year_expr = FuncExpr::Extract { field: "pub_date", part: DatePart::Year };
+let month_bucket = FuncExpr::Trunc { field: "pub_date", kind: TruncKind::Month };
+
+let tier = FuncExpr::Case {
+    whens: vec![
+        WhenBranch::new(r#""votes" &gt;= 100"#, Value::Text("popular".into())),
+        WhenBranch::new(r#""votes" &gt;= 10"#, Value::Text("active".into())),
+    ],
+    default: Value::Text("new".into()),
+    alias_name: "tier".into(),
+};
+
+let rank = FuncExpr::Window {
+    func: WindowFunc::Rank,
+    partition_by: vec!["question"],
+    order_by: vec![("votes", true)],
+    alias_name: "vote_rank".into(),
+};
+<span class="boring">}</span></code></pre>
+<h3 id="schema-metadata-indexkind-constraintmeta-compositeprimarykey-generatedfieldspec"><a class="header" href="#schema-metadata-indexkind-constraintmeta-compositeprimarykey-generatedfieldspec">Schema Metadata (<code>IndexKind</code>, <code>ConstraintMeta</code>, <code>CompositePrimaryKey</code>, <code>GeneratedFieldSpec</code>)</a></h3>
+<p><code>djangors_orm::meta</code> provides rich declarative schema metadata used by migrations and introspection:</p>
+<ul>
+<li><strong><code>IndexKind</code></strong>: Selects the index access method — <code>BTree</code> (default), <code>Gin</code>, <code>Gist</code>, <code>Brin</code>, <code>Hash</code>.</li>
+<li><strong><code>ConstraintMeta</code></strong>: Declares table-level constraints:
+<ul>
+<li><code>ConstraintMeta::Check { name, expression }</code> — <code>CHECK (&lt;expression&gt;)</code>.</li>
+<li><code>ConstraintMeta::Unique { name, fields, condition }</code> — <code>UNIQUE (&lt;fields&gt;)</code> with an optional partial <code>WHERE &lt;condition&gt;</code> predicate.</li>
+</ul>
+</li>
+<li><strong><code>CompositePrimaryKey</code></strong>: Multi-column primary keys (<code>CompositePrimaryKey::new(&amp;["tenant_id", "item_id"])</code>, rendered via <code>.to_sql(dialect)</code>).</li>
+<li><strong><code>GeneratedFieldSpec</code></strong>: Database-computed columns (<code>GENERATED ALWAYS AS (&lt;expression&gt;) STORED | VIRTUAL</code>), rendered via <code>.to_column_ddl(dialect)</code>.</li>
+</ul>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_db::Dialect;
+use djangors_orm::{CompositePrimaryKey, ConstraintMeta, GeneratedFieldSpec, IndexKind};
+
+let kind = IndexKind::Gin;
+let partial_unique = ConstraintMeta::Unique {
+    name: "uq_active_email".into(),
+    fields: vec!["email".into()],
+    condition: Some("deleted_at IS NULL".into()),
+};
+let cpk = CompositePrimaryKey::new(&amp;["tenant_id", "sku"]);
+let generated = GeneratedFieldSpec {
+    column_name: "total_cents".into(),
+    sql_type: "BIGINT".into(),
+    expression: "unit_price_cents * quantity".into(),
+    stored: true,
+};
+let ddl = generated.to_column_ddl(Dialect::Postgres);
+<span class="boring">}</span></code></pre>
+<h3 id="new-queryset-methods"><a class="header" href="#new-queryset-methods">New <code>QuerySet</code> Methods</a></h3>
+<p>Djangors 1.0 adds Django’s full suite of <code>QuerySet</code> combinators, projections, bulk operations, and streaming helpers:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Method</th><th>Signature / Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>distinct()</code></td><td>Emits <code>SELECT DISTINCT</code></td></tr>
+<tr><td><code>distinct_on(&amp;[fields])</code></td><td>Emits PostgreSQL <code>SELECT DISTINCT ON (...)</code></td></tr>
+<tr><td><code>defer(&amp;[fields])</code> / <code>only(&amp;[fields])</code></td><td>Defers or restricts selected columns</td></tr>
+<tr><td><code>none()</code></td><td>Short-circuits to an empty queryset (returns no rows)</td></tr>
+<tr><td><code>reverse()</code></td><td>Reverses the active (or model default) ordering</td></tr>
+<tr><td><code>union(other, all)</code> / <code>intersection(other)</code> / <code>difference(other)</code></td><td>SQL set operations (<code>SetOp::{Union, UnionAll, Intersection, Difference}</code>)</td></tr>
+<tr><td><code>earliest(field, db)</code> / <code>latest(field, db)</code></td><td>Returns the single earliest or latest row ordered by <code>field</code></td></tr>
+<tr><td><code>in_bulk(db)</code></td><td>Returns <code>HashMap&lt;String, T&gt;</code> keyed by primary key string</td></tr>
+<tr><td><code>QuerySet::&lt;T&gt;::bulk_update(db, &amp;objs, &amp;fields)</code></td><td>Batches updates of specified fields across multiple model instances</td></tr>
+<tr><td><code>QuerySet::&lt;T&gt;::raw(db, sql, &amp;params)</code></td><td>Executes raw SQL and maps rows into <code>Vec&lt;T&gt;</code> via <code>FromRow</code></td></tr>
+<tr><td><code>iterator(db, chunk_size, f)</code></td><td>Streams rows in <code>chunk_size</code> batches to avoid loading large tables into memory</td></tr>
+<tr><td><code>using(&amp;multi, alias)</code></td><td>Resolves a <code>&amp;Database</code> handle from a <a href="databases.html#multi-database-routing"><code>MultiDatabase</code></a> registry</td></tr>
+</tbody>
+</table>
+</div>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_orm::{q, Model, QuerySet, Value};
+
+// Distinct, reverse, set operations, and earliest/latest
+let combined = Choice::objects()
+    .filter(q!(votes__gte = 10i32))?
+    .union(Choice::objects().filter(q!(choice_text__istartswith = "rust"))?, false)
+    .distinct()
+    .reverse()
+    .all(db)
+    .await?;
+
+let newest = Question::objects().latest("pub_date", db).await?;
+let by_pk = Question::objects().in_bulk(db).await?;
+
+// Bulk update specific fields &amp; raw SQL mapping
+QuerySet::&lt;Choice&gt;::bulk_update(db, &amp;updated_choices, &amp;["votes"]).await?;
+let raw_rows = QuerySet::&lt;Question&gt;::raw(
+    db,
+    "SELECT * FROM polls_question WHERE id &gt; $1",
+    &amp;[Value::I64(10)],
+).await?;
+
+// Stream large tables in chunks
+Question::objects()
+    .only(&amp;["id", "question_text"])?
+    .iterator(db, 500, |batch| async move {
+        println!("processed {} rows", batch.len());
+        Ok(())
+    })
+    .await?;
 <span class="boring">}</span></code></pre>
 
                     </main>

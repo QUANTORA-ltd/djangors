@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-f699685b.js";
+            window.path_to_searchindex_js = "../searchindex-6be39a06.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-37bf99b9.js"></script>
+        <script src="../toc-08d624e0.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -490,6 +490,76 @@ let _router = Router::new().mount("", impersonation_router());
 <span class="boring">Ok(())
 </span><span class="boring">}
 </span><span class="boring">}</span></code></pre>
+<hr>
+<h2 id="djangors-10-admin-additions"><a class="header" href="#djangors-10-admin-additions">Djangors 1.0 Admin Additions</a></h2>
+<h3 id="extended-modeladminconfig-options"><a class="header" href="#extended-modeladminconfig-options">Extended <code>ModelAdminConfig</code> Options</a></h3>
+<p>Djangors 1.0 expands <code>ModelAdminConfig</code> with ten new Django-parity options:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Option</th><th>Type</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><code>autocomplete_fields</code></td><td><code>Option&lt;&amp;'static [&amp;'static str]&gt;</code></td><td>FK / M2M fields backed by the admin autocomplete JSON endpoint</td></tr>
+<tr><td><code>prepopulated_fields</code></td><td><code>Option&lt;&amp;'static [(&amp;'static str, &amp;'static [&amp;'static str])]&gt;</code></td><td>Auto-populates target slug fields from source fields on the add/change form</td></tr>
+<tr><td><code>filter_horizontal</code></td><td><code>Option&lt;&amp;'static [&amp;'static str]&gt;</code></td><td>Renders M2M fields with a horizontal two-box filter widget</td></tr>
+<tr><td><code>filter_vertical</code></td><td><code>Option&lt;&amp;'static [&amp;'static str]&gt;</code></td><td>Renders M2M fields with a vertical two-box filter widget</td></tr>
+<tr><td><code>list_select_related</code></td><td><code>Option&lt;&amp;'static [&amp;'static str]&gt;</code></td><td>Eagerly loads related FK fields on the changelist query</td></tr>
+<tr><td><code>ordering</code></td><td><code>Option&lt;&amp;'static [&amp;'static str]&gt;</code></td><td>Default changelist ordering (e.g. <code>&amp;["-created_at"]</code>)</td></tr>
+<tr><td><code>sortable_by</code></td><td><code>Option&lt;&amp;'static [&amp;'static str]&gt;</code></td><td>Restricts which changelist columns allow <code>?o=</code> sorting</td></tr>
+<tr><td><code>show_facets</code></td><td><code>bool</code></td><td>Displays Django 5.0-style facet counts <code>(N)</code> next to sidebar filter options</td></tr>
+<tr><td><code>save_as</code></td><td><code>bool</code></td><td>Adds a <strong>“Save as new”</strong> button on the change form</td></tr>
+<tr><td><code>save_on_top</code></td><td><code>bool</code></td><td>Renders a second save button bar at the top of the change form</td></tr>
+</tbody>
+</table>
+</div>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_admin::{AdminSite, ModelAdminConfig};
+
+let admin = AdminSite::new();
+admin.register_with::&lt;Article&gt;(ModelAdminConfig {
+    list_display: Some(&amp;["title", "author", "published", "created_at"]),
+    list_select_related: Some(&amp;["author"]),
+    autocomplete_fields: Some(&amp;["author"]),
+    prepopulated_fields: Some(&amp;[("slug", &amp;["title"])]),
+    filter_horizontal: Some(&amp;["tags"]),
+    ordering: Some(&amp;["-created_at"]),
+    sortable_by: Some(&amp;["title", "created_at"]),
+    show_facets: true,
+    save_as: true,
+    save_on_top: true,
+    ..Default::default()
+});
+<span class="boring">}</span></code></pre>
+<h3 id="simplelistfilter-autocomplete-endpoint--facet-counts"><a class="header" href="#simplelistfilter-autocomplete-endpoint--facet-counts"><code>SimpleListFilter</code>, Autocomplete Endpoint &amp; Facet Counts</a></h3>
+<ul>
+<li><strong><code>SimpleListFilter</code></strong>: Define custom sidebar filters with a title, query parameter name, and <code>(value, label)</code> lookup choices:</li>
+</ul>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_admin::SimpleListFilter;
+
+let status_filter = SimpleListFilter::new(
+    "Publication status",
+    "status",
+    vec![
+        ("draft".into(), "Draft".into()),
+        ("published".into(), "Published".into()),
+    ],
+);
+<span class="boring">}</span></code></pre>
+<ul>
+<li><strong>Autocomplete JSON Endpoint</strong>: <code>AdminSite::urls()</code> automatically registers <code>GET /{app}/{model}/autocomplete/?term=&lt;query&gt;</code> for staff users (respecting <code>TenantScope</code>), returning <code>{ "results": [{ "id": ..., "text": ... }] }</code> for fields listed in <code>autocomplete_fields</code>.</li>
+<li><strong>Facet Counts</strong>: Enabling <code>show_facets: true</code> annotates each sidebar filter choice with its matching row count <code>(N)</code> under the current query.</li>
+</ul>
+<h3 id="admindocs-admindoc"><a class="header" href="#admindocs-admindoc">AdminDocs (<code>/admin/doc/</code>)</a></h3>
+<p><code>AdminSite::urls()</code> includes built-in model and schema documentation routes (mirroring <code>django.contrib.admindocs</code>) accessible to staff users:</p>
+<ul>
+<li><code>/admin/doc/</code> — Documentation index.</li>
+<li><code>/admin/doc/models/</code> — List of all registered models grouped by app.</li>
+<li><code>/admin/doc/models/{app}.{model}/</code> — Detailed field types, constraints, relations, and table metadata for a single model.</li>
+</ul>
 
                     </main>
 

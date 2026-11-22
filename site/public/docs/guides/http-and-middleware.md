@@ -633,6 +633,118 @@ Ok(Response::text("ok"))
 
 Implement `RateLimitKey` for custom keying strategies (e.g. by API key or user ID).
 
+## File Responses & Spooling Uploads (`FileResponse`, `TempFileUpload`)
+
+### `FileResponse`
+
+`djangors_core::file_response::FileResponse` serves files or byte buffers with automatic MIME detection (`detect_mime_type`), `Content-Disposition` (`inline` or `attachment` with filename), and HTTP `Range` request support (`206 Partial Content` and `416 Range Not Satisfiable`):
+
+```rust,illustrative
+use djangors_core::{DjangorsError, FileResponse, PathParams, Request, Response};
+
+async fn download_report(req: Request, _params: PathParams) -> Result<Response, DjangorsError> {
+    let file = FileResponse::from_path("reports/q3.pdf")?
+        .filename("q3-report.pdf")
+        .as_attachment(true);
+
+    // Evaluates the incoming `Range` header -> 200 OK, 206 Partial Content, or 416 Range Not Satisfiable
+    Ok(file.into_response_for_request(&req))
+}
+```
+
+For large files, call `.into_streaming_response(64 * 1024)` to stream in fixed-size chunks.
+
+### `TempFileUpload`
+
+`djangors_core::upload::TempFileUpload` buffers small uploads in memory and automatically spills to a temporary file on disk once the byte threshold is exceeded (cleaning up the temp file on `Drop` unless persisted):
+
+```rust,illustrative
+use djangors_core::TempFileUpload;
+
+let mut upload = TempFileUpload::new(256 * 1024); // spill to disk above 256 KiB
+upload.write_chunk(b"chunk-1")?;
+upload.write_chunk(b"chunk-2")?;
+
+if upload.is_spilled() {
+    println!("spilled to {:?}", upload.temp_path());
+}
+upload.persist_to("uploads/final.bin")?;
+```
+
+## Conditional GET, Login-Required Middleware & `Vary` Headers
+
+### `ConditionalGetLayer`
+
+`djangors_core::middleware::ConditionalGetLayer` (or `conditional_get_layer()`) computes an `ETag` (SHA-256 of the response body, strong by default or weak via `.weak_etag(true)`) and evaluates `If-None-Match` / `If-Modified-Since` headers on `GET`/`HEAD` requests, returning `304 Not Modified` with an empty body when unchanged.
+
+### `LoginRequiredLayer`
+
+`djangors_core::middleware::LoginRequiredLayer` (or `login_required_layer("/login")`) guards an entire router or sub-router by redirecting unauthenticated requests to `login_url?next=<path>`:
+
+```rust,illustrative
+use djangors_core::middleware::{conditional_get_layer, login_required_layer};
+use tower::ServiceBuilder;
+
+let service = ServiceBuilder::new()
+    .layer(conditional_get_layer())
+    .layer(
+        login_required_layer("/accounts/login/")
+            .exempt_path("/accounts/login/")
+            .exempt_prefix("/static/"),
+    )
+    .service(router_service);
+```
+
+### `Response::vary_on_headers` & `vary_on_cookie`
+
+Append deduplicated, case-insensitive `Vary` header values directly on any `Response`:
+
+```rust,illustrative
+use djangors_core::{Response, StatusCode};
+
+let resp = Response::html(StatusCode::OK, "<h1>Dashboard</h1>")
+    .vary_on_headers(&["Accept-Encoding", "Accept-Language"])
+    .vary_on_cookie();
+// Vary: Accept-Encoding, Accept-Language, Cookie
+```
+
+## Extensible System Check Framework
+
+`djangors_core::checks` mirrors Django's `django.core.checks` framework. Any crate or application can register startup/deployment checks via `inventory::submit!`:
+
+| Type / Function | Purpose |
+| --- | --- |
+| `CheckLevel` | Severity enum: `Debug`, `Info`, `Warning`, `Error`, `Critical` |
+| `CheckMessage` | Finding with `id`, `level`, `message`, and optional `.with_hint(...)` |
+| `SystemCheckRegistration` | Compile-time registration (`name`, `check: fn() -> Vec<CheckMessage>`) |
+| `run_system_checks(&silenced)` | Runs all registered checks and filters out IDs present in `silenced` |
+| `DjangorsSettings::silenced_system_checks` | Setting (`silenced_system_checks = ["security.W009"]` in `djangors.toml`) listing suppressed check IDs |
+
+```rust,illustrative
+use djangors_core::checks::{run_system_checks, CheckMessage, SystemCheckRegistration};
+
+fn check_payments_key() -> Vec<CheckMessage> {
+    if std::env::var("STRIPE_API_KEY").is_err() {
+        vec![
+            CheckMessage::warning("payments.W001", "STRIPE_API_KEY is not configured")
+                .with_hint("Set STRIPE_API_KEY in your environment before deploying."),
+        ]
+    } else {
+        vec![]
+    }
+}
+
+djangors_core::inventory::submit! {
+    SystemCheckRegistration {
+        name: "payments.check_api_key",
+        check: check_payments_key,
+    }
+}
+
+// Run all registered checks, honouring settings.silenced_system_checks:
+let findings = run_system_checks(&settings.silenced_system_checks);
+```
+
 ## Where to go next
 
 - [Requests and Responses tutorial](../tutorial/01-requests-and-responses.md) — the fast path to a first endpoint.

@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-f699685b.js";
+            window.path_to_searchindex_js = "../searchindex-6be39a06.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-37bf99b9.js"></script>
+        <script src="../toc-08d624e0.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -776,6 +776,109 @@ Ok(Response::text("ok"))
 <span class="boring">}
 </span><span class="boring">}</span></code></pre>
 <p>Implement <code>RateLimitKey</code> for custom keying strategies (e.g. by API key or user ID).</p>
+<h2 id="file-responses--spooling-uploads-fileresponse-tempfileupload"><a class="header" href="#file-responses--spooling-uploads-fileresponse-tempfileupload">File Responses &amp; Spooling Uploads (<code>FileResponse</code>, <code>TempFileUpload</code>)</a></h2>
+<h3 id="fileresponse"><a class="header" href="#fileresponse"><code>FileResponse</code></a></h3>
+<p><code>djangors_core::file_response::FileResponse</code> serves files or byte buffers with automatic MIME detection (<code>detect_mime_type</code>), <code>Content-Disposition</code> (<code>inline</code> or <code>attachment</code> with filename), and HTTP <code>Range</code> request support (<code>206 Partial Content</code> and <code>416 Range Not Satisfiable</code>):</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_core::{DjangorsError, FileResponse, PathParams, Request, Response};
+
+async fn download_report(req: Request, _params: PathParams) -&gt; Result&lt;Response, DjangorsError&gt; {
+    let file = FileResponse::from_path("reports/q3.pdf")?
+        .filename("q3-report.pdf")
+        .as_attachment(true);
+
+    // Evaluates the incoming `Range` header -&gt; 200 OK, 206 Partial Content, or 416 Range Not Satisfiable
+    Ok(file.into_response_for_request(&amp;req))
+}
+<span class="boring">}</span></code></pre>
+<p>For large files, call <code>.into_streaming_response(64 * 1024)</code> to stream in fixed-size chunks.</p>
+<h3 id="tempfileupload"><a class="header" href="#tempfileupload"><code>TempFileUpload</code></a></h3>
+<p><code>djangors_core::upload::TempFileUpload</code> buffers small uploads in memory and automatically spills to a temporary file on disk once the byte threshold is exceeded (cleaning up the temp file on <code>Drop</code> unless persisted):</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_core::TempFileUpload;
+
+let mut upload = TempFileUpload::new(256 * 1024); // spill to disk above 256 KiB
+upload.write_chunk(b"chunk-1")?;
+upload.write_chunk(b"chunk-2")?;
+
+if upload.is_spilled() {
+    println!("spilled to {:?}", upload.temp_path());
+}
+upload.persist_to("uploads/final.bin")?;
+<span class="boring">}</span></code></pre>
+<h2 id="conditional-get-login-required-middleware--vary-headers"><a class="header" href="#conditional-get-login-required-middleware--vary-headers">Conditional GET, Login-Required Middleware &amp; <code>Vary</code> Headers</a></h2>
+<h3 id="conditionalgetlayer"><a class="header" href="#conditionalgetlayer"><code>ConditionalGetLayer</code></a></h3>
+<p><code>djangors_core::middleware::ConditionalGetLayer</code> (or <code>conditional_get_layer()</code>) computes an <code>ETag</code> (SHA-256 of the response body, strong by default or weak via <code>.weak_etag(true)</code>) and evaluates <code>If-None-Match</code> / <code>If-Modified-Since</code> headers on <code>GET</code>/<code>HEAD</code> requests, returning <code>304 Not Modified</code> with an empty body when unchanged.</p>
+<h3 id="loginrequiredlayer"><a class="header" href="#loginrequiredlayer"><code>LoginRequiredLayer</code></a></h3>
+<p><code>djangors_core::middleware::LoginRequiredLayer</code> (or <code>login_required_layer("/login")</code>) guards an entire router or sub-router by redirecting unauthenticated requests to <code>login_url?next=&lt;path&gt;</code>:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_core::middleware::{conditional_get_layer, login_required_layer};
+use tower::ServiceBuilder;
+
+let service = ServiceBuilder::new()
+    .layer(conditional_get_layer())
+    .layer(
+        login_required_layer("/accounts/login/")
+            .exempt_path("/accounts/login/")
+            .exempt_prefix("/static/"),
+    )
+    .service(router_service);
+<span class="boring">}</span></code></pre>
+<h3 id="responsevary_on_headers--vary_on_cookie"><a class="header" href="#responsevary_on_headers--vary_on_cookie"><code>Response::vary_on_headers</code> &amp; <code>vary_on_cookie</code></a></h3>
+<p>Append deduplicated, case-insensitive <code>Vary</code> header values directly on any <code>Response</code>:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_core::{Response, StatusCode};
+
+let resp = Response::html(StatusCode::OK, "&lt;h1&gt;Dashboard&lt;/h1&gt;")
+    .vary_on_headers(&amp;["Accept-Encoding", "Accept-Language"])
+    .vary_on_cookie();
+// Vary: Accept-Encoding, Accept-Language, Cookie
+<span class="boring">}</span></code></pre>
+<h2 id="extensible-system-check-framework"><a class="header" href="#extensible-system-check-framework">Extensible System Check Framework</a></h2>
+<p><code>djangors_core::checks</code> mirrors Django’s <code>django.core.checks</code> framework. Any crate or application can register startup/deployment checks via <code>inventory::submit!</code>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Type / Function</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><code>CheckLevel</code></td><td>Severity enum: <code>Debug</code>, <code>Info</code>, <code>Warning</code>, <code>Error</code>, <code>Critical</code></td></tr>
+<tr><td><code>CheckMessage</code></td><td>Finding with <code>id</code>, <code>level</code>, <code>message</code>, and optional <code>.with_hint(...)</code></td></tr>
+<tr><td><code>SystemCheckRegistration</code></td><td>Compile-time registration (<code>name</code>, <code>check: fn() -&gt; Vec&lt;CheckMessage&gt;</code>)</td></tr>
+<tr><td><code>run_system_checks(&amp;silenced)</code></td><td>Runs all registered checks and filters out IDs present in <code>silenced</code></td></tr>
+<tr><td><code>DjangorsSettings::silenced_system_checks</code></td><td>Setting (<code>silenced_system_checks = ["security.W009"]</code> in <code>djangors.toml</code>) listing suppressed check IDs</td></tr>
+</tbody>
+</table>
+</div>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_core::checks::{run_system_checks, CheckMessage, SystemCheckRegistration};
+
+fn check_payments_key() -&gt; Vec&lt;CheckMessage&gt; {
+    if std::env::var("STRIPE_API_KEY").is_err() {
+        vec![
+            CheckMessage::warning("payments.W001", "STRIPE_API_KEY is not configured")
+                .with_hint("Set STRIPE_API_KEY in your environment before deploying."),
+        ]
+    } else {
+        vec![]
+    }
+}
+
+djangors_core::inventory::submit! {
+    SystemCheckRegistration {
+        name: "payments.check_api_key",
+        check: check_payments_key,
+    }
+}
+
+// Run all registered checks, honouring settings.silenced_system_checks:
+let findings = run_system_checks(&amp;settings.silenced_system_checks);
+<span class="boring">}</span></code></pre>
 <h2 id="where-to-go-next"><a class="header" href="#where-to-go-next">Where to go next</a></h2>
 <ul>
 <li><a href="../tutorial/01-requests-and-responses.html">Requests and Responses tutorial</a> — the fast path to a first endpoint.</li>

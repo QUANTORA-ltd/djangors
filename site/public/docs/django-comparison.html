@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-f699685b.js";
+            window.path_to_searchindex_js = "searchindex-6be39a06.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-37bf99b9.js"></script>
+        <script src="toc-08d624e0.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -346,6 +346,18 @@ DetailView::&lt;Article&gt;::detail(req, params, &amp;config).await
 <tr><td style="text-align: left"><code>python manage.py check</code></td><td style="text-align: left"><code>dj check [--deploy]</code></td><td style="text-align: left">Runs static checks (with <code>--deploy</code>, production-safety checks)</td></tr>
 <tr><td style="text-align: left"><code>python manage.py createpermissions</code></td><td style="text-align: left"><code>dj createpermissions</code></td><td style="text-align: left">Generates the standard <code>view</code>/<code>add</code>/<code>change</code>/<code>delete</code> permissions per model</td></tr>
 <tr><td style="text-align: left"><code>python manage.py inspectdb</code></td><td style="text-align: left"><code>dj inspectdb</code></td><td style="text-align: left">Writes <code>#[derive(Model)]</code> structs for an existing database’s tables</td></tr>
+<tr><td style="text-align: left"><code>python manage.py clearsessions</code></td><td style="text-align: left"><code>dj clearsessions</code></td><td style="text-align: left">Deletes expired server-side sessions from <code>djangors_session</code></td></tr>
+<tr><td style="text-align: left"><code>python manage.py dumpdata</code></td><td style="text-align: left"><code>dj dumpdata</code></td><td style="text-align: left">Exports database rows as Django-style JSON fixtures</td></tr>
+<tr><td style="text-align: left"><code>python manage.py loaddata</code></td><td style="text-align: left"><code>dj loaddata &lt;files...&gt;</code></td><td style="text-align: left">Loads JSON fixture files into the database</td></tr>
+<tr><td style="text-align: left"><code>python manage.py flush</code></td><td style="text-align: left"><code>dj flush [--no-input]</code></td><td style="text-align: left">Removes all rows from non-migration tables</td></tr>
+<tr><td style="text-align: left"><code>python manage.py squashmigrations</code></td><td style="text-align: left"><code>dj squashmigrations &lt;start&gt; &lt;end&gt;</code></td><td style="text-align: left">Squashes a contiguous range of SQL migration files</td></tr>
+<tr><td style="text-align: left"><code>python manage.py diffsettings</code></td><td style="text-align: left"><code>dj diffsettings</code></td><td style="text-align: left">Prints settings that differ from Djangors defaults</td></tr>
+<tr><td style="text-align: left"><code>python manage.py sendtestemail</code></td><td style="text-align: left"><code>dj sendtestemail &lt;addrs...&gt;</code></td><td style="text-align: left">Sends a test email to verify email configuration</td></tr>
+<tr><td style="text-align: left"><code>python manage.py makemessages</code></td><td style="text-align: left"><code>dj makemessages -l &lt;locale&gt;</code></td><td style="text-align: left">Extracts <code>|trans</code> keys into <code>.ftl</code> locale catalogs</td></tr>
+<tr><td style="text-align: left"><code>python manage.py compilemessages</code></td><td style="text-align: left"><code>dj compilemessages</code></td><td style="text-align: left">Validates <code>.ftl</code> translation catalogs</td></tr>
+<tr><td style="text-align: left"><code>python manage.py changepassword</code></td><td style="text-align: left"><code>dj changepassword &lt;user&gt;</code></td><td style="text-align: left">Updates a user’s password hash in <code>auth_user</code></td></tr>
+<tr><td style="text-align: left"><code>python manage.py createcachetable</code></td><td style="text-align: left"><code>dj createcachetable [table]</code></td><td style="text-align: left">Creates the table required by <code>DatabaseCache</code></td></tr>
+<tr><td style="text-align: left"><code>python manage.py show_urls</code></td><td style="text-align: left"><code>dj showurls</code></td><td style="text-align: left">Lists registered HTTP routes in <code>src/</code></td></tr>
 <tr><td style="text-align: left"><code>python manage.py spectacular</code> (drf-spectacular)</td><td style="text-align: left"><code>dj openapi [--typescript]</code></td><td style="text-align: left">Writes the OpenAPI spec, or a typed TypeScript client</td></tr>
 <tr><td style="text-align: left"><em>(no built-in equivalent)</em></td><td style="text-align: left"><code>dj generate resource Post title:string</code></td><td style="text-align: left">Writes a model, serializer, REST views, admin, tests, and migration in one step</td></tr>
 </tbody>

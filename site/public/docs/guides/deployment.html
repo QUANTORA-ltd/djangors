@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-f699685b.js";
+            window.path_to_searchindex_js = "../searchindex-6be39a06.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-37bf99b9.js"></script>
+        <script src="../toc-08d624e0.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -222,7 +222,7 @@ codegen-units = 1
 </code></pre>
 <p>When depending on the <code>djangors</code> facade crate, all subsystems and both database backends (<code>postgres</code> and <code>sqlite</code>) are enabled by default. To minimize compile times and binary size in production, disable default features and opt into only the database backend and subsystems your application uses:</p>
 <pre><code class="language-toml">[dependencies]
-djangors = { version = "0.14", default-features = false, features = [
+djangors = { version = "1.0", default-features = false, features = [
     "postgres",   # or "sqlite" — drops libsqlite3-sys when only "postgres" is enabled
     "migrations",
     "rest",
@@ -403,6 +403,46 @@ breadcrumbs, and panics are captured via Sentry’s built-in panic integration.<
 <li>Upon receiving <code>SIGINT</code> or <code>SIGTERM</code>, the TCP accept loop stops listening for new connections.</li>
 <li>An active connection drain phase initiates, allowing in-flight HTTP requests to complete.</li>
 <li>If in-flight requests do not complete within 30 seconds, remaining connections are aborted to ensure timely process termination.</li>
+</ol>
+<hr>
+<h2 id="keeping-binaries-and-target-small"><a class="header" href="#keeping-binaries-and-target-small">Keeping Binaries and <code>target/</code> Small</a></h2>
+<p>By default, Cargo emits full DWARF debug symbols for every dependency in <code>target/debug/</code> (which can
+grow to multiple gigabytes) and optimizes release binaries for speed rather than size. Djangors
+solves both out of the box when you scaffold with <code>dj new</code>:</p>
+<ol>
+<li>
+<p><strong>Enable only the Cargo features you use</strong> — instead of pulling every optional battery into your
+dependency tree, use <code>default-features = false</code> on <code>djangors</code>:</p>
+<pre><code class="language-toml">[dependencies]
+djangors = { version = "1.0", default-features = false, features = ["postgres", "rest", "auth"] }
+</code></pre>
+<p>A minimal <code>djangors</code> Postgres app compiles to a <strong>~3–4 MiB</strong> stripped static binary.</p>
+</li>
+<li>
+<p><strong>Shrink <code>target/debug/</code> by ~70%</strong> — disable debug symbols for third-party crates while keeping
+file + line backtraces for your own code (included automatically by <code>dj new</code>):</p>
+<pre><code class="language-toml">[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = 0
+</code></pre>
+</li>
+<li>
+<p><strong>Go-sized release binaries</strong> — optimize for size, strip symbols, enable LTO, and abort on panic
+(included automatically by <code>dj new</code>):</p>
+<pre><code class="language-toml">[profile.release]
+opt-level = "z"
+lto = "thin"
+strip = true
+codegen-units = 1
+panic = "abort"
+</code></pre>
+</li>
+<li>
+<p><strong>Share build artifacts across projects</strong> — set a shared <code>CARGO_TARGET_DIR</code> (or <code>sccache</code>) so
+common dependencies are compiled and stored once on disk rather than duplicated per project.</p>
+</li>
 </ol>
 
                     </main>

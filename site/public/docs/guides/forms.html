@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-f699685b.js";
+            window.path_to_searchindex_js = "../searchindex-6be39a06.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-37bf99b9.js"></script>
+        <script src="../toc-08d624e0.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -459,6 +459,102 @@ exactly the shape <code>djangors-views</code>’ <code>UpdateView</code> impleme
 <p>Use with <code>djangors-views</code>’ generic <code>CreateView</code>/<code>UpdateView</code> (see the
 <a href="class-based-views.html">Class-Based Views guide</a>) to get a full
 form-render-and-submit flow without writing a handler by hand.</p>
+<hr>
+<h2 id="djangors-10-field-types-widgets-media--inline-formsets"><a class="header" href="#djangors-10-field-types-widgets-media--inline-formsets">Djangors 1.0 Field Types, Widgets, Media &amp; Inline FormSets</a></h2>
+<h3 id="built-in-form-field-types"><a class="header" href="#built-in-form-field-types">Built-in Form Field Types</a></h3>
+<p>In addition to <code>CharField</code>, <code>IntegerField</code>, <code>BooleanField</code>, <code>EmailField</code>, and <code>ChoiceField</code>, Djangors 1.0 ships 17 new <code>FormField</code> types in <code>djangors_forms</code>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field Type</th><th>Parsed / Cleaned Value</th><th>Key Validations</th></tr>
+</thead>
+<tbody>
+<tr><td><code>FloatField</code></td><td><code>f64</code></td><td>Rejects NaN/Inf; optional <code>min_value</code> / <code>max_value</code></td></tr>
+<tr><td><code>DecimalField</code></td><td><code>rust_decimal::Decimal</code></td><td><code>max_digits</code>, <code>decimal_places</code>, min/max bounds</td></tr>
+<tr><td><code>DateField</code></td><td><code>chrono::NaiveDate</code></td><td>Parses ISO <code>YYYY-MM-DD</code> (and custom formats)</td></tr>
+<tr><td><code>DateTimeField</code></td><td><code>chrono::NaiveDateTime</code> / <code>DateTime</code></td><td>Parses ISO-8601 and HTML <code>datetime-local</code> strings</td></tr>
+<tr><td><code>TimeField</code></td><td><code>chrono::NaiveTime</code></td><td>Parses <code>HH:MM</code> and <code>HH:MM:SS</code></td></tr>
+<tr><td><code>DurationField</code></td><td><code>chrono::Duration</code></td><td>Parses ISO-8601 or <code>HH:MM:SS</code> / seconds</td></tr>
+<tr><td><code>UrlField</code></td><td><code>String</code></td><td>Validates <code>http://</code> / <code>https://</code> scheme and host</td></tr>
+<tr><td><code>SlugField</code></td><td><code>String</code></td><td>Allows ASCII letters, digits, hyphens, and underscores</td></tr>
+<tr><td><code>UuidField</code></td><td><code>uuid::Uuid</code></td><td>Validates canonical UUID strings</td></tr>
+<tr><td><code>FileField</code></td><td><code>String</code> / upload metadata</td><td>Optional <code>max_length</code> and allowed extensions</td></tr>
+<tr><td><code>ImageField</code></td><td><code>String</code> / image upload metadata</td><td>Validates image MIME/extension allowlist</td></tr>
+<tr><td><code>MultipleChoiceField</code></td><td><code>Vec&lt;String&gt;</code></td><td>Ensures every submitted choice is in <code>choices</code></td></tr>
+<tr><td><code>TypedChoiceField&lt;T&gt;</code></td><td><code>T</code></td><td>Validates choice membership and coerces via custom parser</td></tr>
+<tr><td><code>JsonField</code></td><td><code>serde_json::Value</code></td><td>Parses valid JSON payloads</td></tr>
+<tr><td><code>GenericIpAddressField</code></td><td><code>std::net::IpAddr</code></td><td>Configurable <code>IpProtocol::{Both, IPv4, IPv6}</code></td></tr>
+<tr><td><code>ModelChoiceField</code></td><td><code>i64</code> / PK string</td><td>Validates against an allowed set of model primary keys</td></tr>
+<tr><td><code>ModelMultipleChoiceField</code></td><td><code>Vec&lt;i64&gt;</code> / PK list</td><td>Validates multiple selected model primary keys</td></tr>
+</tbody>
+</table>
+</div>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_forms::{
+    DateField, DecimalField, FormField, GenericIpAddressField, IpProtocol, JsonField, SlugField,
+    UrlField, UuidField,
+};
+
+let slug = SlugField::new().clean("hello-djangors-1-0")?;
+let url = UrlField::new().clean("https://djangors.dev")?;
+let ip = GenericIpAddressField::new(IpProtocol::Both).clean("2001:db8::1")?;
+let payload = JsonField::new().clean(r#"{"active": true}"#)?;
+let date = DateField::new().clean("2026-07-30")?;
+<span class="boring">}</span></code></pre>
+<h3 id="new-widgets--formmedia"><a class="header" href="#new-widgets--formmedia">New Widgets &amp; <code>FormMedia</code></a></h3>
+<p>Djangors 1.0 adds 8 new HTML widgets (all XSS-escaped):</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Widget</th><th>Rendered HTML</th></tr>
+</thead>
+<tbody>
+<tr><td><code>FileInput</code></td><td><code>&lt;input type="file"&gt;</code></td></tr>
+<tr><td><code>ClearableFileInput</code></td><td>File input plus current file link and clear checkbox</td></tr>
+<tr><td><code>SelectMultiple</code></td><td><code>&lt;select multiple&gt;</code> with multi-value selection</td></tr>
+<tr><td><code>CheckboxSelectMultiple</code></td><td>List of <code>&lt;input type="checkbox"&gt;</code> options</td></tr>
+<tr><td><code>DateTimeInput</code></td><td><code>&lt;input type="datetime-local"&gt;</code></td></tr>
+<tr><td><code>TimeInput</code></td><td><code>&lt;input type="time"&gt;</code></td></tr>
+<tr><td><code>UrlInput</code></td><td><code>&lt;input type="url"&gt;</code></td></tr>
+<tr><td><code>SplitDateTimeWidget</code></td><td>Paired <code>&lt;input type="date"&gt;</code> and <code>&lt;input type="time"&gt;</code> inputs</td></tr>
+</tbody>
+</table>
+</div>
+<p>Use <strong><code>FormMedia</code></strong> (<code>djangors_forms::FormMedia</code>) to declare, merge, and render CSS/JS assets required by custom widgets or forms:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_forms::FormMedia;
+
+let media = FormMedia::new()
+    .add_css("all", "/static/widgets/datepicker.css")
+    .add_js("/static/widgets/datepicker.js");
+
+let combined = media.merge(&amp;FormMedia::new().add_js("/static/app.js"));
+let head_tags = combined.render(); // &lt;link rel="stylesheet" ...&gt; and &lt;script src="..."&gt;&lt;/script&gt;
+<span class="boring">}</span></code></pre>
+<h3 id="managementform--inlineformset"><a class="header" href="#managementform--inlineformset"><code>ManagementForm</code> &amp; <code>InlineFormSet</code></a></h3>
+<ul>
+<li><strong><code>ManagementForm</code></strong> models and validates the hidden <code>TOTAL_FORMS</code>, <code>INITIAL_FORMS</code>, <code>MIN_NUM_FORMS</code>, and <code>MAX_NUM_FORMS</code> fields for any <code>FormSet</code>.</li>
+<li><strong><code>InlineFormSet</code></strong> wraps a <code>FormSet</code> bound to a parent record’s foreign-key field (<code>parent_fk_name</code>) and primary key (<code>parent_pk</code>), automatically injecting the parent FK into every child form during cleaning:</li>
+</ul>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_forms::{FormSet, InlineFormSet};
+use std::collections::HashMap;
+
+let inline: InlineFormSet&lt;()&gt; = InlineFormSet::new(
+    FormSet::new().with_prefix("items").with_can_delete(true),
+    "order_id",
+    "42",
+);
+
+let mgmt_html = inline.formset.render_management_form();
+let cleaned = inline.clean_with(&amp;post_data, |child_map| {
+    // `child_map["order_id"]` is automatically populated with `"42"`
+    Ok(child_map.get("sku").cloned().unwrap_or_default())
+})?;
+<span class="boring">}</span></code></pre>
 
                     </main>
 

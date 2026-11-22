@@ -8,7 +8,7 @@ Add the `saml` feature to `djangors`:
 
 ```toml
 [dependencies]
-djangors = { version = "0.14", features = ["saml"] }
+djangors = { version = "1.0", features = ["saml"] }
 ```
 
 ## Database setup and identity provider configuration
