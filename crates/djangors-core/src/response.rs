@@ -173,6 +173,47 @@ impl Response {
         self.htmx_header("hx-reswap", strategy)
     }
 
+    /// Appends header names to the `Vary` response header, deduplicating case-insensitively.
+    ///
+    /// Mirrors Django's `vary_on_headers` decorator / `patch_vary_headers`.
+    pub fn vary_on_headers(mut self, headers: &[&str]) -> Self {
+        let mut existing: Vec<String> = self
+            .headers
+            .get(hyper::http::header::VARY)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| {
+                s.split(',')
+                    .map(|p| p.trim().to_string())
+                    .filter(|p| !p.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        for &h in headers {
+            let trimmed = h.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if !existing.iter().any(|e| e.eq_ignore_ascii_case(trimmed)) {
+                existing.push(trimmed.to_string());
+            }
+        }
+
+        if !existing.is_empty() {
+            if let Ok(val) = HeaderValue::from_str(&existing.join(", ")) {
+                self.headers.insert(hyper::http::header::VARY, val);
+            }
+        }
+        self
+    }
+
+    /// Marks this response as varying on the `Cookie` request header (`Vary: Cookie`).
+    ///
+    /// Mirrors Django's `vary_on_cookie` decorator.
+    pub fn vary_on_cookie(self) -> Self {
+        self.vary_on_headers(&["Cookie"])
+    }
+
     /// Attach a typed extension to this response (builder pattern).
     ///
     /// Extensions are preserved when converting into a `hyper::Response` via

@@ -1,4 +1,4 @@
-use crate::{InlineConfig, SiteBranding, ADMIN_TEMPLATES};
+use crate::{InlineConfig, ModelAdmin, SiteBranding, ADMIN_TEMPLATES};
 use djangors_core::{DjangorsError, Response};
 use djangors_orm::meta::ModelMeta;
 
@@ -11,6 +11,43 @@ pub(crate) struct FormFieldRow {
     pub(crate) error: Option<String>,
     pub(crate) section: Option<&'static str>,
     pub(crate) lookup_href: Option<minijinja::value::Value>,
+    pub(crate) is_autocomplete: bool,
+    pub(crate) is_filter_horizontal: bool,
+    pub(crate) is_filter_vertical: bool,
+}
+
+#[derive(serde::Serialize)]
+pub(crate) struct PrepopulatedFieldData {
+    pub(crate) target: String,
+    pub(crate) sources: Vec<String>,
+}
+
+pub(crate) struct FormOptions<'a> {
+    pub(crate) fieldsets: Option<&'static [(&'static str, &'static [&'static str])]>,
+    pub(crate) readonly_fields: &'a [&'static str],
+    pub(crate) raw_id_fields: &'a [&'static str],
+    pub(crate) prepopulated_fields: &'a [(&'static str, &'static [&'static str])],
+    pub(crate) autocomplete_fields: &'a [&'static str],
+    pub(crate) filter_horizontal: &'a [&'static str],
+    pub(crate) filter_vertical: &'a [&'static str],
+    pub(crate) save_as: bool,
+    pub(crate) save_on_top: bool,
+}
+
+impl<'a> FormOptions<'a> {
+    pub(crate) fn from_admin(admin: &'a dyn ModelAdmin) -> Self {
+        Self {
+            fieldsets: admin.fieldsets(),
+            readonly_fields: admin.readonly_fields(),
+            raw_id_fields: admin.raw_id_fields(),
+            prepopulated_fields: admin.prepopulated_fields(),
+            autocomplete_fields: admin.autocomplete_fields(),
+            filter_horizontal: admin.filter_horizontal(),
+            filter_vertical: admin.filter_vertical(),
+            save_as: admin.save_as(),
+            save_on_top: admin.save_on_top(),
+        }
+    }
 }
 
 #[derive(serde::Serialize)]
@@ -37,6 +74,12 @@ pub(crate) struct RenderFormContext {
     pub(crate) has_change_permission: bool,
     pub(crate) has_delete_permission: bool,
     pub(crate) is_add: bool,
+    pub(crate) prepopulated_fields: Vec<PrepopulatedFieldData>,
+    pub(crate) autocomplete_fields: Vec<String>,
+    pub(crate) filter_horizontal: Vec<String>,
+    pub(crate) filter_vertical: Vec<String>,
+    pub(crate) save_as: bool,
+    pub(crate) save_on_top: bool,
 }
 
 pub(crate) async fn build_inline_tables(
@@ -98,12 +141,21 @@ pub(crate) fn render_form(
     csrf_token: String,
     has_change_permission: bool,
     has_delete_permission: bool,
-    fieldsets: Option<&'static [(&'static str, &'static [&'static str])]>,
-    readonly_fields: &[&'static str],
-    raw_id_fields: &[&'static str],
+    options: &FormOptions<'_>,
     inlines_data: Vec<InlineTableData>,
 ) -> Result<Response, DjangorsError> {
+    let fieldsets = options.fieldsets;
+    let readonly_fields = options.readonly_fields;
+    let raw_id_fields = options.raw_id_fields;
+    let autocomplete_fields = options.autocomplete_fields;
+    let filter_horizontal = options.filter_horizontal;
+    let filter_vertical = options.filter_vertical;
+
     let build_row = |name: &'static str, section: Option<&'static str>| -> Option<FormFieldRow> {
+        let is_autocomplete = autocomplete_fields.contains(&name);
+        let is_filter_horizontal = filter_horizontal.contains(&name);
+        let is_filter_vertical = filter_vertical.contains(&name);
+
         if let Some(field) = meta.fields.iter().find(|f| f.name == name) {
             if field.auto || field.primary_key {
                 if is_add {
@@ -118,6 +170,9 @@ pub(crate) fn render_form(
                         error: None,
                         section,
                         lookup_href: None,
+                        is_autocomplete: false,
+                        is_filter_horizontal: false,
+                        is_filter_vertical: false,
                     });
                 }
             }
@@ -148,6 +203,9 @@ pub(crate) fn render_form(
                 error: err,
                 section,
                 lookup_href: None,
+                is_autocomplete,
+                is_filter_horizontal,
+                is_filter_vertical,
             })
         } else if let Some(rel) = meta.relations.iter().find(|r| r.field_name == name) {
             let val = submitted_values.get(name).map(|s| s.as_str()).unwrap_or("");
@@ -175,6 +233,9 @@ pub(crate) fn render_form(
                 error: err,
                 section,
                 lookup_href,
+                is_autocomplete,
+                is_filter_horizontal,
+                is_filter_vertical,
             })
         } else {
             None
@@ -211,6 +272,15 @@ pub(crate) fn render_form(
         }
     }
 
+    let prepopulated_fields: Vec<PrepopulatedFieldData> = options
+        .prepopulated_fields
+        .iter()
+        .map(|(target, sources)| PrepopulatedFieldData {
+            target: (*target).to_string(),
+            sources: sources.iter().map(|s| (*s).to_string()).collect(),
+        })
+        .collect();
+
     djangors_template::render(
         &ADMIN_TEMPLATES,
         "admin/render_form.html",
@@ -225,6 +295,15 @@ pub(crate) fn render_form(
             has_change_permission,
             has_delete_permission,
             is_add,
+            prepopulated_fields,
+            autocomplete_fields: autocomplete_fields
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect(),
+            filter_horizontal: filter_horizontal.iter().map(|s| (*s).to_string()).collect(),
+            filter_vertical: filter_vertical.iter().map(|s| (*s).to_string()).collect(),
+            save_as: options.save_as,
+            save_on_top: options.save_on_top,
         },
     )
 }

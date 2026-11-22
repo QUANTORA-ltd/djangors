@@ -511,5 +511,291 @@ pub async fn acquire_cross_process_lock(
     })
 }
 
+/// Asserts that `fut` executes exactly `expected` SQL queries against the database.
+///
+/// Wraps [`djangors_db::with_query_log`] and panics with a detailed dump of every
+/// executed SQL statement if the actual query count differs from `expected`.
+pub async fn assert_num_queries<F, T>(expected: usize, fut: F) -> T
+where
+    F: std::future::Future<Output = T>,
+{
+    let (result, stats) = djangors_db::with_query_log(fut).await;
+    let actual = stats.total_queries();
+    if actual != expected {
+        let mut dump = String::new();
+        for (i, q) in stats.queries.iter().enumerate() {
+            dump.push_str(&format!("  {}. {}\n", i + 1, q.sql));
+        }
+        panic!("assert_num_queries failed: expected {expected} queries, got {actual}:\n{dump}");
+    }
+    result
+}
+
+/// A live HTTP server bound to `127.0.0.1:0` (ephemeral port) for end-to-end tests.
+///
+/// Automatically shuts down its background server task when dropped.
+pub struct LiveServer {
+    addr: std::net::SocketAddr,
+    shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    handle: tokio::task::JoinHandle<()>,
+}
+
+impl LiveServer {
+    /// Binds an ephemeral local port on `127.0.0.1:0` and starts serving `router` in a
+    /// background Tokio task.
+    pub async fn start(router: Router) -> Self {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("LiveServer failed to bind 127.0.0.1:0");
+        let addr = listener
+            .local_addr()
+            .expect("LiveServer failed to read local_addr");
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        let app = djangors_core::Djangors::new(djangors_core::DjangorsSettings::default(), router);
+        let handle = tokio::spawn(async move {
+            let _ = app
+                .serve_with_shutdown(listener, async move {
+                    let _ = rx.await;
+                })
+                .await;
+        });
+        Self {
+            addr,
+            shutdown_tx: Some(tx),
+            handle,
+        }
+    }
+
+    /// Returns the bound local socket address.
+    pub fn addr(&self) -> std::net::SocketAddr {
+        self.addr
+    }
+
+    /// Returns the base URL of the running server (e.g. `"http://127.0.0.1:54321"`).
+    pub fn base_url(&self) -> String {
+        format!("http://{}", self.addr)
+    }
+
+    /// Builds a full URL for `path` against this live server.
+    pub fn url(&self, path: &str) -> String {
+        if path.starts_with('/') {
+            format!("http://{}{}", self.addr, path)
+        } else {
+            format!("http://{}/{}", self.addr, path)
+        }
+    }
+}
+
+impl Drop for LiveServer {
+    fn drop(&mut self) {
+        if let Some(tx) = self.shutdown_tx.take() {
+            let _ = tx.send(());
+        }
+        self.handle.abort();
+    }
+}
+
+/// Factory for constructing [`djangors_core::Request`] objects directly in unit tests
+/// without instantiating a [`Router`].
+///
+/// Mirrors Django's `django.test.RequestFactory`.
+#[derive(Debug, Default, Clone)]
+pub struct RequestFactory {
+    default_headers: HeaderMap,
+}
+
+impl RequestFactory {
+    /// Creates a new [`RequestFactory`].
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Adds a default header applied to every request built by this factory.
+    pub fn with_default_header(mut self, name: &str, value: &str) -> Self {
+        let header_name = hyper::http::HeaderName::from_bytes(name.as_bytes())
+            .expect("header name must be valid HTTP token");
+        let header_value = HeaderValue::from_str(value).expect("header value must be valid ASCII");
+        self.default_headers.insert(header_name, header_value);
+        self
+    }
+
+    /// Starts building a request with an arbitrary HTTP `method` and `path`.
+    pub fn request(&self, method: Method, path: &str) -> FactoryRequestBuilder {
+        FactoryRequestBuilder {
+            method,
+            uri: path.parse().expect("request path must be a valid URI"),
+            headers: self.default_headers.clone(),
+            body: Bytes::new(),
+            extensions: Extensions::new(),
+            state: AppState::new(),
+        }
+    }
+
+    /// Starts building a `GET` request.
+    pub fn get(&self, path: &str) -> FactoryRequestBuilder {
+        self.request(Method::GET, path)
+    }
+
+    /// Starts building a `POST` request.
+    pub fn post(&self, path: &str) -> FactoryRequestBuilder {
+        self.request(Method::POST, path)
+    }
+
+    /// Starts building a `PUT` request.
+    pub fn put(&self, path: &str) -> FactoryRequestBuilder {
+        self.request(Method::PUT, path)
+    }
+
+    /// Starts building a `PATCH` request.
+    pub fn patch(&self, path: &str) -> FactoryRequestBuilder {
+        self.request(Method::PATCH, path)
+    }
+
+    /// Starts building a `DELETE` request.
+    pub fn delete(&self, path: &str) -> FactoryRequestBuilder {
+        self.request(Method::DELETE, path)
+    }
+
+    /// Starts building a `HEAD` request.
+    pub fn head(&self, path: &str) -> FactoryRequestBuilder {
+        self.request(Method::HEAD, path)
+    }
+}
+
+/// Builder produced by [`RequestFactory`] for constructing a standalone [`Request`].
+pub struct FactoryRequestBuilder {
+    method: Method,
+    uri: Uri,
+    headers: HeaderMap,
+    body: Bytes,
+    extensions: Extensions,
+    state: AppState,
+}
+
+impl FactoryRequestBuilder {
+    /// Adds a header to the request.
+    pub fn header(mut self, name: &str, value: &str) -> Self {
+        let header_name = hyper::http::HeaderName::from_bytes(name.as_bytes())
+            .expect("header name must be valid HTTP token");
+        let header_value = HeaderValue::from_str(value).expect("header value must be valid ASCII");
+        self.headers.insert(header_name, header_value);
+        self
+    }
+
+    /// Sets the raw request body bytes.
+    pub fn body(mut self, body: impl Into<Bytes>) -> Self {
+        self.body = body.into();
+        self
+    }
+
+    /// Serializes `value` as JSON and sets `Content-Type: application/json`.
+    pub fn json<T: serde::Serialize>(mut self, value: &T) -> Self {
+        let bytes = serde_json::to_vec(value).expect("request JSON body should serialize");
+        self.headers
+            .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        self.body = Bytes::from(bytes);
+        self
+    }
+
+    /// Encodes `pairs` as `application/x-www-form-urlencoded` form data.
+    pub fn form(mut self, pairs: &[(&str, &str)]) -> Self {
+        let encoded = serde_urlencoded::to_string(pairs).expect("form pairs should encode");
+        self.headers.insert(
+            CONTENT_TYPE,
+            HeaderValue::from_static("application/x-www-form-urlencoded"),
+        );
+        self.body = Bytes::from(encoded);
+        self
+    }
+
+    /// Attaches a [`Session`] extension to the request.
+    pub fn with_session(mut self, session: Session) -> Self {
+        self.extensions.insert(session);
+        self
+    }
+
+    /// Attaches an arbitrary extension to the request.
+    pub fn with_extension<T: Clone + Send + Sync + 'static>(mut self, ext: T) -> Self {
+        self.extensions.insert(ext);
+        self
+    }
+
+    /// Attaches application state to the request.
+    pub fn with_state<T: Send + Sync + 'static>(mut self, state: T) -> Self {
+        self.state = self.state.insert(state);
+        self
+    }
+
+    /// Finalizes and returns the [`Request`].
+    pub fn build(self) -> Request {
+        Request::new(self.method, self.uri, self.headers, self.body)
+            .with_extensions(self.extensions)
+            .with_state(self.state)
+    }
+}
+
+static ENV_OVERRIDE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// RAII guard that overrides environment variables (such as `DJANGORS_*` settings)
+/// for the duration of a test and restores their previous values on [`Drop`].
+///
+/// Serializes concurrent tests in the same process via a global mutex so
+/// environment mutations do not race.
+pub struct SettingsOverride {
+    previous: Vec<(String, Option<String>)>,
+    _lock: std::sync::MutexGuard<'static, ()>,
+}
+
+impl SettingsOverride {
+    /// Applies a list of `(key, value)` environment overrides (`Some(v)` sets,
+    /// `None` removes) and returns an RAII guard that restores them on drop.
+    pub fn new(vars: &[(&str, Option<&str>)]) -> Self {
+        let lock = ENV_OVERRIDE_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut previous = Vec::with_capacity(vars.len());
+        for &(key, val) in vars {
+            previous.push((key.to_string(), std::env::var(key).ok()));
+            match val {
+                Some(v) => std::env::set_var(key, v),
+                None => std::env::remove_var(key),
+            }
+        }
+        Self {
+            previous,
+            _lock: lock,
+        }
+    }
+
+    /// Convenience constructor overriding a single environment variable.
+    pub fn set(key: &str, value: &str) -> Self {
+        Self::new(&[(key, Some(value))])
+    }
+
+    /// Convenience constructor temporarily removing a single environment variable.
+    pub fn remove(key: &str) -> Self {
+        Self::new(&[(key, None)])
+    }
+}
+
+impl Drop for SettingsOverride {
+    fn drop(&mut self) {
+        // Restore in reverse order in case the same key appeared more than once.
+        for (key, prev) in self.previous.iter().rev() {
+            match prev {
+                Some(v) => std::env::set_var(key, v),
+                None => std::env::remove_var(key),
+            }
+        }
+    }
+}
+
+/// Overrides environment variables for the lifetime of the returned [`SettingsOverride`] guard.
+///
+/// Equivalent to [`SettingsOverride::new`].
+pub fn override_env(vars: &[(&str, Option<&str>)]) -> SettingsOverride {
+    SettingsOverride::new(vars)
+}
+
 #[cfg(test)]
 mod tests;

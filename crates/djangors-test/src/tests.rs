@@ -506,3 +506,79 @@ async fn factory_derive_builds_and_persists_records() {
         .expect("count articles");
     assert_eq!(count, 4);
 }
+
+#[tokio::test]
+async fn assert_num_queries_counts_sqlite_queries() {
+    let db = TestDatabase::new_for_backend(TestBackend::Sqlite)
+        .await
+        .expect("sqlite db");
+
+    assert_num_queries(2, async {
+        db.database()
+            .conn()
+            .execute("CREATE TABLE q_test (id INTEGER PRIMARY KEY)", &[])
+            .await
+            .unwrap();
+        db.database()
+            .conn()
+            .fetch_one("SELECT COUNT(*) FROM q_test", &[])
+            .await
+            .unwrap();
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn live_server_serves_real_http_requests_and_shuts_down() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let router = Router::new().get("/ping", |_req, _params| async {
+        Ok(Response::text(StatusCode::OK, "pong"))
+    });
+    let server = LiveServer::start(router).await;
+    assert_eq!(
+        server.url("/ping"),
+        format!("http://{}/ping", server.addr())
+    );
+
+    let mut stream = tokio::net::TcpStream::connect(server.addr())
+        .await
+        .expect("connect to LiveServer");
+    stream
+        .write_all(b"GET /ping HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .await
+        .unwrap();
+    let mut buf = Vec::new();
+    stream.read_to_end(&mut buf).await.unwrap();
+    let response_text = String::from_utf8_lossy(&buf);
+    assert!(response_text.contains("200 OK"), "got: {response_text}");
+    assert!(response_text.ends_with("pong"), "got: {response_text}");
+}
+
+#[tokio::test]
+async fn request_factory_builds_standalone_requests() {
+    let rf = RequestFactory::new().with_default_header("x-test", "yes");
+    let req = rf
+        .post("/items?filter=active")
+        .header("x-custom", "42")
+        .form(&[("name", "widget")])
+        .build();
+
+    assert_eq!(req.method(), Method::POST);
+    assert_eq!(req.path(), "/items");
+    assert_eq!(req.query("filter"), Some("active"));
+    assert_eq!(req.header("x-test").unwrap(), "yes");
+    assert_eq!(req.header("x-custom").unwrap(), "42");
+    assert_eq!(req.body_bytes().await, b"name=widget");
+}
+
+#[test]
+fn settings_override_sets_and_restores_env_vars() {
+    let key = "DJANGORS_TEST_OVERRIDE_VAR_WORKSTREAM_D";
+    std::env::remove_var(key);
+    {
+        let _guard = override_env(&[(key, Some("custom_value"))]);
+        assert_eq!(std::env::var(key).as_deref(), Ok("custom_value"));
+    }
+    assert!(std::env::var(key).is_err());
+}

@@ -203,6 +203,105 @@ pub enum Commands {
         #[arg(long)]
         database_url: Option<String>,
     },
+    /// Export database table rows as Django-style JSON fixtures.
+    #[command(name = "dumpdata")]
+    Dumpdata {
+        /// Optional table names to dump (dumps all non-system tables if omitted).
+        tables: Vec<String>,
+        /// Optional output file path (writes to stdout if omitted).
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// Optional database URL override.
+        #[arg(long)]
+        database_url: Option<String>,
+    },
+    /// Load JSON fixture files into the database.
+    #[command(name = "loaddata")]
+    Loaddata {
+        /// Path(s) to JSON fixture files.
+        files: Vec<PathBuf>,
+        /// Optional database URL override.
+        #[arg(long)]
+        database_url: Option<String>,
+    },
+    /// Remove all data from non-migration tables in the database.
+    #[command(name = "flush")]
+    Flush {
+        /// Skip confirmation prompt.
+        #[arg(long = "no-input", alias = "yes")]
+        no_input: bool,
+        /// Optional database URL override.
+        #[arg(long)]
+        database_url: Option<String>,
+    },
+    /// Squash a contiguous range of SQL migration files into a single file.
+    #[command(name = "squashmigrations")]
+    Squashmigrations {
+        /// Starting migration prefix (e.g. `0001`).
+        start: String,
+        /// Ending migration prefix (e.g. `0005`).
+        end: String,
+        /// Output squashed migration name (e.g. `0001_squashed_0005`).
+        #[arg(long, default_value = "0001_squashed")]
+        name: String,
+        /// Migrations directory (default: `migrations`).
+        #[arg(long, default_value = "migrations")]
+        dir: PathBuf,
+    },
+    /// Print settings that differ from Djangors defaults.
+    #[command(name = "diffsettings")]
+    Diffsettings,
+    /// Send a test email to verify email configuration.
+    #[command(name = "sendtestemail")]
+    Sendtestemail {
+        /// Recipient email address(es).
+        recipients: Vec<String>,
+        /// Subject line for the test email.
+        #[arg(long, default_value = "Djangors test email")]
+        subject: String,
+    },
+    /// Scan templates and source files for `|trans` keys and update `.ftl` locale files.
+    #[command(name = "makemessages")]
+    Makemessages {
+        /// Target locale code (e.g. `fr`, `es`, `de`).
+        #[arg(short, long, default_value = "en")]
+        locale: String,
+        /// Output directory for `.ftl` catalog files.
+        #[arg(long, default_value = "locales")]
+        output_dir: PathBuf,
+    },
+    /// Validate `.ftl` translation catalogs under the locales directory.
+    #[command(name = "compilemessages")]
+    Compilemessages {
+        /// Directory containing `.ftl` catalog files.
+        #[arg(long, default_value = "locales")]
+        dir: PathBuf,
+    },
+    /// Change a user's password in `auth_user` (hashed with Argon2id).
+    #[command(name = "changepassword")]
+    Changepassword {
+        /// Username to update.
+        username: String,
+        /// New password (if omitted, reads from `DJANGORS_NEW_PASSWORD` env var).
+        #[arg(long)]
+        password: Option<String>,
+        /// Optional database URL override.
+        #[arg(long)]
+        database_url: Option<String>,
+    },
+    /// Create the database table required for `DatabaseCache`.
+    #[command(name = "createcachetable")]
+    Createcachetable {
+        /// Cache table name (default: `djangors_cache`).
+        #[arg(default_value = "djangors_cache")]
+        table_name: String,
+        /// Optional database URL override.
+        #[arg(long)]
+        database_url: Option<String>,
+    },
+    /// List all registered HTTP routes in the current project.
+    #[command(name = "showurls")]
+    Showurls,
 }
 
 /// Subcommands for `dj generate`.

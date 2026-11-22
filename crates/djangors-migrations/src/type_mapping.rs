@@ -89,6 +89,46 @@ pub fn sql_type_for(
             | FieldKind::Json => Ok("TEXT".to_string()),
             FieldKind::Binary => Ok("BLOB".to_string()),
         },
+        Dialect::MySql => match kind {
+            FieldKind::Char | FieldKind::Email | FieldKind::Url | FieldKind::Slug => {
+                if let Some(n) = max_length {
+                    Ok(format!("VARCHAR({})", n))
+                } else {
+                    Err(MigrationError::MissingMaxLength {
+                        field: field_name.to_string(),
+                    })
+                }
+            }
+            FieldKind::Text | FieldKind::FileField => Ok("LONGTEXT".to_string()),
+            FieldKind::Integer => {
+                if auto {
+                    Ok("INT AUTO_INCREMENT".to_string())
+                } else {
+                    Ok("INT".to_string())
+                }
+            }
+            FieldKind::BigInt => {
+                if auto {
+                    Ok("BIGINT AUTO_INCREMENT".to_string())
+                } else {
+                    Ok("BIGINT".to_string())
+                }
+            }
+            FieldKind::Float => Ok("DOUBLE".to_string()),
+            FieldKind::Decimal {
+                max_digits,
+                decimal_places,
+            } => Ok(format!("DECIMAL({}, {})", max_digits, decimal_places)),
+            FieldKind::Boolean => Ok("BOOLEAN".to_string()),
+            FieldKind::Date => Ok("DATE".to_string()),
+            FieldKind::DateTime => Ok("DATETIME(6)".to_string()),
+            FieldKind::Time => Ok("TIME(6)".to_string()),
+            FieldKind::Duration => Ok("BIGINT".to_string()),
+            FieldKind::Uuid => Ok("CHAR(36)".to_string()),
+            FieldKind::Ip => Ok("VARCHAR(45)".to_string()),
+            FieldKind::Binary => Ok("LONGBLOB".to_string()),
+            FieldKind::Json => Ok("JSON".to_string()),
+        },
     }
 }
 

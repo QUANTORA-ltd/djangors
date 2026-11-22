@@ -160,6 +160,116 @@ pub struct IndexMeta {
     pub fields: &'static [&'static str],
 }
 
+/// Database index access method (Django `django.contrib.postgres.indexes` equivalent).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum IndexKind {
+    /// Standard B-Tree index (default on all dialects).
+    #[default]
+    BTree,
+    /// PostgreSQL GIN (Generalized Inverted Index) for JSONB/arrays/full-text.
+    Gin,
+    /// PostgreSQL GiST (Generalized Search Tree) for geometric/range/trigram data.
+    Gist,
+    /// PostgreSQL BRIN (Block Range Index) for large time-series tables.
+    Brin,
+    /// PostgreSQL Hash index for equality-only lookups.
+    Hash,
+}
+
+impl IndexKind {
+    /// Returns the SQL `USING <method>` keyword for PostgreSQL.
+    pub fn as_pg_method(&self) -> &'static str {
+        match self {
+            IndexKind::BTree => "btree",
+            IndexKind::Gin => "gin",
+            IndexKind::Gist => "gist",
+            IndexKind::Brin => "brin",
+            IndexKind::Hash => "hash",
+        }
+    }
+}
+
+/// Declarative table-level constraint metadata (Django `Meta.constraints` equivalent).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum ConstraintMeta {
+    /// `CHECK (<expression>)` constraint.
+    Check {
+        /// Constraint name.
+        name: String,
+        /// SQL boolean expression.
+        expression: String,
+    },
+    /// `UNIQUE (<fields>)` constraint with optional partial index `WHERE <condition>`.
+    Unique {
+        /// Constraint or partial unique index name.
+        name: String,
+        /// Columns participating in the unique constraint.
+        fields: Vec<String>,
+        /// Optional SQL `WHERE` predicate for a partial unique index.
+        condition: Option<String>,
+    },
+    /// PostgreSQL `EXCLUDE USING <method> (<elements>)` constraint.
+    Exclusion {
+        /// Constraint name.
+        name: String,
+        /// Index method (e.g. `"gist"`).
+        index_method: String,
+        /// Exclusion element expressions (e.g. `"room WITH =, during WITH &&"`).
+        expressions: String,
+        /// Optional `WHERE` predicate.
+        condition: Option<String>,
+    },
+}
+
+/// Composite primary key specification (Django 5.2 `CompositePrimaryKey` equivalent).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CompositePrimaryKey {
+    /// Ordered column names forming the composite primary key.
+    pub fields: Vec<String>,
+}
+
+impl CompositePrimaryKey {
+    /// Creates a new composite primary key over `fields`.
+    pub fn new(fields: &[&str]) -> Self {
+        Self {
+            fields: fields.iter().map(|s| (*s).to_string()).collect(),
+        }
+    }
+
+    /// Renders `PRIMARY KEY ("col1", "col2")` for the given SQL dialect.
+    pub fn to_sql(&self, dialect: djangors_db::Dialect) -> String {
+        let cols: Vec<String> = self.fields.iter().map(|f| dialect.quote_ident(f)).collect();
+        format!("PRIMARY KEY ({})", cols.join(", "))
+    }
+}
+
+/// Generated column specification (Django 5.0 `GeneratedField` equivalent).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GeneratedFieldSpec {
+    /// Column name.
+    pub column_name: String,
+    /// SQL column type (e.g. `"NUMERIC(10, 2)"` or `"TEXT"`).
+    pub sql_type: String,
+    /// Generation SQL expression (e.g. `"price * quantity"`).
+    pub expression: String,
+    /// `true` for `STORED`, `false` for `VIRTUAL`.
+    pub stored: bool,
+}
+
+impl GeneratedFieldSpec {
+    /// Renders the column DDL fragment (`"col" TYPE GENERATED ALWAYS AS (expr) STORED|VIRTUAL`).
+    pub fn to_column_ddl(&self, dialect: djangors_db::Dialect) -> String {
+        let storage = if self.stored { "STORED" } else { "VIRTUAL" };
+        format!(
+            "{} {} GENERATED ALWAYS AS ({}) {}",
+            dialect.quote_ident(&self.column_name),
+            self.sql_type,
+            self.expression,
+            storage
+        )
+    }
+}
+
 /// Runtime metadata for a model.
 ///
 /// This serves as the single source of truth for downstream crates (migrations, admin, forms, etc.).

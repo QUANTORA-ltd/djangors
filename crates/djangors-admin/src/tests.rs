@@ -1527,11 +1527,11 @@ async fn test_phase5_list_filter() {
     });
     assert!(res2.is_err());
 
-    // 3. register_with with list_filter naming a real but non-Boolean field -> panics
+    // 3. register_with with list_filter naming a real but unsupported field kind (BigInt without choices) -> panics
     let site3 = AdminSite::new();
     let res3 = std::panic::catch_unwind(|| {
         site3.register_with::<ModelE>(ModelAdminConfig {
-            list_filter: Some(&["name"]),
+            list_filter: Some(&["id"]),
             ..Default::default()
         });
     });
@@ -5934,4 +5934,634 @@ async fn test_date_hierarchy_drilldown_sqlite() {
             .unwrap();
 
     assert_eq!(days, vec![15]);
+}
+
+#[test]
+fn test_non_boolean_list_filter_and_simple_list_filter() {
+    let site = AdminSite::new();
+
+    // Char field is now accepted in list_filter
+    site.register_with::<ModelE>(ModelAdminConfig {
+        list_filter: Some(&["name", "is_active"]),
+        ordering: Some(&["-name"]),
+        sortable_by: Some(&["name"]),
+        list_select_related: Some(&[]),
+        show_facets: true,
+        save_as: true,
+        save_on_top: true,
+        ..Default::default()
+    });
+
+    // DateTime field is accepted in list_filter
+    site.register_with::<ModelF>(ModelAdminConfig {
+        list_filter: Some(&["created_at"]),
+        ..Default::default()
+    });
+
+    // ForeignKey relation field is accepted in list_filter
+    site.register_with::<ModelC>(ModelAdminConfig {
+        list_filter: Some(&["parent"]),
+        autocomplete_fields: Some(&["parent"]),
+        filter_horizontal: Some(&["parent"]),
+        filter_vertical: Some(&[]),
+        ..Default::default()
+    });
+
+    // SimpleListFilter struct
+    let slf = SimpleListFilter::new(
+        "Status",
+        "status",
+        vec![
+            ("open".to_string(), "Open".to_string()),
+            ("closed".to_string(), "Closed".to_string()),
+        ],
+    );
+    assert_eq!(slf.title, "Status");
+    assert_eq!(slf.parameter_name, "status");
+    assert_eq!(slf.lookups.len(), 2);
+
+    // Verify ModelAdmin trait getters reflect config
+    let reg = site.registry.lock().unwrap();
+    let e_admin = &reg[0];
+    assert_eq!(e_admin.ordering(), &["-name"]);
+    assert_eq!(e_admin.sortable_by(), Some(&["name"][..]));
+    assert!(e_admin.show_facets());
+    assert!(e_admin.save_as());
+    assert!(e_admin.save_on_top());
+
+    let c_admin = &reg[2];
+    assert_eq!(c_admin.autocomplete_fields(), &["parent"]);
+    assert_eq!(c_admin.filter_horizontal(), &["parent"]);
+}
+
+#[tokio::test]
+#[allow(clippy::await_holding_lock)]
+async fn test_autocomplete_endpoint() {
+    let _guard = DB_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+    ensure_cross_process_lock_held().await;
+    let test_db = djangors_test::TestDatabase::connect().await.unwrap();
+    let db = test_db.database();
+    let auto_pk = db.dialect().auto_pk_type();
+    let ts_type = db.dialect().timestamp_type();
+
+    for table in ["test_model_c", "test_model_a", "auth_user"] {
+        let _ = db
+            .conn()
+            .execute(&format!("DROP TABLE IF EXISTS {table}"), &[])
+            .await;
+    }
+
+    db.conn()
+        .execute(
+            &format!("CREATE TABLE test_model_a (id {auto_pk}, name TEXT NOT NULL)"),
+            &[],
+        )
+        .await
+        .unwrap();
+    db.conn()
+        .execute(
+            &format!("CREATE TABLE test_model_c (id {auto_pk}, parent INTEGER NOT NULL)"),
+            &[],
+        )
+        .await
+        .unwrap();
+    db.conn()
+        .execute(
+            &format!(
+                "CREATE TABLE auth_user (
+                    id {auto_pk},
+                    username TEXT NOT NULL UNIQUE,
+                    email TEXT NOT NULL,
+                    password TEXT NOT NULL,
+                    is_active BOOLEAN NOT NULL,
+                    is_staff BOOLEAN NOT NULL,
+                    is_superuser BOOLEAN NOT NULL,
+                    date_joined {ts_type} NOT NULL,
+                    last_login {ts_type}
+                )"
+            ),
+            &[],
+        )
+        .await
+        .unwrap();
+
+    let now = chrono::Utc::now();
+    let staff = User {
+        id: 0,
+        username: "ac_staff".to_string(),
+        email: "ac_staff@example.com".to_string(),
+        password: "hash".to_string(),
+        is_active: true,
+        is_staff: true,
+        is_superuser: true,
+        date_joined: now,
+        last_login: Some(now),
+    }
+    .save(db)
+    .await
+    .unwrap();
+
+    let regular = User {
+        id: 0,
+        username: "ac_user".to_string(),
+        email: "ac_user@example.com".to_string(),
+        password: "hash".to_string(),
+        is_active: true,
+        is_staff: false,
+        is_superuser: false,
+        date_joined: now,
+        last_login: Some(now),
+    }
+    .save(db)
+    .await
+    .unwrap();
+
+    let alice = ModelA {
+        id: 0,
+        name: "Alice Wonder".to_string(),
+    }
+    .save(db)
+    .await
+    .unwrap();
+    let bob = ModelA {
+        id: 0,
+        name: "Bob Builder".to_string(),
+    }
+    .save(db)
+    .await
+    .unwrap();
+
+    let site = AdminSite::new();
+    site.register::<ModelA>();
+    site.register_with::<ModelC>(ModelAdminConfig {
+        autocomplete_fields: Some(&["parent"]),
+        ..Default::default()
+    });
+    let router = Router::new().mount("/admin", site.urls());
+
+    let session_staff = djangors_sessions::Session::new_empty();
+    session_staff.set(SESSION_USER_ID_KEY, staff.id);
+
+    // 1. Direct model autocomplete filtered by ?term=ali
+    let mut ext = Extensions::new();
+    ext.insert(session_staff.clone());
+    let req = Request::new(
+        Method::GET,
+        Uri::from_static("/admin/admin_test/modela/autocomplete/?term=ali"),
+        HeaderMap::new(),
+        Bytes::new(),
+    )
+    .with_extensions(ext)
+    .with_state(djangors_core::state::AppState::new().insert(db.clone()));
+    let res = router.handle(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let json: serde_json::Value = serde_json::from_slice(res.body()).unwrap();
+    assert_eq!(json["pagination"]["more"], false);
+    let results = json["results"].as_array().unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0]["id"], alice.id.to_string());
+    assert_eq!(results[0]["text"], "Alice Wonder");
+
+    // 2. FK relation autocomplete via ?field=parent&term=bob on ModelC -> queries ModelA
+    let mut ext = Extensions::new();
+    ext.insert(session_staff.clone());
+    let req = Request::new(
+        Method::GET,
+        Uri::from_static("/admin/admin_test/modelc/autocomplete/?field=parent&term=bob"),
+        HeaderMap::new(),
+        Bytes::new(),
+    )
+    .with_extensions(ext)
+    .with_state(djangors_core::state::AppState::new().insert(db.clone()));
+    let res = router.handle(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let json: serde_json::Value = serde_json::from_slice(res.body()).unwrap();
+    let results = json["results"].as_array().unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0]["id"], bob.id.to_string());
+    assert_eq!(results[0]["text"], "Bob Builder");
+
+    // 3. Non-staff user is rejected with Forbidden
+    let session_regular = djangors_sessions::Session::new_empty();
+    session_regular.set(SESSION_USER_ID_KEY, regular.id);
+    let mut ext = Extensions::new();
+    ext.insert(session_regular);
+    let req = Request::new(
+        Method::GET,
+        Uri::from_static("/admin/admin_test/modela/autocomplete/?term=ali"),
+        HeaderMap::new(),
+        Bytes::new(),
+    )
+    .with_extensions(ext)
+    .with_state(djangors_core::state::AppState::new().insert(db.clone()));
+    let err = router.handle(req).await.unwrap_err();
+    assert!(matches!(err, DjangorsError::Forbidden(_)));
+
+    for table in ["test_model_c", "test_model_a", "auth_user"] {
+        let _ = db
+            .conn()
+            .execute(&format!("DROP TABLE IF EXISTS {table}"), &[])
+            .await;
+    }
+}
+
+#[tokio::test]
+#[allow(clippy::await_holding_lock)]
+async fn test_admindocs_routes() {
+    let _guard = DB_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+    ensure_cross_process_lock_held().await;
+    let test_db = djangors_test::TestDatabase::connect().await.unwrap();
+    let db = test_db.database();
+    let auto_pk = db.dialect().auto_pk_type();
+    let ts_type = db.dialect().timestamp_type();
+
+    let _ = db
+        .conn()
+        .execute("DROP TABLE IF EXISTS auth_user", &[])
+        .await;
+    db.conn()
+        .execute(
+            &format!(
+                "CREATE TABLE auth_user (
+                    id {auto_pk},
+                    username TEXT NOT NULL UNIQUE,
+                    email TEXT NOT NULL,
+                    password TEXT NOT NULL,
+                    is_active BOOLEAN NOT NULL,
+                    is_staff BOOLEAN NOT NULL,
+                    is_superuser BOOLEAN NOT NULL,
+                    date_joined {ts_type} NOT NULL,
+                    last_login {ts_type}
+                )"
+            ),
+            &[],
+        )
+        .await
+        .unwrap();
+
+    let now = chrono::Utc::now();
+    let staff = User {
+        id: 0,
+        username: "doc_staff".to_string(),
+        email: "doc_staff@example.com".to_string(),
+        password: "hash".to_string(),
+        is_active: true,
+        is_staff: true,
+        is_superuser: false,
+        date_joined: now,
+        last_login: Some(now),
+    }
+    .save(db)
+    .await
+    .unwrap();
+    let regular = User {
+        id: 0,
+        username: "doc_regular".to_string(),
+        email: "doc_regular@example.com".to_string(),
+        password: "hash".to_string(),
+        is_active: true,
+        is_staff: false,
+        is_superuser: false,
+        date_joined: now,
+        last_login: Some(now),
+    }
+    .save(db)
+    .await
+    .unwrap();
+
+    let site = AdminSite::new();
+    site.register::<ModelA>();
+    site.register::<ModelC>();
+    let router = Router::new().mount("/admin", site.urls());
+
+    let session_staff = djangors_sessions::Session::new_empty();
+    session_staff.set(SESSION_USER_ID_KEY, staff.id);
+
+    // 1. GET /admin/doc/
+    let mut ext = Extensions::new();
+    ext.insert(session_staff.clone());
+    let req = Request::new(
+        Method::GET,
+        Uri::from_static("/admin/doc/"),
+        HeaderMap::new(),
+        Bytes::new(),
+    )
+    .with_extensions(ext)
+    .with_state(djangors_core::state::AppState::new().insert(db.clone()));
+    let res = router.handle(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = String::from_utf8(res.body().to_vec()).unwrap();
+    assert!(body.contains("Documentation"));
+    assert!(body.contains("models/"));
+    assert!(body.contains("2 registered"));
+
+    // 2. GET /admin/doc/models/
+    let mut ext = Extensions::new();
+    ext.insert(session_staff.clone());
+    let req = Request::new(
+        Method::GET,
+        Uri::from_static("/admin/doc/models/"),
+        HeaderMap::new(),
+        Bytes::new(),
+    )
+    .with_extensions(ext)
+    .with_state(djangors_core::state::AppState::new().insert(db.clone()));
+    let res = router.handle(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = String::from_utf8(res.body().to_vec()).unwrap();
+    assert!(body.contains("admin_test.ModelA"));
+    assert!(body.contains("test_model_a"));
+    assert!(body.contains("admin_test.ModelC"));
+    assert!(body.contains("parent -&gt; admin_test.ModelA"));
+
+    // 3. GET /admin/doc/models/admin_test/modelc/
+    let mut ext = Extensions::new();
+    ext.insert(session_staff.clone());
+    let req = Request::new(
+        Method::GET,
+        Uri::from_static("/admin/doc/models/admin_test/modelc/"),
+        HeaderMap::new(),
+        Bytes::new(),
+    )
+    .with_extensions(ext)
+    .with_state(djangors_core::state::AppState::new().insert(db.clone()));
+    let res = router.handle(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = String::from_utf8(res.body().to_vec()).unwrap();
+    assert!(body.contains("admin_test.ModelC"));
+    assert!(body.contains("test_model_c"));
+    assert!(body.contains("ForeignKey"));
+    assert!(body.contains("admin_test.ModelA"));
+
+    // 4. Unknown model -> NotFound
+    let mut ext = Extensions::new();
+    ext.insert(session_staff.clone());
+    let req = Request::new(
+        Method::GET,
+        Uri::from_static("/admin/doc/models/admin_test/doesnotexist/"),
+        HeaderMap::new(),
+        Bytes::new(),
+    )
+    .with_extensions(ext)
+    .with_state(djangors_core::state::AppState::new().insert(db.clone()));
+    let err = router.handle(req).await.unwrap_err();
+    assert!(matches!(err, DjangorsError::NotFound));
+
+    // 5. Non-staff -> Forbidden
+    let session_regular = djangors_sessions::Session::new_empty();
+    session_regular.set(SESSION_USER_ID_KEY, regular.id);
+    let mut ext = Extensions::new();
+    ext.insert(session_regular);
+    let req = Request::new(
+        Method::GET,
+        Uri::from_static("/admin/doc/"),
+        HeaderMap::new(),
+        Bytes::new(),
+    )
+    .with_extensions(ext)
+    .with_state(djangors_core::state::AppState::new().insert(db.clone()));
+    let err = router.handle(req).await.unwrap_err();
+    assert!(matches!(err, DjangorsError::Forbidden(_)));
+
+    let _ = db
+        .conn()
+        .execute("DROP TABLE IF EXISTS auth_user", &[])
+        .await;
+}
+
+#[tokio::test]
+#[allow(clippy::await_holding_lock)]
+async fn test_show_facets_and_change_form_options() {
+    let _guard = DB_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+    ensure_cross_process_lock_held().await;
+    let test_db = djangors_test::TestDatabase::connect().await.unwrap();
+    let db = test_db.database();
+    let auto_pk = db.dialect().auto_pk_type();
+    let ts_type = db.dialect().timestamp_type();
+
+    for table in [
+        "test_model_e",
+        "test_model_d",
+        "auth_user",
+        "djangors_admin_log",
+    ] {
+        let _ = db
+            .conn()
+            .execute(&format!("DROP TABLE IF EXISTS {table}"), &[])
+            .await;
+    }
+
+    db.conn()
+        .execute(
+            &format!(
+                "CREATE TABLE test_model_e (
+                    id {auto_pk},
+                    name TEXT NOT NULL,
+                    is_active BOOLEAN NOT NULL,
+                    is_staff BOOLEAN NOT NULL
+                )"
+            ),
+            &[],
+        )
+        .await
+        .unwrap();
+    db.conn()
+        .execute(
+            &format!(
+                "CREATE TABLE test_model_d (
+                    id {auto_pk},
+                    name TEXT NOT NULL,
+                    content TEXT NOT NULL
+                )"
+            ),
+            &[],
+        )
+        .await
+        .unwrap();
+    db.conn()
+        .execute(
+            &format!(
+                "CREATE TABLE auth_user (
+                    id {auto_pk},
+                    username TEXT NOT NULL UNIQUE,
+                    email TEXT NOT NULL,
+                    password TEXT NOT NULL,
+                    is_active BOOLEAN NOT NULL,
+                    is_staff BOOLEAN NOT NULL,
+                    is_superuser BOOLEAN NOT NULL,
+                    date_joined {ts_type} NOT NULL,
+                    last_login {ts_type}
+                )"
+            ),
+            &[],
+        )
+        .await
+        .unwrap();
+    db.conn()
+        .execute(
+            &format!(
+                "CREATE TABLE djangors_admin_log (
+                    id {auto_pk},
+                    user_id BIGINT NOT NULL,
+                    action_time {ts_type} NOT NULL,
+                    app_label TEXT NOT NULL,
+                    model_name TEXT NOT NULL,
+                    object_id BIGINT NOT NULL,
+                    object_repr TEXT NOT NULL,
+                    action_flag INTEGER NOT NULL,
+                    change_message TEXT NOT NULL,
+                    field_diff TEXT
+                )"
+            ),
+            &[],
+        )
+        .await
+        .unwrap();
+
+    let now = chrono::Utc::now();
+    let staff = User {
+        id: 0,
+        username: "facet_staff".to_string(),
+        email: "facet@example.com".to_string(),
+        password: "hash".to_string(),
+        is_active: true,
+        is_staff: true,
+        is_superuser: true,
+        date_joined: now,
+        last_login: Some(now),
+    }
+    .save(db)
+    .await
+    .unwrap();
+
+    for (name, active) in [("A", true), ("B", true), ("C", false)] {
+        ModelE {
+            id: 0,
+            name: name.to_string(),
+            is_active: active,
+            is_staff: false,
+        }
+        .save(db)
+        .await
+        .unwrap();
+    }
+
+    let doc = ModelD {
+        id: 0,
+        name: "Hello World".to_string(),
+        content: "hello-world".to_string(),
+    }
+    .save(db)
+    .await
+    .unwrap();
+
+    let site = AdminSite::new();
+    site.register_with::<ModelE>(ModelAdminConfig {
+        list_filter: Some(&["is_active"]),
+        show_facets: true,
+        ..Default::default()
+    });
+    site.register_with::<ModelD>(ModelAdminConfig {
+        prepopulated_fields: Some(&[("content", &["name"])]),
+        autocomplete_fields: Some(&["name"]),
+        filter_horizontal: Some(&["content"]),
+        save_as: true,
+        save_on_top: true,
+        ..Default::default()
+    });
+    let router = Router::new().mount("/admin", site.urls());
+
+    let session_staff = djangors_sessions::Session::new_empty();
+    session_staff.set(SESSION_USER_ID_KEY, staff.id);
+
+    // 1. show_facets renders (3), (2), (1) next to All, Yes, No
+    let mut ext = Extensions::new();
+    ext.insert(session_staff.clone());
+    let req = Request::new(
+        Method::GET,
+        Uri::from_static("/admin/admin_test/modele/"),
+        HeaderMap::new(),
+        Bytes::new(),
+    )
+    .with_extensions(ext)
+    .with_state(djangors_core::state::AppState::new().insert(db.clone()));
+    let res = router.handle(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = String::from_utf8(res.body().to_vec()).unwrap();
+    assert!(body.contains("All (3)"), "body: {body}");
+    assert!(body.contains("Yes (2)"), "body: {body}");
+    assert!(body.contains("No (1)"), "body: {body}");
+
+    // 2. Change form renders prepopulated_fields JS, save_on_top bar, save_as button, and data attrs
+    let mut ext = Extensions::new();
+    ext.insert(session_staff.clone());
+    let change_uri: Uri = format!("/admin/admin_test/modeld/{}/change/", doc.id)
+        .parse()
+        .unwrap();
+    let req = Request::new(
+        Method::GET,
+        change_uri.clone(),
+        HeaderMap::new(),
+        Bytes::new(),
+    )
+    .with_extensions(ext)
+    .with_state(djangors_core::state::AppState::new().insert(db.clone()));
+    let res = router.handle(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = String::from_utf8(res.body().to_vec()).unwrap();
+    assert!(body.contains("submit-row-top"), "missing save_on_top bar");
+    assert!(
+        body.contains("name=\"_saveasnew\" value=\"Save as new\""),
+        "missing save_as button"
+    );
+    assert!(body.contains("function slugify"), "missing prepopulated JS");
+    assert!(body.contains("id_content"), "missing prepopulated target");
+    assert!(body.contains("id_name"), "missing prepopulated source");
+    assert!(
+        body.contains("data-autocomplete=\"true\""),
+        "missing autocomplete attribute"
+    );
+    assert!(
+        body.contains("data-filter-horizontal=\"true\""),
+        "missing filter_horizontal attribute"
+    );
+
+    // 3. POST with _saveasnew creates a second row instead of overwriting the first
+    let mut ext = Extensions::new();
+    ext.insert(session_staff.clone());
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        hyper::header::CONTENT_TYPE,
+        "application/x-www-form-urlencoded".parse().unwrap(),
+    );
+    let req = Request::new(
+        Method::POST,
+        change_uri,
+        headers,
+        Bytes::from_static(b"name=Cloned+Doc&content=cloned-doc&_saveasnew=Save+as+new"),
+    )
+    .with_extensions(ext)
+    .with_state(djangors_core::state::AppState::new().insert(db.clone()));
+    let res = router.handle(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::FOUND);
+
+    let all_docs = <ModelD as djangors_orm::Model>::objects()
+        .all(db)
+        .await
+        .unwrap();
+    assert_eq!(all_docs.len(), 2);
+    assert!(all_docs.iter().any(|d| d.name == "Hello World"));
+    assert!(all_docs.iter().any(|d| d.name == "Cloned Doc"));
+
+    for table in [
+        "test_model_e",
+        "test_model_d",
+        "auth_user",
+        "djangors_admin_log",
+    ] {
+        let _ = db
+            .conn()
+            .execute(&format!("DROP TABLE IF EXISTS {table}"), &[])
+            .await;
+    }
 }

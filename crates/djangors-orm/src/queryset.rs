@@ -36,6 +36,19 @@ pub struct ForUpdate {
     pub of: Vec<String>,
 }
 
+/// SQL set operation combining two querysets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SetOp {
+    /// `UNION` (deduplicated).
+    Union,
+    /// `UNION ALL` (preserves duplicates).
+    UnionAll,
+    /// `INTERSECT`.
+    Intersection,
+    /// `EXCEPT`.
+    Difference,
+}
+
 /// Lazily constructed database query builder for model `T`.
 #[derive(Debug)]
 pub struct QuerySet<T: Model + FromRow> {
@@ -47,6 +60,12 @@ pub struct QuerySet<T: Model + FromRow> {
     search_condition: Option<String>,
     cache_ttl: Option<std::time::Duration>,
     include_deleted: bool,
+    distinct: bool,
+    distinct_on: Vec<String>,
+    defer_fields: Vec<String>,
+    only_fields: Vec<String>,
+    is_none: bool,
+    set_ops: Vec<(SetOp, QuerySet<T>)>,
     _marker: PhantomData<T>,
 }
 
@@ -61,6 +80,12 @@ impl<T: Model + FromRow> Clone for QuerySet<T> {
             search_condition: self.search_condition.clone(),
             cache_ttl: self.cache_ttl,
             include_deleted: self.include_deleted,
+            distinct: self.distinct,
+            distinct_on: self.distinct_on.clone(),
+            defer_fields: self.defer_fields.clone(),
+            only_fields: self.only_fields.clone(),
+            is_none: self.is_none,
+            set_ops: self.set_ops.clone(),
             _marker: PhantomData,
         }
     }
@@ -84,8 +109,139 @@ impl<T: Model + FromRow> QuerySet<T> {
             search_condition: None,
             cache_ttl: None,
             include_deleted: false,
+            distinct: false,
+            distinct_on: Vec::new(),
+            defer_fields: Vec::new(),
+            only_fields: Vec::new(),
+            is_none: false,
+            set_ops: Vec::new(),
             _marker: PhantomData,
         }
+    }
+
+    /// Eliminates duplicate rows from the query results (`SELECT DISTINCT`).
+    pub fn distinct(mut self) -> Self {
+        self.distinct = true;
+        self
+    }
+
+    /// PostgreSQL `SELECT DISTINCT ON (col1, col2, ...)` — deduplicates by specific fields.
+    pub fn distinct_on(mut self, fields: &[&str]) -> Result<Self, OrmError> {
+        let meta = T::meta();
+        let mut cols = Vec::with_capacity(fields.len());
+        for &field in fields {
+            if let Some(f) = meta.fields.iter().find(|f| f.name == field) {
+                cols.push(format!("\"{}\"", f.column_name));
+            } else if let Some(r) = meta.relations.iter().find(|r| r.field_name == field) {
+                cols.push(format!("\"{}\"", r.field_name));
+            } else {
+                return Err(OrmError::FieldNotFound {
+                    field: field.to_string(),
+                    model: meta.struct_name,
+                });
+            }
+        }
+        self.distinct = true;
+        self.distinct_on = cols;
+        Ok(self)
+    }
+
+    /// Defers loading the specified fields from `SELECT` (Django's `QuerySet.defer()`).
+    pub fn defer(mut self, fields: &[&str]) -> Result<Self, OrmError> {
+        let meta = T::meta();
+        for &field in fields {
+            if !meta.fields.iter().any(|f| f.name == field)
+                && !meta.relations.iter().any(|r| r.field_name == field)
+            {
+                return Err(OrmError::FieldNotFound {
+                    field: field.to_string(),
+                    model: meta.struct_name,
+                });
+            }
+            self.defer_fields.push(field.to_string());
+        }
+        Ok(self)
+    }
+
+    /// Loads only the specified fields in `SELECT` (always keeping the primary key).
+    pub fn only(mut self, fields: &[&str]) -> Result<Self, OrmError> {
+        let meta = T::meta();
+        for &field in fields {
+            if !meta.fields.iter().any(|f| f.name == field)
+                && !meta.relations.iter().any(|r| r.field_name == field)
+            {
+                return Err(OrmError::FieldNotFound {
+                    field: field.to_string(),
+                    model: meta.struct_name,
+                });
+            }
+            self.only_fields.push(field.to_string());
+        }
+        Ok(self)
+    }
+
+    /// Marks this queryset as unconditionally empty (Django's `QuerySet.none()`).
+    pub fn none(mut self) -> Self {
+        self.is_none = true;
+        self
+    }
+
+    /// Reverses the ordering of this queryset (Django's `QuerySet.reverse()`).
+    pub fn reverse(mut self) -> Self {
+        if self.order_by.is_empty() {
+            let meta = T::meta();
+            for &field in meta.ordering {
+                let (clean_field, desc) = if let Some(stripped) = field.strip_prefix('-') {
+                    (stripped, true)
+                } else {
+                    (field, false)
+                };
+                let col = if let Some(f) = meta.fields.iter().find(|f| f.name == clean_field) {
+                    format!("\"{}\"", f.column_name)
+                } else {
+                    format!("\"{}\"", clean_field)
+                };
+                self.order_by.push((col, !desc));
+            }
+        } else {
+            for (_, desc) in &mut self.order_by {
+                *desc = !*desc;
+            }
+        }
+        self
+    }
+
+    /// Combines this queryset with `other` using SQL `UNION` (or `UNION ALL` if `all` is `true`).
+    pub fn union(mut self, other: QuerySet<T>, all: bool) -> Self {
+        self.set_ops
+            .push((if all { SetOp::UnionAll } else { SetOp::Union }, other));
+        self
+    }
+
+    /// Combines this queryset with `other` using SQL `INTERSECT`.
+    pub fn intersection(mut self, other: QuerySet<T>) -> Self {
+        self.set_ops.push((SetOp::Intersection, other));
+        self
+    }
+
+    /// Combines this queryset with `other` using SQL `EXCEPT`.
+    pub fn difference(mut self, other: QuerySet<T>) -> Self {
+        self.set_ops.push((SetOp::Difference, other));
+        self
+    }
+
+    /// Resolves the database pool to use for this model via a [`djangors_db::MultiDatabase`]
+    /// router, or an explicit alias (`QuerySet::using`).
+    pub fn using<'a>(
+        &self,
+        multi: &'a djangors_db::MultiDatabase,
+        alias: Option<&str>,
+    ) -> Result<&'a djangors_db::Database, OrmError> {
+        let db = match alias {
+            Some(a) => multi.get(a),
+            None => multi.read_db(T::meta().table_name),
+        };
+        db.map_err(|e| OrmError::InvalidQuery(e.to_string()))
     }
 
     /// Includes soft-deleted rows in the results of this queryset.
@@ -244,7 +400,7 @@ impl<T: Model + FromRow> QuerySet<T> {
 
     fn check_field_column_meta(
         meta: &'static ModelMeta,
-        field: &'static str,
+        field: &str,
     ) -> Result<&'static str, OrmError> {
         if let Some(f) = meta
             .fields
@@ -874,6 +1030,9 @@ impl<T: Model + FromRow> QuerySet<T> {
     ) -> Option<String> {
         let meta = T::meta();
         let mut parts = Vec::new();
+        if self.is_none {
+            return Some("FALSE".to_string());
+        }
         if !self.filters.is_empty() {
             let combined = Expr::And(self.filters.clone());
             parts.push(compile_expr_sql(
@@ -906,7 +1065,44 @@ impl<T: Model + FromRow> QuerySet<T> {
         dialect: Dialect,
     ) -> (String, Vec<Value>) {
         let meta = T::meta();
-        let mut sql = format!("SELECT {} FROM \"{}\"", select_list, meta.table_name);
+        let effective_select: String = if select_list == "*"
+            && (!self.only_fields.is_empty() || !self.defer_fields.is_empty())
+        {
+            let pk_name = meta.fields.iter().find(|f| f.primary_key).map(|f| f.name);
+            let cols: Vec<String> = meta
+                .fields
+                .iter()
+                .filter(|f| {
+                    if Some(f.name) == pk_name {
+                        return true;
+                    }
+                    if !self.only_fields.is_empty() {
+                        self.only_fields.iter().any(|o| o == f.name)
+                    } else {
+                        !self.defer_fields.iter().any(|d| d == f.name)
+                    }
+                })
+                .map(|f| format!("\"{}\"", f.column_name))
+                .collect();
+            if cols.is_empty() {
+                "*".to_string()
+            } else {
+                cols.join(", ")
+            }
+        } else {
+            select_list.to_string()
+        };
+        let distinct_prefix = if !self.distinct_on.is_empty() && dialect == Dialect::Postgres {
+            format!("DISTINCT ON ({}) ", self.distinct_on.join(", "))
+        } else if self.distinct {
+            "DISTINCT ".to_string()
+        } else {
+            String::new()
+        };
+        let mut sql = format!(
+            "SELECT {}{} FROM \"{}\"",
+            distinct_prefix, effective_select, meta.table_name
+        );
         let mut params = Vec::new();
         let mut param_idx = 1;
 
@@ -1004,7 +1200,186 @@ impl<T: Model + FromRow> QuerySet<T> {
             }
         }
 
+        if !self.set_ops.is_empty() {
+            let mut combined = sql;
+            for (op, other) in &self.set_ops {
+                let op_kw = match op {
+                    SetOp::Union => "UNION",
+                    SetOp::UnionAll => "UNION ALL",
+                    SetOp::Intersection => "INTERSECT",
+                    SetOp::Difference => "EXCEPT",
+                };
+                let (other_sql, other_params) =
+                    other.compile_select_with_order(select_list, false, dialect);
+                // Re-index Postgres placeholders for the right-hand side.
+                let adjusted_other = if dialect == Dialect::Postgres && !other_params.is_empty() {
+                    let offset = params.len();
+                    let mut out = other_sql;
+                    for i in (1..=other_params.len()).rev() {
+                        out = out.replace(&format!("${i}"), &format!("${}", i + offset));
+                    }
+                    out
+                } else {
+                    other_sql
+                };
+                params.extend(other_params);
+                combined = format!("{combined} {op_kw} {adjusted_other}");
+            }
+            sql = combined;
+        }
+
         (sql, params)
+    }
+
+    /// Returns the earliest object ordered ascending by `field` (Django's `QuerySet.earliest()`).
+    pub async fn earliest<E: djangors_db::DbExecutor>(
+        self,
+        field: &str,
+        db: E,
+    ) -> Result<Option<T>, OrmError> {
+        let clean = field.strip_prefix('-').unwrap_or(field);
+        self.order_by(clean)?.first(db).await
+    }
+
+    /// Returns the latest object ordered descending by `field` (Django's `QuerySet.latest()`).
+    pub async fn latest<E: djangors_db::DbExecutor>(
+        self,
+        field: &str,
+        db: E,
+    ) -> Result<Option<T>, OrmError> {
+        let desc_field = if field.starts_with('-') {
+            field.to_string()
+        } else {
+            format!("-{field}")
+        };
+        self.order_by(&desc_field)?.first(db).await
+    }
+
+    /// Fetches all matching rows into a map keyed by primary key string (Django's `QuerySet.in_bulk()`).
+    pub async fn in_bulk<E: djangors_db::DbExecutor>(
+        &self,
+        db: E,
+    ) -> Result<std::collections::HashMap<String, T>, OrmError> {
+        let pk_name = T::meta()
+            .fields
+            .iter()
+            .find(|f| f.primary_key)
+            .map(|f| f.name)
+            .unwrap_or("id");
+        let rows = self.all(db).await?;
+        let mut map = std::collections::HashMap::with_capacity(rows.len());
+        for row in rows {
+            if let Some((_, val)) = row.field_values().into_iter().find(|(k, _)| *k == pk_name) {
+                map.insert(val.to_string(), row);
+            }
+        }
+        Ok(map)
+    }
+
+    /// Executes a raw SQL query and maps each row into `T` (Django's `Model.objects.raw()`).
+    pub async fn raw<E: djangors_db::DbExecutor>(
+        mut db: E,
+        sql: &str,
+        params: &[Value],
+    ) -> Result<Vec<T>, OrmError> {
+        db.record_query();
+        let bind_params: Vec<BindValue> = params.iter().cloned().map(BindValue::from).collect();
+        let rows = db.conn().fetch_all(sql, &bind_params).await?;
+        rows.iter().map(T::from_row).collect()
+    }
+
+    /// Updates `fields` on each model instance in `objs` by primary key (Django's `QuerySet.bulk_update()`).
+    pub async fn bulk_update<E: djangors_db::DbExecutor>(
+        mut db: E,
+        objs: &[T],
+        fields: &[&str],
+    ) -> Result<u64, OrmError> {
+        if objs.is_empty() || fields.is_empty() {
+            return Ok(0);
+        }
+        let meta = T::meta();
+        let pk_field = meta
+            .fields
+            .iter()
+            .find(|f| f.primary_key)
+            .ok_or_else(|| OrmError::InvalidQuery("model has no primary key".to_string()))?;
+        for &field in fields {
+            Self::check_field_column_meta(meta, field)?;
+        }
+        let dialect = db.dialect();
+        let mut total_affected = 0u64;
+        for obj in objs {
+            let fvals = obj.field_values();
+            let pk_val = fvals
+                .iter()
+                .find(|(k, _)| *k == pk_field.name)
+                .map(|(_, v)| v.clone())
+                .ok_or_else(|| OrmError::InvalidQuery("missing primary key value".to_string()))?;
+            let mut set_clauses = Vec::with_capacity(fields.len());
+            let mut bind_params = Vec::with_capacity(fields.len() + 1);
+            for (idx, &field) in fields.iter().enumerate() {
+                let col = Self::check_field_column_meta(meta, field)?;
+                let val = fvals
+                    .iter()
+                    .find(|(k, _)| *k == field)
+                    .map(|(_, v)| v.clone())
+                    .unwrap_or(Value::Null);
+                set_clauses.push(format!(
+                    "{} = {}",
+                    dialect.quote_ident(col),
+                    dialect.placeholder(idx + 1)
+                ));
+                bind_params.push(BindValue::from(val));
+            }
+            let pk_placeholder = dialect.placeholder(fields.len() + 1);
+            bind_params.push(BindValue::from(pk_val));
+            let sql = format!(
+                "UPDATE {} SET {} WHERE {} = {}",
+                dialect.quote_ident(meta.table_name),
+                set_clauses.join(", "),
+                dialect.quote_ident(pk_field.column_name),
+                pk_placeholder
+            );
+            db.record_query();
+            let affected = db.conn().execute(&sql, &bind_params).await?;
+            total_affected += affected;
+        }
+        crate::query_cache::invalidate_table(meta.table_name);
+        Ok(total_affected)
+    }
+
+    /// Streams matching rows in chunks of `chunk_size` to bound memory usage
+    /// (Django's `QuerySet.iterator(chunk_size=...)`).
+    pub async fn iterator<E, F>(
+        &self,
+        db: &djangors_db::Database,
+        chunk_size: i64,
+        mut on_chunk: F,
+    ) -> Result<usize, OrmError>
+    where
+        F: FnMut(Vec<T>) -> Result<(), E>,
+        E: std::fmt::Display,
+    {
+        let step = chunk_size.max(1);
+        let mut offset = self.offset.unwrap_or(0);
+        let mut total = 0usize;
+        loop {
+            let mut page = self.clone();
+            page.limit = Some(step);
+            page.offset = Some(offset);
+            let batch = page.all(db).await?;
+            let n = batch.len();
+            if n == 0 {
+                break;
+            }
+            total += n;
+            on_chunk(batch).map_err(|e| OrmError::InvalidQuery(e.to_string()))?;
+            if (n as i64) < step {
+                break;
+            }
+            offset += step;
+        }
+        Ok(total)
     }
 
     /// Executes the query and returns all matching model instances.
@@ -2099,8 +2474,35 @@ fn func_fields(func: &crate::aggregate::FuncExpr) -> Vec<&'static str> {
         FuncExpr::Coalesce { field, .. }
         | FuncExpr::Lower { field }
         | FuncExpr::Upper { field }
-        | FuncExpr::Length { field } => vec![field],
+        | FuncExpr::Length { field }
+        | FuncExpr::Cast { field, .. }
+        | FuncExpr::Extract { field, .. }
+        | FuncExpr::Trunc { field, .. }
+        | FuncExpr::TrigramSimilarity { field, .. } => vec![field],
         FuncExpr::Concat { fields } => fields.clone(),
+        FuncExpr::Window {
+            func,
+            partition_by,
+            order_by,
+            ..
+        } => {
+            let mut out = partition_by.clone();
+            out.extend(order_by.iter().map(|(f, _)| *f));
+            match func {
+                crate::aggregate::WindowFunc::Lead { field, .. }
+                | crate::aggregate::WindowFunc::Lag { field, .. }
+                | crate::aggregate::WindowFunc::Sum(field)
+                | crate::aggregate::WindowFunc::Avg(field)
+                | crate::aggregate::WindowFunc::Count(field)
+                    if *field != "*" =>
+                {
+                    out.push(field);
+                }
+                _ => {}
+            }
+            out
+        }
+        FuncExpr::Case { .. } | FuncExpr::Subquery { .. } | FuncExpr::RawSql { .. } => Vec::new(),
     }
 }
 
@@ -2217,12 +2619,23 @@ fn suffix_to_op(suffix: &str) -> CompareOp {
         "icontains" => CompareOp::IContains,
         "startswith" => CompareOp::StartsWith,
         "endswith" => CompareOp::EndsWith,
+        "istartswith" => CompareOp::IStartsWith,
+        "iendswith" => CompareOp::IEndsWith,
         "ne" => CompareOp::Ne,
         "iexact" => CompareOp::IExact,
         "in" => CompareOp::In,
         "isnull" => CompareOp::IsNull,
         "regex" => CompareOp::Regex,
         "iregex" => CompareOp::IRegex,
+        "range" => CompareOp::Range,
+        "year" => CompareOp::Year,
+        "month" => CompareOp::Month,
+        "day" => CompareOp::Day,
+        "week_day" => CompareOp::WeekDay,
+        "date" => CompareOp::Date,
+        "hour" => CompareOp::Hour,
+        "has_key" => CompareOp::JsonHasKey,
+        "json_contains" => CompareOp::JsonContains,
         _ => CompareOp::Eq,
     }
 }
@@ -2265,11 +2678,96 @@ fn compile_expr_sql(
                         format!("{} IS NOT NULL", col)
                     };
                 }
+                CompareOp::Range => {
+                    if let Value::List(items) = value {
+                        if items.len() == 2 {
+                            params.push(items[0].clone());
+                            let p1 = dialect.placeholder(*param_idx);
+                            *param_idx += 1;
+                            params.push(items[1].clone());
+                            let p2 = dialect.placeholder(*param_idx);
+                            *param_idx += 1;
+                            return format!("{col} BETWEEN {p1} AND {p2}");
+                        }
+                    }
+                    return "FALSE".to_string();
+                }
+                CompareOp::Year
+                | CompareOp::Month
+                | CompareOp::Day
+                | CompareOp::WeekDay
+                | CompareOp::Hour => {
+                    let part = match op {
+                        CompareOp::Year => djangors_db::DatePart::Year,
+                        CompareOp::Month => djangors_db::DatePart::Month,
+                        CompareOp::Day => djangors_db::DatePart::Day,
+                        CompareOp::WeekDay => djangors_db::DatePart::WeekDay,
+                        CompareOp::Hour => djangors_db::DatePart::Hour,
+                        _ => unreachable!(),
+                    };
+                    let extracted = dialect.extract_date_part(part, &col);
+                    params.push(value.clone());
+                    let p = dialect.placeholder(*param_idx);
+                    *param_idx += 1;
+                    return format!("{extracted} = {p}");
+                }
+                CompareOp::Date => {
+                    params.push(value.clone());
+                    let p = dialect.placeholder(*param_idx);
+                    *param_idx += 1;
+                    return match dialect {
+                        Dialect::Postgres => format!("({col})::date = ({p})::date"),
+                        Dialect::Sqlite | Dialect::MySql => format!("DATE({col}) = DATE({p})"),
+                    };
+                }
+                CompareOp::JsonHasKey => {
+                    let key = value.to_string();
+                    return match dialect {
+                        Dialect::Postgres => {
+                            params.push(Value::Text(key));
+                            let p = dialect.placeholder(*param_idx);
+                            *param_idx += 1;
+                            format!("{col} ? {p}")
+                        }
+                        Dialect::Sqlite => {
+                            params.push(Value::Text(format!("$.{key}")));
+                            let p = dialect.placeholder(*param_idx);
+                            *param_idx += 1;
+                            format!("json_extract({col}, {p}) IS NOT NULL")
+                        }
+                        Dialect::MySql => {
+                            params.push(Value::Text(format!("$.{key}")));
+                            let p = dialect.placeholder(*param_idx);
+                            *param_idx += 1;
+                            format!("JSON_CONTAINS_PATH({col}, 'one', {p})")
+                        }
+                    };
+                }
+                CompareOp::JsonContains => {
+                    params.push(value.clone());
+                    let p = dialect.placeholder(*param_idx);
+                    *param_idx += 1;
+                    return match dialect {
+                        Dialect::Postgres => format!("{col} @> ({p})::jsonb"),
+                        Dialect::MySql => format!("JSON_CONTAINS({col}, {p})"),
+                        Dialect::Sqlite => format!("{col} LIKE '%' || {p} || '%'"),
+                    };
+                }
                 _ => {}
             }
 
             let (op_sql, bind_val) = match op {
-                CompareOp::In | CompareOp::IsNull => unreachable!("handled above"),
+                CompareOp::In
+                | CompareOp::IsNull
+                | CompareOp::Range
+                | CompareOp::Year
+                | CompareOp::Month
+                | CompareOp::Day
+                | CompareOp::WeekDay
+                | CompareOp::Date
+                | CompareOp::Hour
+                | CompareOp::JsonHasKey
+                | CompareOp::JsonContains => unreachable!("handled above"),
                 CompareOp::Ne => ("<>", value.clone()),
                 CompareOp::Regex => ("~", value.clone()),
                 CompareOp::IRegex => ("~*", value.clone()),
@@ -2306,6 +2804,20 @@ fn compile_expr_sql(
                         other => format!("%{}", other),
                     };
                     ("LIKE", Value::Text(s))
+                }
+                CompareOp::IStartsWith => {
+                    let s = match value {
+                        Value::Text(t) => format!("{}%", t),
+                        other => format!("{}%", other),
+                    };
+                    (dialect.ilike(), Value::Text(s))
+                }
+                CompareOp::IEndsWith => {
+                    let s = match value {
+                        Value::Text(t) => format!("%{}", t),
+                        other => format!("%{}", other),
+                    };
+                    (dialect.ilike(), Value::Text(s))
                 }
             };
             params.push(bind_val);
@@ -2391,10 +2903,12 @@ fn compile_expr_sql(
                 }
                 CompareOp::StartsWith => format!("{} LIKE {} || '%'", lhs, rhs),
                 CompareOp::EndsWith => format!("{} LIKE '%' || {}", lhs, rhs),
+                CompareOp::IStartsWith => format!("{} {} {} || '%'", lhs, dialect.ilike(), rhs),
+                CompareOp::IEndsWith => format!("{} {} '%' || {}", lhs, dialect.ilike(), rhs),
                 CompareOp::IExact => format!("{} {} {}", lhs, dialect.ilike(), rhs),
                 CompareOp::Regex => format!("{} ~ {}", lhs, rhs),
                 CompareOp::IRegex => format!("{} ~* {}", lhs, rhs),
-                CompareOp::In | CompareOp::IsNull => format!("{} = {}", lhs, rhs),
+                _ => format!("{} = {}", lhs, rhs),
             };
             sql
         }
@@ -2419,10 +2933,16 @@ fn compile_expr_sql(
                 }
                 CompareOp::StartsWith => return format!("{} LIKE {} || '%'", lhs, rhs),
                 CompareOp::EndsWith => return format!("{} LIKE '%' || {}", lhs, rhs),
+                CompareOp::IStartsWith => {
+                    return format!("{} {} {} || '%'", lhs, dialect.ilike(), rhs)
+                }
+                CompareOp::IEndsWith => {
+                    return format!("{} {} '%' || {}", lhs, dialect.ilike(), rhs)
+                }
                 CompareOp::IExact => return format!("{} {} {}", lhs, dialect.ilike(), rhs),
                 CompareOp::Regex => return format!("{} ~ {}", lhs, rhs),
                 CompareOp::IRegex => return format!("{} ~* {}", lhs, rhs),
-                CompareOp::In | CompareOp::IsNull => "=",
+                _ => "=",
             };
             format!("{} {} {}", lhs, op_sql, rhs)
         }

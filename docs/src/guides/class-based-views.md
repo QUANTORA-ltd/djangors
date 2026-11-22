@@ -234,3 +234,92 @@ A minimal create form template for `Question`:
   (`params.get_as::<i64>("pk")`); a non-integer `pk` is a `BadRequest`.
 - **The `pk` name is fixed.** Detail/update/delete look up the `pk` path
   parameter by name, so your route must use `{pk}`.
+
+---
+
+## Base Generic Views (`TemplateView`, `RedirectView`, `FormView`)
+
+Djangors 1.0 adds Django's three non-model base views:
+
+| View | Purpose | Key Builder Methods |
+| --- | --- | --- |
+| `TemplateView` | Renders a static or context-enriched template | `TemplateView::new(engine, template_name).with_context(json!(...))` |
+| `RedirectView` | Returns `302 Found` or `301 Moved Permanently` | `RedirectView::new(url).permanent(true).query_string(true)` |
+| `FormView` | `GET` renders form; `POST` validates via closure and redirects on success | `FormView::new(engine, template_name, success_url).with_context(...)` |
+
+```rust,illustrative
+use djangors_core::Router;
+use djangors_views::{FormView, RedirectView, TemplateView};
+use std::collections::HashMap;
+
+fn base_view_routes() -> Router {
+    Router::new()
+        .get("/about/", |req, params| async move {
+            TemplateView::new(&*TEMPLATES, "about.html")
+                .with_context(serde_json::json!({ "version": "1.0" }))
+                .dispatch(req, params)
+                .await
+        })
+        .get("/old-home/", |req, params| async move {
+            RedirectView::new("/")
+                .permanent(true)
+                .query_string(true)
+                .dispatch(req, params)
+                .await
+        })
+        .post("/contact/", |req, params| async move {
+            FormView::new(&*TEMPLATES, "contact.html", "/contact/thanks/")
+                .dispatch(req, params, |data| {
+                    if data.get("message").map(|s| s.trim().is_empty()).unwrap_or(true) {
+                        let mut errs = HashMap::new();
+                        errs.insert("message".into(), "Message is required.".into());
+                        Err(errs)
+                    } else {
+                        Ok(())
+                    }
+                })
+                .await
+        })
+}
+```
+
+## Date-Based Archive Views
+
+Djangors 1.0 provides four date-based archive views configured with **`DateArchiveConfig`**:
+
+| View | Path Parameters | Template Context |
+| --- | --- | --- |
+| `ArchiveIndexView<M>::list` | *(none)* | `object_list` (newest first), `date_field` |
+| `YearArchiveView<M>::list` | `{year}` (`i32`) | `object_list`, `year`, `date_field` |
+| `MonthArchiveView<M>::list` | `{year}`, `{month}` (`1..=12`) | `object_list`, `year`, `month`, `date_field` |
+| `DayArchiveView<M>::list` | `{year}`, `{month}`, `{day}` | `object_list`, `year`, `month`, `day`, `date_field` |
+
+Set `.allow_empty(false)` on `DateArchiveConfig` to return `404 Not Found` when a date range has no matching rows (default `true`).
+
+```rust,illustrative
+use djangors_core::Router;
+use djangors_views::{
+    ArchiveIndexView, DateArchiveConfig, DayArchiveView, MonthArchiveView, YearArchiveView,
+};
+
+fn archive_routes() -> Router {
+    Router::new()
+        .get("/archive/", |req, params| async move {
+            let cfg = DateArchiveConfig::new(&*TEMPLATES, "polls/archive.html", "pub_date");
+            ArchiveIndexView::<Question>::list(req, params, &cfg).await
+        })
+        .get("/archive/{year:i64}/", |req, params| async move {
+            let cfg = DateArchiveConfig::new(&*TEMPLATES, "polls/archive_year.html", "pub_date")
+                .allow_empty(false);
+            YearArchiveView::<Question>::list(req, params, &cfg).await
+        })
+        .get("/archive/{year:i64}/{month:i64}/", |req, params| async move {
+            let cfg = DateArchiveConfig::new(&*TEMPLATES, "polls/archive_month.html", "pub_date");
+            MonthArchiveView::<Question>::list(req, params, &cfg).await
+        })
+        .get("/archive/{year:i64}/{month:i64}/{day:i64}/", |req, params| async move {
+            let cfg = DateArchiveConfig::new(&*TEMPLATES, "polls/archive_day.html", "pub_date");
+            DayArchiveView::<Question>::list(req, params, &cfg).await
+        })
+}
+```

@@ -1,0 +1,17 @@
+[package]
+name = "djangors-contrib-gis"
+description = "GeoDjango-equivalent spatial types, WKT parsing, Haversine distance, and PostGIS SQL helpers for Djangors"
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["django", "web-framework", "gis", "postgis", "geospatial"]
+categories = ["web-programming", "database"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "2.0.18"

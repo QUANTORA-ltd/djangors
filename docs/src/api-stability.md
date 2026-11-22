@@ -49,6 +49,6 @@ used internally for every architecturally significant change in this project's o
 slice in `docs/design/` is exactly this kind of doc). Formalizing it here means outside
 contributors can propose and review API changes the same way, not just watch them happen.
 
-## Pre-1.0 Scope Note
+## 1.0 Stability Status
 
-While Freeze Review Pass 1 and Pass 2 have audited the core and primary battery crates (including `#[non_exhaustive]` hardening and unified `&Database` model CRUD signatures), Djangors is still pre-`1.0`. Before `1.0.0` is tagged, breaking changes may still land between `0.x` minor releases when documented in `CHANGELOG.md` and `docs/design/`.
+Djangors `1.0.0` is now released. Semantic Versioning guarantees, the `#[deprecated]` cycle, and the RFC process for breaking API changes described above are active for all public APIs.

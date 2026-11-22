@@ -10,6 +10,9 @@ pub enum DbRow {
     /// SQLite row.
     #[cfg(feature = "sqlite")]
     Sqlite(sqlx::sqlite::SqliteRow),
+    /// MySQL / MariaDB row.
+    #[cfg(feature = "mysql")]
+    MySql(sqlx::mysql::MySqlRow),
 }
 
 impl std::fmt::Debug for DbRow {
@@ -19,6 +22,8 @@ impl std::fmt::Debug for DbRow {
             DbRow::Pg(_) => write!(f, "DbRow::Pg(...)"),
             #[cfg(feature = "sqlite")]
             DbRow::Sqlite(_) => write!(f, "DbRow::Sqlite(...)"),
+            #[cfg(feature = "mysql")]
+            DbRow::MySql(_) => write!(f, "DbRow::MySql(...)"),
         }
     }
 }
@@ -49,6 +54,17 @@ impl DbRow {
                     r.try_get::<Option<i16>, _>(idx)
                         .map(|opt| opt.map(|v| v as i64))
                 }),
+            #[cfg(feature = "mysql")]
+            DbRow::MySql(r) => r
+                .try_get::<Option<i64>, _>(idx)
+                .or_else(|_| {
+                    r.try_get::<Option<i32>, _>(idx)
+                        .map(|opt| opt.map(|v| v as i64))
+                })
+                .or_else(|_| {
+                    r.try_get::<Option<i16>, _>(idx)
+                        .map(|opt| opt.map(|v| v as i64))
+                }),
         }
     }
 
@@ -65,6 +81,11 @@ impl DbRow {
                 r.try_get::<Option<f32>, _>(idx)
                     .map(|opt| opt.map(|v| v as f64))
             }),
+            #[cfg(feature = "mysql")]
+            DbRow::MySql(r) => r.try_get::<Option<f64>, _>(idx).or_else(|_| {
+                r.try_get::<Option<f32>, _>(idx)
+                    .map(|opt| opt.map(|v| v as f64))
+            }),
         }
     }
 
@@ -75,6 +96,8 @@ impl DbRow {
             DbRow::Pg(r) => r.try_get(idx),
             #[cfg(feature = "sqlite")]
             DbRow::Sqlite(r) => r.try_get(idx),
+            #[cfg(feature = "mysql")]
+            DbRow::MySql(r) => r.try_get(idx),
         }
     }
 
@@ -85,6 +108,8 @@ impl DbRow {
             DbRow::Pg(r) => r.try_get(idx),
             #[cfg(feature = "sqlite")]
             DbRow::Sqlite(r) => r.try_get(idx),
+            #[cfg(feature = "mysql")]
+            DbRow::MySql(r) => r.try_get(idx),
         }
     }
 
@@ -97,8 +122,6 @@ impl DbRow {
             #[cfg(feature = "postgres")]
             DbRow::Pg(r) => r
                 .try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(idx)
-                // `TIMESTAMP WITHOUT TIME ZONE` columns decode as NaiveDateTime;
-                // treat them as UTC so DateTime<Utc> fields work on either type.
                 .or_else(|e| {
                     r.try_get::<Option<chrono::NaiveDateTime>, _>(idx)
                         .map(|v| v.map(|n| n.and_utc()))
@@ -106,6 +129,14 @@ impl DbRow {
                 }),
             #[cfg(feature = "sqlite")]
             DbRow::Sqlite(r) => r.try_get(idx),
+            #[cfg(feature = "mysql")]
+            DbRow::MySql(r) => r
+                .try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(idx)
+                .or_else(|e| {
+                    r.try_get::<Option<chrono::NaiveDateTime>, _>(idx)
+                        .map(|v| v.map(|n| n.and_utc()))
+                        .map_err(|_| e)
+                }),
         }
     }
 
@@ -116,6 +147,8 @@ impl DbRow {
             DbRow::Pg(r) => r.try_get(idx),
             #[cfg(feature = "sqlite")]
             DbRow::Sqlite(r) => r.try_get(idx),
+            #[cfg(feature = "mysql")]
+            DbRow::MySql(r) => r.try_get(idx),
         }
     }
 
@@ -144,6 +177,17 @@ impl DbRow {
                     r.try_get::<Option<i16>, _>(name)
                         .map(|opt| opt.map(|v| v as i64))
                 }),
+            #[cfg(feature = "mysql")]
+            DbRow::MySql(r) => r
+                .try_get::<Option<i64>, _>(name)
+                .or_else(|_| {
+                    r.try_get::<Option<i32>, _>(name)
+                        .map(|opt| opt.map(|v| v as i64))
+                })
+                .or_else(|_| {
+                    r.try_get::<Option<i16>, _>(name)
+                        .map(|opt| opt.map(|v| v as i64))
+                }),
         }
     }
 
@@ -160,6 +204,11 @@ impl DbRow {
                 r.try_get::<Option<f32>, _>(name)
                     .map(|opt| opt.map(|v| v as f64))
             }),
+            #[cfg(feature = "mysql")]
+            DbRow::MySql(r) => r.try_get::<Option<f64>, _>(name).or_else(|_| {
+                r.try_get::<Option<f32>, _>(name)
+                    .map(|opt| opt.map(|v| v as f64))
+            }),
         }
     }
 
@@ -170,6 +219,8 @@ impl DbRow {
             DbRow::Pg(r) => r.try_get(name),
             #[cfg(feature = "sqlite")]
             DbRow::Sqlite(r) => r.try_get(name),
+            #[cfg(feature = "mysql")]
+            DbRow::MySql(r) => r.try_get(name),
         }
     }
 
@@ -180,6 +231,8 @@ impl DbRow {
             DbRow::Pg(r) => r.try_get(name),
             #[cfg(feature = "sqlite")]
             DbRow::Sqlite(r) => r.try_get(name),
+            #[cfg(feature = "mysql")]
+            DbRow::MySql(r) => r.try_get(name),
         }
     }
 
@@ -192,8 +245,6 @@ impl DbRow {
             #[cfg(feature = "postgres")]
             DbRow::Pg(r) => r
                 .try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(name)
-                // `TIMESTAMP WITHOUT TIME ZONE` columns decode as NaiveDateTime;
-                // treat them as UTC so DateTime<Utc> fields work on either type.
                 .or_else(|e| {
                     r.try_get::<Option<chrono::NaiveDateTime>, _>(name)
                         .map(|v| v.map(|n| n.and_utc()))
@@ -201,6 +252,14 @@ impl DbRow {
                 }),
             #[cfg(feature = "sqlite")]
             DbRow::Sqlite(r) => r.try_get(name),
+            #[cfg(feature = "mysql")]
+            DbRow::MySql(r) => r
+                .try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(name)
+                .or_else(|e| {
+                    r.try_get::<Option<chrono::NaiveDateTime>, _>(name)
+                        .map(|v| v.map(|n| n.and_utc()))
+                        .map_err(|_| e)
+                }),
         }
     }
 
@@ -211,6 +270,8 @@ impl DbRow {
             DbRow::Pg(r) => r.try_get(name),
             #[cfg(feature = "sqlite")]
             DbRow::Sqlite(r) => r.try_get(name),
+            #[cfg(feature = "mysql")]
+            DbRow::MySql(r) => r.try_get(name),
         }
     }
 }

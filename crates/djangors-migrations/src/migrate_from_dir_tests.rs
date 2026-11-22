@@ -606,3 +606,517 @@ fn test_detect_changes_new_and_removed_columns() {
         .find(|o| matches!(o, crate::operation::Operation::DropColumn { .. }));
     assert!(drop.is_some());
 }
+
+#[test]
+fn test_rename_table_sql_and_reverse() {
+    use djangors_db::Dialect;
+
+    let op = Operation::RenameTable {
+        old_name: "legacy_users".to_string(),
+        new_name: "users".to_string(),
+    };
+    assert_eq!(
+        op.to_sql(Dialect::Postgres).unwrap(),
+        "ALTER TABLE \"legacy_users\" RENAME TO \"users\";"
+    );
+    assert_eq!(
+        op.to_sql(Dialect::Sqlite).unwrap(),
+        "ALTER TABLE \"legacy_users\" RENAME TO \"users\";"
+    );
+    assert_eq!(
+        op.to_sql(Dialect::MySql).unwrap(),
+        "ALTER TABLE `legacy_users` RENAME TO `users`;"
+    );
+
+    let rev = op.reverse().expect("RenameTable should be invertible");
+    assert_eq!(
+        rev.to_sql(Dialect::Postgres).unwrap(),
+        "ALTER TABLE \"users\" RENAME TO \"legacy_users\";"
+    );
+}
+
+#[test]
+fn test_add_and_remove_constraint_dialects() {
+    use djangors_db::Dialect;
+    use djangors_orm::ConstraintMeta;
+
+    let check = Operation::AddConstraint {
+        table_name: "orders".to_string(),
+        constraint: ConstraintMeta::Check {
+            name: "chk_total_pos".to_string(),
+            expression: "total >= 0".to_string(),
+        },
+    };
+    assert_eq!(
+        check.to_sql(Dialect::Postgres).unwrap(),
+        "ALTER TABLE \"orders\" ADD CONSTRAINT \"chk_total_pos\" CHECK (total >= 0);"
+    );
+    assert_eq!(
+        check.to_sql(Dialect::MySql).unwrap(),
+        "ALTER TABLE `orders` ADD CONSTRAINT `chk_total_pos` CHECK (total >= 0);"
+    );
+    assert!(matches!(
+        check.to_sql(Dialect::Sqlite),
+        Err(MigrationError::UnsupportedOnDialect { .. })
+    ));
+
+    let partial_unique = Operation::AddConstraint {
+        table_name: "users".to_string(),
+        constraint: ConstraintMeta::Unique {
+            name: "uq_active_email".to_string(),
+            fields: vec!["email".to_string()],
+            condition: Some("active = 1".to_string()),
+        },
+    };
+    assert_eq!(
+        partial_unique.to_sql(Dialect::Postgres).unwrap(),
+        "CREATE UNIQUE INDEX IF NOT EXISTS \"uq_active_email\" ON \"users\" (\"email\") WHERE active = 1;"
+    );
+    assert_eq!(
+        partial_unique.to_sql(Dialect::Sqlite).unwrap(),
+        "CREATE UNIQUE INDEX IF NOT EXISTS \"uq_active_email\" ON \"users\" (\"email\") WHERE active = 1;"
+    );
+
+    let plain_unique = Operation::AddConstraint {
+        table_name: "users".to_string(),
+        constraint: ConstraintMeta::Unique {
+            name: "uq_email".to_string(),
+            fields: vec!["email".to_string()],
+            condition: None,
+        },
+    };
+    assert_eq!(
+        plain_unique.to_sql(Dialect::Postgres).unwrap(),
+        "ALTER TABLE \"users\" ADD CONSTRAINT \"uq_email\" UNIQUE (\"email\");"
+    );
+    assert_eq!(
+        plain_unique.to_sql(Dialect::Sqlite).unwrap(),
+        "CREATE UNIQUE INDEX IF NOT EXISTS \"uq_email\" ON \"users\" (\"email\");"
+    );
+    assert_eq!(
+        plain_unique.to_sql(Dialect::MySql).unwrap(),
+        "ALTER TABLE `users` ADD CONSTRAINT `uq_email` UNIQUE (`email`);"
+    );
+
+    let excl = Operation::AddConstraint {
+        table_name: "bookings".to_string(),
+        constraint: ConstraintMeta::Exclusion {
+            name: "excl_room_time".to_string(),
+            index_method: "gist".to_string(),
+            expressions: "room WITH =, during WITH &&".to_string(),
+            condition: Some("cancelled = false".to_string()),
+        },
+    };
+    assert_eq!(
+        excl.to_sql(Dialect::Postgres).unwrap(),
+        "ALTER TABLE \"bookings\" ADD CONSTRAINT \"excl_room_time\" EXCLUDE USING gist (room WITH =, during WITH &&) WHERE (cancelled = false);"
+    );
+    assert!(matches!(
+        excl.to_sql(Dialect::Sqlite),
+        Err(MigrationError::UnsupportedOnDialect { .. })
+    ));
+
+    let rev = plain_unique.reverse().expect("AddConstraint is invertible");
+    assert_eq!(
+        rev.to_sql(Dialect::Postgres).unwrap(),
+        "ALTER TABLE \"users\" DROP CONSTRAINT IF EXISTS \"uq_email\";"
+    );
+    assert_eq!(
+        rev.to_sql(Dialect::Sqlite).unwrap(),
+        "DROP INDEX IF EXISTS \"uq_email\";"
+    );
+    assert_eq!(
+        rev.to_sql(Dialect::MySql).unwrap(),
+        "ALTER TABLE `users` DROP CONSTRAINT `uq_email`;"
+    );
+    assert!(rev.reverse().is_none());
+}
+
+#[test]
+fn test_alter_column_nullability_and_default_dialects() {
+    use djangors_db::Dialect;
+
+    let set_not_null = Operation::AlterColumnNullability {
+        table_name: "users".to_string(),
+        column_name: "email".to_string(),
+        nullable: false,
+    };
+    assert_eq!(
+        set_not_null.to_sql(Dialect::Postgres).unwrap(),
+        "ALTER TABLE \"users\" ALTER COLUMN \"email\" SET NOT NULL;"
+    );
+    assert!(matches!(
+        set_not_null.to_sql(Dialect::Sqlite),
+        Err(MigrationError::UnsupportedOnDialect { .. })
+    ));
+
+    let rev = set_not_null
+        .reverse()
+        .expect("AlterColumnNullability is invertible");
+    assert_eq!(
+        rev.to_sql(Dialect::Postgres).unwrap(),
+        "ALTER TABLE \"users\" ALTER COLUMN \"email\" DROP NOT NULL;"
+    );
+
+    let set_default = Operation::AlterColumnDefault {
+        table_name: "users".to_string(),
+        column_name: "role".to_string(),
+        default_sql: Some("'member'".to_string()),
+    };
+    assert_eq!(
+        set_default.to_sql(Dialect::Postgres).unwrap(),
+        "ALTER TABLE \"users\" ALTER COLUMN \"role\" SET DEFAULT 'member';"
+    );
+    assert_eq!(
+        set_default.to_sql(Dialect::MySql).unwrap(),
+        "ALTER TABLE `users` ALTER COLUMN `role` SET DEFAULT 'member';"
+    );
+    assert!(matches!(
+        set_default.to_sql(Dialect::Sqlite),
+        Err(MigrationError::UnsupportedOnDialect { .. })
+    ));
+    assert!(set_default.reverse().is_none());
+
+    let drop_default = Operation::AlterColumnDefault {
+        table_name: "users".to_string(),
+        column_name: "role".to_string(),
+        default_sql: None,
+    };
+    assert_eq!(
+        drop_default.to_sql(Dialect::Postgres).unwrap(),
+        "ALTER TABLE \"users\" ALTER COLUMN \"role\" DROP DEFAULT;"
+    );
+    assert_eq!(
+        drop_default.to_sql(Dialect::MySql).unwrap(),
+        "ALTER TABLE `users` ALTER COLUMN `role` DROP DEFAULT;"
+    );
+}
+
+#[test]
+fn test_run_sql_operation_and_reverse() {
+    use djangors_db::Dialect;
+
+    let reversible = Operation::RunSql {
+        sql: "UPDATE users SET active = 1;".to_string(),
+        reverse_sql: Some("UPDATE users SET active = 0;".to_string()),
+    };
+    assert_eq!(
+        reversible.to_sql(Dialect::Sqlite).unwrap(),
+        "UPDATE users SET active = 1;"
+    );
+    assert_eq!(
+        reversible.to_down_sql(Dialect::Sqlite).unwrap().unwrap(),
+        "UPDATE users SET active = 0;"
+    );
+
+    let irreversible = Operation::RunSql {
+        sql: "DELETE FROM audit_log;".to_string(),
+        reverse_sql: None,
+    };
+    assert!(irreversible.reverse().is_none());
+}
+
+#[tokio::test]
+async fn test_sqlite_rename_table_and_partial_unique_execution() {
+    use djangors_db::{Database, DatabaseConfig, Dialect};
+    use djangors_orm::ConstraintMeta;
+
+    let db = Database::connect(&DatabaseConfig::new("sqlite::memory:"))
+        .await
+        .unwrap();
+    db.conn()
+        .execute(
+            "CREATE TABLE old_accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT, active INTEGER)",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    let rename = Operation::RenameTable {
+        old_name: "old_accounts".to_string(),
+        new_name: "accounts".to_string(),
+    };
+    db.conn()
+        .execute(&rename.to_sql(Dialect::Sqlite).unwrap(), &[])
+        .await
+        .unwrap();
+
+    let uq = Operation::AddConstraint {
+        table_name: "accounts".to_string(),
+        constraint: ConstraintMeta::Unique {
+            name: "uq_accounts_active_email".to_string(),
+            fields: vec!["email".to_string()],
+            condition: Some("active = 1".to_string()),
+        },
+    };
+    db.conn()
+        .execute(&uq.to_sql(Dialect::Sqlite).unwrap(), &[])
+        .await
+        .unwrap();
+
+    db.conn()
+        .execute(
+            "INSERT INTO accounts (email, active) VALUES ('a@example.com', 1)",
+            &[],
+        )
+        .await
+        .unwrap();
+    // Inactive duplicate is permitted by the partial unique index.
+    db.conn()
+        .execute(
+            "INSERT INTO accounts (email, active) VALUES ('a@example.com', 0)",
+            &[],
+        )
+        .await
+        .unwrap();
+    // Active duplicate must violate the partial unique index.
+    let dup = db
+        .conn()
+        .execute(
+            "INSERT INTO accounts (email, active) VALUES ('a@example.com', 1)",
+            &[],
+        )
+        .await;
+    assert!(dup.is_err());
+
+    // Dropping the constraint via reverse() allows inserting the active duplicate.
+    let drop_uq = uq.to_down_sql(Dialect::Sqlite).unwrap().unwrap();
+    db.conn().execute(&drop_uq, &[]).await.unwrap();
+    db.conn()
+        .execute(
+            "INSERT INTO accounts (email, active) VALUES ('a@example.com', 1)",
+            &[],
+        )
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn test_data_migration_run_rust_and_rollback() {
+    use djangors_db::{Database, DatabaseConfig};
+
+    let db = Database::connect(&DatabaseConfig::new("sqlite::memory:"))
+        .await
+        .unwrap();
+    db.conn()
+        .execute(
+            "CREATE TABLE items (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL)",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    let mig = RunRust::new("0002_seed_items", |conn| {
+        Box::pin(async move {
+            conn.execute("INSERT INTO items (name) VALUES ('seeded')", &[])
+                .await?;
+            Ok(())
+        })
+    })
+    .with_reverse(|conn| {
+        Box::pin(async move {
+            conn.execute("DELETE FROM items WHERE name = 'seeded'", &[])
+                .await?;
+            Ok(())
+        })
+    });
+
+    apply_data_migration(&db, mig).await.unwrap();
+    // Idempotent second call must not insert a duplicate row.
+    apply_data_migration(&db, mig).await.unwrap();
+
+    let count = db
+        .conn()
+        .fetch_one("SELECT COUNT(*) FROM items", &[])
+        .await
+        .unwrap()
+        .try_i64(0)
+        .unwrap()
+        .unwrap();
+    assert_eq!(count, 1);
+    assert_eq!(
+        get_applied_migrations(&db).await.unwrap(),
+        vec!["0002_seed_items"]
+    );
+
+    rollback_data_migration(&db, mig).await.unwrap();
+    let count_after = db
+        .conn()
+        .fetch_one("SELECT COUNT(*) FROM items", &[])
+        .await
+        .unwrap()
+        .try_i64(0)
+        .unwrap()
+        .unwrap();
+    assert_eq!(count_after, 0);
+    assert!(get_applied_migrations(&db).await.unwrap().is_empty());
+
+    // Non-invertible data migration returns NonInvertible on rollback.
+    let one_way = RunRust::new("0003_one_way", |conn| {
+        Box::pin(async move {
+            conn.execute("INSERT INTO items (name) VALUES ('permanent')", &[])
+                .await?;
+            Ok(())
+        })
+    });
+    apply_data_migration(&db, one_way).await.unwrap();
+    let rb = rollback_data_migration(&db, one_way).await;
+    assert!(matches!(rb, Err(MigrationError::NonInvertible { .. })));
+}
+
+#[tokio::test]
+async fn test_migrate_options_plan_only_fake_fake_initial_and_dependencies() {
+    use djangors_db::{Database, DatabaseConfig};
+
+    let suffix = unique_suffix();
+    let dir = std::env::temp_dir().join(format!("djangors_migopts_{suffix}"));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    // 0001_child explicitly depends on 0002_parent, reversing filename order.
+    std::fs::write(
+        dir.join("0001_child.sql"),
+        "-- dependencies: 0002_parent\n-- up\nCREATE TABLE child_tbl (id INTEGER PRIMARY KEY, parent_id INTEGER REFERENCES parent_tbl(id));\n-- down\nDROP TABLE child_tbl;\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("0002_parent.sql"),
+        "-- up\nCREATE TABLE parent_tbl (id INTEGER PRIMARY KEY);\n-- down\nDROP TABLE parent_tbl;\n",
+    )
+    .unwrap();
+
+    let db = Database::connect(&DatabaseConfig::new("sqlite::memory:"))
+        .await
+        .unwrap();
+
+    // 1. plan_only returns dependency-sorted plan without creating tables or history.
+    let plan = migrate_from_dir_with_options(
+        &db,
+        &dir,
+        MigrateOptions {
+            plan_only: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        plan,
+        vec![
+            MigrationPlanStep {
+                name: "0002_parent".to_string(),
+                action: "plan".to_string(),
+            },
+            MigrationPlanStep {
+                name: "0001_child".to_string(),
+                action: "plan".to_string(),
+            },
+        ]
+    );
+    assert!(!table_exists(&db, "djangors_migrations").await.unwrap());
+    assert!(!table_exists(&db, "parent_tbl").await.unwrap());
+
+    // 2. fake records migrations without creating tables.
+    let faked = migrate_from_dir_with_options(
+        &db,
+        &dir,
+        MigrateOptions {
+            fake: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(faked.len(), 2);
+    assert_eq!(faked[0].action, "fake");
+    assert!(!table_exists(&db, "parent_tbl").await.unwrap());
+    assert_eq!(
+        get_applied_migrations(&db).await.unwrap(),
+        vec!["0002_parent", "0001_child"]
+    );
+
+    // 3. fake_initial on a fresh DB where parent_tbl already exists.
+    let db2 = Database::connect(&DatabaseConfig::new("sqlite::memory:"))
+        .await
+        .unwrap();
+    db2.conn()
+        .execute("CREATE TABLE parent_tbl (id INTEGER PRIMARY KEY)", &[])
+        .await
+        .unwrap();
+
+    let steps = migrate_from_dir_with_options(
+        &db2,
+        &dir,
+        MigrateOptions {
+            fake_initial: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        steps,
+        vec![
+            MigrationPlanStep {
+                name: "0002_parent".to_string(),
+                action: "fake_initial".to_string(),
+            },
+            MigrationPlanStep {
+                name: "0001_child".to_string(),
+                action: "apply".to_string(),
+            },
+        ]
+    );
+    assert!(table_exists(&db2, "child_tbl").await.unwrap());
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_squash_migrations_invertible_and_non_invertible() {
+    let suffix = unique_suffix();
+    let dir = std::env::temp_dir().join(format!("djangors_squash_{suffix}"));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    write_migration(
+        &dir,
+        1,
+        "initial",
+        "CREATE TABLE posts (id INTEGER PRIMARY KEY);",
+        Some("DROP TABLE posts;"),
+    );
+    write_migration(
+        &dir,
+        2,
+        "add_title",
+        "ALTER TABLE posts ADD COLUMN title TEXT;",
+        Some("ALTER TABLE posts DROP COLUMN title;"),
+    );
+    write_migration(
+        &dir,
+        3,
+        "drop_old",
+        "ALTER TABLE posts DROP COLUMN old_col;",
+        None,
+    );
+
+    // Squash invertible range 0001..0002.
+    let squashed_path = squash_migrations(&dir, "0001", "0002", "0001_squashed_0002").unwrap();
+    let content = std::fs::read_to_string(&squashed_path).unwrap();
+    assert!(content.contains("-- replaces: 0001_initial, 0002_add_title"));
+    let up = section(&content, "up");
+    let down = section(&content, "down");
+    assert!(up.find("CREATE TABLE posts").unwrap() < up.find("ADD COLUMN title").unwrap());
+    // Down sections must be reversed: drop column before dropping table.
+    assert!(down.find("DROP COLUMN title").unwrap() < down.find("DROP TABLE posts").unwrap());
+
+    // Squash range including non-invertible 0003 -> emits -- no-down.
+    let _ = std::fs::remove_file(&squashed_path);
+    let squashed_ni = squash_migrations(&dir, "0001", "0003", "0001_squashed_0003").unwrap();
+    let content_ni = std::fs::read_to_string(&squashed_ni).unwrap();
+    assert!(content_ni.contains("-- replaces: 0001_initial, 0002_add_title, 0003_drop_old"));
+    assert!(content_ni.contains("-- no-down"));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

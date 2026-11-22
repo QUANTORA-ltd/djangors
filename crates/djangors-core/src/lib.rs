@@ -25,6 +25,8 @@ pub mod app;
 /// `VerifiedCaptcha` extractor for JSON APIs (feature `captcha`).
 #[cfg(feature = "captcha")]
 pub mod captcha;
+/// Extensible System Check Framework (`CheckLevel`, `CheckMessage`, `run_system_checks`).
+pub mod checks;
 /// Django-style HTML debug and error page rendering.
 pub mod debug_page;
 /// Dev-only request and SQL query inspection panel (`debug-panel` feature).
@@ -36,6 +38,8 @@ pub mod endpoint;
 pub mod error;
 /// Request parameter extractor utilities.
 pub mod extract;
+/// File and byte-range HTTP responses (`FileResponse`).
+pub mod file_response;
 /// Pub/sub broadcast group channel registry.
 pub mod groups;
 /// Cross-server broadcast groups over PostgreSQL `LISTEN`/`NOTIFY` (`postgres` feature).
@@ -79,6 +83,8 @@ pub mod signing;
 pub mod sse;
 /// Type-map state storage container.
 pub mod state;
+/// Temporary-file spill helper for large HTTP uploads (`TempFileUpload`).
+pub mod upload;
 /// API versioning extractors and deprecation response middleware.
 pub mod versioning;
 /// RFC 6455 WebSocket upgrade and frame protocol (`ws` feature).
@@ -86,6 +92,7 @@ pub mod versioning;
 pub mod ws;
 
 pub use app::Djangors;
+pub use checks::{run_system_checks, CheckLevel, CheckMessage, SystemCheckRegistration};
 #[cfg(feature = "debug-panel")]
 pub use debug_panel::{debug_panel_layer, DebugPanelLayer, DebugPanelService};
 pub use endpoint::{
@@ -96,6 +103,7 @@ pub use endpoint::{
 pub use error::{
     ApiError, ApiResultExt, DjangorsError, ErrorRenderer, JsonErrorRenderer, ProblemDetailsRenderer,
 };
+pub use file_response::{detect_mime_type, ContentDisposition, FileResponse};
 pub use groups::{GroupHandle, Groups};
 #[cfg(feature = "postgres")]
 pub use groups_pg::PgGroups;
@@ -116,6 +124,7 @@ pub use router::Router;
 pub use settings::DjangorsSettings;
 pub use sse::StreamingResponse;
 pub use state::AppState;
+pub use upload::TempFileUpload;
 pub use versioning::{ApiVersion, DeprecationLayer, DeprecationService, VersionSource, Versioning};
 #[cfg(feature = "ws")]
 pub use ws::{

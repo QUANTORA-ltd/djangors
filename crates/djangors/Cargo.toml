@@ -58,6 +58,7 @@ postgres = [
     "djangors-contrib-orgs?/postgres",
     "djangors-contrib-oauth?/postgres",
     "djangors-contrib-saml?/postgres",
+    "djangors-contrib-sites?/postgres",
 ]
 sqlite = [
     "djangors-db/sqlite",
@@ -79,7 +80,9 @@ sqlite = [
     "djangors-contrib-orgs?/sqlite",
     "djangors-contrib-oauth?/sqlite",
     "djangors-contrib-saml?/sqlite",
+    "djangors-contrib-sites?/sqlite",
 ]
+mysql = ["djangors-db/mysql"]
 migrations = ["dep:djangors-migrations"]
 rest = ["dep:djangors-rest"]
 admin = ["dep:djangors-admin", "djangors-rest?/admin", "djangors-contrib-orgs?/admin", "djangors-contrib-oauth?/admin", "djangors-contrib-saml?/admin"]
@@ -112,6 +115,8 @@ secrets-remote = ["djangors-core/secrets-remote"]
 oauth-client = ["dep:djangors-contrib-oauth", "auth", "sessions", "djangors-contrib-oauth/client"]
 oauth-provider = ["dep:djangors-contrib-oauth", "auth", "sessions", "djangors-contrib-oauth/provider"]
 saml = ["dep:djangors-contrib-saml", "auth", "sessions", "cache"]
+sites = ["dep:djangors-contrib-sites"]
+gis = ["dep:djangors-contrib-gis"]
 
 [dependencies]
 djangors-core = { path = "../djangors-core", version = "0.14.0", default-features = false }
@@ -136,3 +141,5 @@ djangors-contrib-history = { path = "../djangors-contrib-history", version = "0.
 djangors-contrib-oauth = { path = "../djangors-contrib-oauth", version = "0.14.0", default-features = false, optional = true }
 djangors-contrib-orgs = { path = "../djangors-contrib-orgs", version = "0.14.0", default-features = false, optional = true }
 djangors-contrib-saml = { path = "../djangors-contrib-saml", version = "0.14.0", default-features = false, optional = true }
+djangors-contrib-sites = { path = "../djangors-contrib-sites", version = "0.14.0", default-features = false, optional = true }
+djangors-contrib-gis = { path = "../djangors-contrib-gis", version = "0.14.0", optional = true }

@@ -372,3 +372,277 @@ impl Widget for HiddenInput {
         )
     }
 }
+
+/// File upload input widget (`<input type="file">`).
+///
+/// For HTML security and specification compliance, `<input type="file">` does not
+/// populate a `value` attribute.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FileInput;
+
+impl Widget for FileInput {
+    fn render(&self, name: &str, _value: Option<&str>, attrs: &WidgetAttrs) -> String {
+        let esc_name = html_escape(name);
+        let attrs_str = render_attrs(name, attrs);
+        format!("<input type=\"file\" name=\"{}\"{}>", esc_name, attrs_str)
+    }
+}
+
+/// Clearable file upload widget displaying the current file with a "Clear" checkbox.
+///
+/// When `value` is `Some(non_empty)`, renders the current file indicator, a
+/// `{name}-clear` checkbox, and the `<input type="file">` control. When `value` is
+/// `None` or empty, renders only the `<input type="file">` control.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClearableFileInput {
+    /// Label displayed before the current file value (default: `"Currently"`).
+    pub initial_text: String,
+    /// Label displayed next to the clear checkbox (default: `"Clear"`).
+    pub clear_checkbox_label: String,
+    /// Label displayed before the file input when a current value exists (default: `"Change"`).
+    pub input_text: String,
+}
+
+impl Default for ClearableFileInput {
+    fn default() -> Self {
+        Self {
+            initial_text: "Currently".to_string(),
+            clear_checkbox_label: "Clear".to_string(),
+            input_text: "Change".to_string(),
+        }
+    }
+}
+
+impl ClearableFileInput {
+    /// Creates a new `ClearableFileInput` with default Django labels.
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl Widget for ClearableFileInput {
+    fn render(&self, name: &str, value: Option<&str>, attrs: &WidgetAttrs) -> String {
+        let file_html = FileInput.render(name, None, attrs);
+        match value {
+            Some(current) if !current.is_empty() => {
+                let esc_initial = html_escape(&self.initial_text);
+                let esc_current = html_escape(current);
+                let clear_name = format!("{}-clear", name);
+                let clear_id = format!("{}-clear_id", name);
+                let esc_clear_name = html_escape(&clear_name);
+                let esc_clear_id = html_escape(&clear_id);
+                let esc_clear_label = html_escape(&self.clear_checkbox_label);
+                let esc_input_text = html_escape(&self.input_text);
+
+                format!(
+                    "{}: <a href=\"{}\">{}</a> <input type=\"checkbox\" name=\"{}\" id=\"{}\"> <label for=\"{}\">{}</label><br>{}: {}",
+                    esc_initial,
+                    esc_current,
+                    esc_current,
+                    esc_clear_name,
+                    esc_clear_id,
+                    esc_clear_id,
+                    esc_clear_label,
+                    esc_input_text,
+                    file_html
+                )
+            }
+            _ => file_html,
+        }
+    }
+}
+
+fn parse_multi_values(value: Option<&str>) -> Vec<&str> {
+    match value {
+        Some(v) if !v.is_empty() => v
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Multi-select dropdown list (`<select multiple>`).
+///
+/// Accepts comma-separated selected values in `value`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SelectMultiple {
+    /// Vector of `(option_value, option_label)` pairs.
+    pub choices: Vec<(String, String)>,
+}
+
+impl SelectMultiple {
+    /// Creates a new `SelectMultiple` widget with the given choices.
+    pub fn new(choices: Vec<(String, String)>) -> Self {
+        Self { choices }
+    }
+}
+
+impl Widget for SelectMultiple {
+    fn render(&self, name: &str, value: Option<&str>, attrs: &WidgetAttrs) -> String {
+        let esc_name = html_escape(name);
+        let attrs_str = render_attrs(name, attrs);
+        let selected_values = parse_multi_values(value);
+        let mut options_html = String::new();
+
+        for (val, label) in &self.choices {
+            let esc_val = html_escape(val);
+            let esc_label = html_escape(label);
+            let selected_str = if selected_values.contains(&val.as_str()) {
+                " selected"
+            } else {
+                ""
+            };
+            options_html.push_str(&format!(
+                "<option value=\"{}\"{}>{}</option>",
+                esc_val, selected_str, esc_label
+            ));
+        }
+
+        format!(
+            "<select name=\"{}\" multiple{}>{}</select>",
+            esc_name, attrs_str, options_html
+        )
+    }
+}
+
+/// Multiple checkbox list widget (`<input type="checkbox">` per choice).
+///
+/// Accepts comma-separated selected values in `value`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CheckboxSelectMultiple {
+    /// Vector of `(option_value, option_label)` pairs.
+    pub choices: Vec<(String, String)>,
+}
+
+impl CheckboxSelectMultiple {
+    /// Creates a new `CheckboxSelectMultiple` widget with the given choices.
+    pub fn new(choices: Vec<(String, String)>) -> Self {
+        Self { choices }
+    }
+}
+
+impl Widget for CheckboxSelectMultiple {
+    fn render(&self, name: &str, value: Option<&str>, attrs: &WidgetAttrs) -> String {
+        let esc_name = html_escape(name);
+        let base_id = attrs
+            .get("id")
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("id_{}", name));
+        let esc_base_id = html_escape(&base_id);
+        let selected_values = parse_multi_values(value);
+
+        let mut items_html = String::new();
+        for (i, (val, label)) in self.choices.iter().enumerate() {
+            let esc_val = html_escape(val);
+            let esc_label = html_escape(label);
+            let opt_id = format!("{}_{}", base_id, i);
+            let esc_opt_id = html_escape(&opt_id);
+            let checked_str = if selected_values.contains(&val.as_str()) {
+                " checked"
+            } else {
+                ""
+            };
+
+            items_html.push_str(&format!(
+                "<div><label for=\"{}\"><input type=\"checkbox\" name=\"{}\" value=\"{}\" id=\"{}\"{}> {}</label></div>",
+                esc_opt_id, esc_name, esc_val, esc_opt_id, checked_str, esc_label
+            ));
+        }
+
+        format!("<div id=\"{}\">{}</div>", esc_base_id, items_html)
+    }
+}
+
+/// Date-time input widget (`<input type="datetime-local">`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DateTimeInput;
+
+impl Widget for DateTimeInput {
+    fn render(&self, name: &str, value: Option<&str>, attrs: &WidgetAttrs) -> String {
+        let esc_name = html_escape(name);
+        let attrs_str = render_attrs(name, attrs);
+        let val_attr = match value {
+            Some(val) => format!(" value=\"{}\"", html_escape(val)),
+            None => String::new(),
+        };
+        format!(
+            "<input type=\"datetime-local\" name=\"{}\"{}{}>",
+            esc_name, val_attr, attrs_str
+        )
+    }
+}
+
+/// Time input widget (`<input type="time">`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TimeInput;
+
+impl Widget for TimeInput {
+    fn render(&self, name: &str, value: Option<&str>, attrs: &WidgetAttrs) -> String {
+        let esc_name = html_escape(name);
+        let attrs_str = render_attrs(name, attrs);
+        let val_attr = match value {
+            Some(val) => format!(" value=\"{}\"", html_escape(val)),
+            None => String::new(),
+        };
+        format!(
+            "<input type=\"time\" name=\"{}\"{}{}>",
+            esc_name, val_attr, attrs_str
+        )
+    }
+}
+
+/// URL input widget (`<input type="url">`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct UrlInput;
+
+impl Widget for UrlInput {
+    fn render(&self, name: &str, value: Option<&str>, attrs: &WidgetAttrs) -> String {
+        let esc_name = html_escape(name);
+        let attrs_str = render_attrs(name, attrs);
+        let val_attr = match value {
+            Some(val) => format!(" value=\"{}\"", html_escape(val)),
+            None => String::new(),
+        };
+        format!(
+            "<input type=\"url\" name=\"{}\"{}{}>",
+            esc_name, val_attr, attrs_str
+        )
+    }
+}
+
+/// Composite widget splitting a date-time value into separate date (`{name}_0`)
+/// and time (`{name}_1`) inputs.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SplitDateTimeWidget;
+
+impl Widget for SplitDateTimeWidget {
+    fn render(&self, name: &str, value: Option<&str>, attrs: &WidgetAttrs) -> String {
+        let (date_val, time_val) = match value {
+            Some(v) if !v.trim().is_empty() => {
+                let trimmed = v.trim();
+                if let Some((d, t)) = trimmed.split_once('T').or_else(|| trimmed.split_once(' ')) {
+                    (Some(d), Some(t))
+                } else {
+                    (Some(trimmed), None)
+                }
+            }
+            _ => (None, None),
+        };
+
+        let date_name = format!("{}_0", name);
+        let time_name = format!("{}_1", name);
+
+        let mut date_attrs = attrs.clone();
+        let mut time_attrs = attrs.clone();
+        if let Some(base_id) = attrs.get("id") {
+            date_attrs.set("id", format!("{}_0", base_id));
+            time_attrs.set("id", format!("{}_1", base_id));
+        }
+
+        let date_html = DateInput.render(&date_name, date_val, &date_attrs);
+        let time_html = TimeInput.render(&time_name, time_val, &time_attrs);
+        format!("{}{}", date_html, time_html)
+    }
+}

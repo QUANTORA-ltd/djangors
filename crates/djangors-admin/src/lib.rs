@@ -49,11 +49,25 @@ pub(crate) static ADMIN_TEMPLATES: std::sync::LazyLock<djangors_template::Templa
                 "admin/base.html",
                 include_str!("../templates/admin/base.html"),
             ),
+            (
+                "admin/admindocs_index.html",
+                include_str!("../templates/admin/admindocs_index.html"),
+            ),
+            (
+                "admin/admindocs_models.html",
+                include_str!("../templates/admin/admindocs_models.html"),
+            ),
+            (
+                "admin/admindocs_model_detail.html",
+                include_str!("../templates/admin/admindocs_model_detail.html"),
+            ),
         ])
         .expect("admin templates are compiled into the binary and must always be valid")
     });
 
 mod action_view;
+mod admindocs;
+mod autocomplete;
 mod changelist;
 mod delete_view;
 mod edit_view;
@@ -73,7 +87,8 @@ pub use log::{
     ACTION_DELETION,
 };
 pub use model_admin::{
-    ChangelistPage, DefaultModelAdmin, InlineConfig, ModelAdmin, ModelAdminConfig, TenantFilter,
+    ChangelistPage, DefaultModelAdmin, InlineConfig, ModelAdmin, ModelAdminConfig,
+    SimpleListFilter, TenantFilter,
 };
 pub use site::{AdminSite, SiteBranding, TenantScope};
 

@@ -465,3 +465,39 @@ async fn test_savepoint_roundtrip_both_backends() {
             .ok();
     }
 }
+
+#[tokio::test]
+async fn mysql_dialect_helpers_and_multi_database_router() {
+    use crate::dialect::{DatePart, Dialect};
+    use crate::router::{MultiDatabase, PrimaryReplicaRouter};
+
+    assert_eq!(
+        Dialect::from_url("mysql://user:pass@localhost/app"),
+        Dialect::MySql
+    );
+    assert_eq!(
+        Dialect::from_url("mariadb://user:pass@localhost/app"),
+        Dialect::MySql
+    );
+    assert_eq!(Dialect::MySql.placeholder(1), "?");
+    assert_eq!(Dialect::MySql.quote_ident("users"), "`users`");
+    assert_eq!(
+        Dialect::MySql.extract_date_part(DatePart::WeekDay, "ts"),
+        "DAYOFWEEK(ts)"
+    );
+
+    let primary = Database::connect(&DatabaseConfig::new("sqlite::memory:"))
+        .await
+        .unwrap();
+    let replica = Database::connect(&DatabaseConfig::new("sqlite::memory:"))
+        .await
+        .unwrap();
+    let multi = MultiDatabase::new(primary)
+        .register("replica", replica)
+        .with_router(PrimaryReplicaRouter::new("default", "replica"));
+
+    assert!(multi.read_db("books").is_ok());
+    assert!(multi.write_db("books").is_ok());
+    assert!(multi.allow_migrate("default", "books"));
+    assert!(!multi.allow_migrate("replica", "books"));
+}

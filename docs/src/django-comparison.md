@@ -195,6 +195,18 @@ Django uses `python manage.py <command>`. Djangors provides the `dj` command-lin
 | `python manage.py check` | `dj check [--deploy]` | Runs static checks (with `--deploy`, production-safety checks) |
 | `python manage.py createpermissions` | `dj createpermissions` | Generates the standard `view`/`add`/`change`/`delete` permissions per model |
 | `python manage.py inspectdb` | `dj inspectdb` | Writes `#[derive(Model)]` structs for an existing database's tables |
+| `python manage.py clearsessions` | `dj clearsessions` | Deletes expired server-side sessions from `djangors_session` |
+| `python manage.py dumpdata` | `dj dumpdata` | Exports database rows as Django-style JSON fixtures |
+| `python manage.py loaddata` | `dj loaddata <files...>` | Loads JSON fixture files into the database |
+| `python manage.py flush` | `dj flush [--no-input]` | Removes all rows from non-migration tables |
+| `python manage.py squashmigrations` | `dj squashmigrations <start> <end>` | Squashes a contiguous range of SQL migration files |
+| `python manage.py diffsettings` | `dj diffsettings` | Prints settings that differ from Djangors defaults |
+| `python manage.py sendtestemail` | `dj sendtestemail <addrs...>` | Sends a test email to verify email configuration |
+| `python manage.py makemessages` | `dj makemessages -l <locale>` | Extracts `\|trans` keys into `.ftl` locale catalogs |
+| `python manage.py compilemessages` | `dj compilemessages` | Validates `.ftl` translation catalogs |
+| `python manage.py changepassword` | `dj changepassword <user>` | Updates a user's password hash in `auth_user` |
+| `python manage.py createcachetable` | `dj createcachetable [table]` | Creates the table required by `DatabaseCache` |
+| `python manage.py show_urls` | `dj showurls` | Lists registered HTTP routes in `src/` |
 | `python manage.py spectacular` (drf-spectacular) | `dj openapi [--typescript]` | Writes the OpenAPI spec, or a typed TypeScript client |
 | *(no built-in equivalent)* | `dj generate resource Post title:string` | Writes a model, serializer, REST views, admin, tests, and migration in one step |
 

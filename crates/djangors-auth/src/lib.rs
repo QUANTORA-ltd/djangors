@@ -5,7 +5,7 @@
 //! over the `AuthUser` trait, not a settings string.
 
 use argon2::password_hash::{rand_core::OsRng, SaltString};
-use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
+use argon2::{Argon2, PasswordHash, PasswordHasher as _, PasswordVerifier as _};
 use base64::Engine as _;
 use djangors_core::signals::Signal;
 use djangors_macros::Model;
@@ -22,6 +22,8 @@ use thiserror::Error;
 pub mod email_verification;
 /// GDPR user data export and scheduled account deletion / anonymization.
 pub mod gdpr;
+/// Pluggable password hashers (`Argon2Hasher`, `Pbkdf2Sha256Hasher`, `PasswordHasherRegistry`).
+pub mod hashers;
 /// Admin impersonation (`start_impersonation_view`, `stop_impersonation_view`, `NotImpersonating`).
 pub mod impersonation;
 /// User invitation workflow (`Invitation`, `invite`, `accept_invitation`, `revoke_invitation`).
@@ -37,6 +39,8 @@ pub mod passkeys;
 pub mod password_validation;
 /// Session management helpers ("remember me", session listing, revocation, generation invalidation).
 pub mod session_mgmt;
+/// Turnkey HTML authentication views (`login_view`, `logout_view`, `auth_routes`).
+pub mod views;
 
 pub use email_verification::{
     create_email_address_table, ensure_verified_for_login, generate_email_verification_token,
@@ -47,6 +51,9 @@ pub use gdpr::{
     cancel_account_deletion, download_export_view, export_user_data, get_scheduled_deletion,
     request_account_deletion, request_export_view, run_scheduled_deletions, AnonymizeHook,
     UserDataRegistry,
+};
+pub use hashers::{
+    Argon2Hasher, PasswordHasher, PasswordHasherRegistry, Pbkdf2Sha256Hasher, Pbkdf2Sha512Hasher,
 };
 pub use impersonation::{
     create_impersonation_log_table, ensure_not_impersonating, impersonation_banner_html,
@@ -77,6 +84,10 @@ pub use session_mgmt::{
     bump_session_generation, change_password, get_session_generation, list_sessions,
     login_session_with, login_with, logout_other_sessions, revoke_session, LoginOptions,
     SESSION_GENERATION_KEY,
+};
+pub use views::{
+    auth_routes, login_view, logout_view, password_change_view, password_reset_view,
+    AuthViewsConfig,
 };
 
 type HmacSha256 = Hmac<Sha256>;
@@ -266,10 +277,15 @@ impl AuthBackend for ModelBackend {
             None => DUMMY_HASH,
         };
 
-        let verified = verify_password(password, hash_to_verify)?;
+        let registry = PasswordHasherRegistry::default();
+        let (verified, upgraded_hash) = registry.verify_and_upgrade(password, hash_to_verify)?;
 
-        if let Some(user) = user_opt {
+        if let Some(mut user) = user_opt {
             if verified && user.is_active() {
+                if let Some(new_hash) = upgraded_hash {
+                    user.set_password_hash(new_hash);
+                    user.update_user(db).await?;
+                }
                 LOGIN_SUCCEEDED
                     .send(LoginSucceeded {
                         user_id: user.id(),

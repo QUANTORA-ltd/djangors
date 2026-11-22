@@ -518,3 +518,101 @@ let db = test_db.database();
 - Use `isolated()` when the test creates and drops tables; `connect()` only for read-only work.
 - Run under **both** backends (`cargo test --workspace` and the SQLite env-invocation) before
   relying on it staying green.
+
+---
+
+## 4. Djangors 1.0 Testing Utilities
+
+Djangors 1.0 adds four high-level testing helpers in `djangors_test` mirroring Django's `django.test` toolkit:
+
+| Utility | Purpose |
+| --- | --- |
+| `assert_num_queries(expected, fut)` | Executes an async block with task-local SQL query logging and panics if the executed query count differs from `expected` |
+| `LiveServer::start(router)` | Spawns `router` on an ephemeral `127.0.0.1:0` TCP port and shuts down cleanly on `Drop` |
+| `RequestFactory` | Builds standalone `Request` objects directly for unit-testing view handlers without a `Router` |
+| `SettingsOverride` / `override_env` | Mutex-serialized RAII guard that overrides environment variables (`DJANGORS_*`) and restores them on `Drop` |
+
+### Asserting SQL Query Counts (`assert_num_queries`)
+
+Catch N+1 regressions by asserting the exact number of SQL statements executed inside an async block:
+
+```rust,illustrative
+use djangors_orm::Model;
+use djangors_test::assert_num_queries;
+
+#[tokio::test]
+async fn test_no_n_plus_one() {
+    let rows = assert_num_queries(2, async {
+        Choice::objects()
+            .select_related::<Question, _>(&db, "question")
+            .await
+            .unwrap()
+    })
+    .await;
+    assert!(!rows.is_empty());
+}
+```
+
+### Ephemeral TCP Server (`LiveServer`)
+
+```rust,illustrative
+use djangors_core::{Response, Router, StatusCode};
+use djangors_test::LiveServer;
+
+#[tokio::test]
+async fn test_live_http_server() {
+    let router = Router::new().get("/health", |_, _| async {
+        Ok(Response::text(StatusCode::OK, "ok"))
+    });
+
+    let server = LiveServer::start(router).await;
+    let url = server.url("/health"); // e.g. "http://127.0.0.1:54321/health"
+    // Send real HTTP requests to `url` with reqwest / hyper / browser tests;
+    // `server` shuts down automatically when dropped.
+    assert!(url.starts_with(&server.base_url()));
+}
+```
+
+### Unit-Testing Handlers (`RequestFactory`)
+
+```rust,illustrative
+use djangors_core::PathParams;
+use djangors_sessions::Session;
+use djangors_test::RequestFactory;
+
+#[tokio::test]
+async fn test_handler_directly() {
+    let rf = RequestFactory::new();
+    let req = rf
+        .post("/submit")
+        .form(&[("title", "Hello")])
+        .header("X-Requested-With", "XMLHttpRequest")
+        .with_session(Session::new_empty())
+        .with_state(my_db.clone())
+        .build();
+
+    let resp = submit_handler(req, PathParams::default()).await.unwrap();
+    assert_eq!(resp.status(), djangors_core::StatusCode::CREATED);
+}
+```
+
+### Scoped Environment Overrides (`SettingsOverride` / `override_env`)
+
+```rust,illustrative
+use djangors_test::{override_env, SettingsOverride};
+
+#[test]
+fn test_production_settings_branch() {
+    let _guard = override_env(&[
+        ("DJANGORS_DEBUG", Some("false")),
+        ("DJANGORS_SECRET_KEY", Some("super-secret-test-key")),
+        ("OPTIONAL_FLAG", None), // temporarily unset
+    ]);
+
+    // Single-variable shorthand:
+    // let _guard = SettingsOverride::set("DJANGORS_DEBUG", "false");
+
+    assert_eq!(std::env::var("DJANGORS_DEBUG").unwrap(), "false");
+    // Original values are automatically restored when `_guard` drops.
+}
+```

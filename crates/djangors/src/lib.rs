@@ -14,6 +14,9 @@ pub use djangors_auth as auth;
 /// In-memory, database, and Redis cache backends.
 #[cfg(feature = "cache")]
 pub use djangors_cache as cache;
+/// GeoDjango-equivalent geospatial types and PostGIS SQL helpers.
+#[cfg(feature = "gis")]
+pub use djangors_contrib_gis as gis;
 /// Model history: records every create, update, and delete of chosen models.
 #[cfg(feature = "history")]
 pub use djangors_contrib_history as history;
@@ -29,6 +32,9 @@ pub use djangors_contrib_payments as payments;
 /// Pure-Rust SAML 2.0 Service Provider single sign-on endpoints.
 #[cfg(feature = "saml")]
 pub use djangors_contrib_saml as saml;
+/// Multi-domain Sites framework (`django.contrib.sites` equivalent).
+#[cfg(feature = "sites")]
+pub use djangors_contrib_sites as sites;
 /// Multi-tenancy: tenant model, membership-verified request scoping.
 #[cfg(feature = "tenancy")]
 pub use djangors_contrib_tenancy as tenancy;

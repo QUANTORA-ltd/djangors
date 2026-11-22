@@ -335,4 +335,111 @@ Isolation levels, from `djangors_db::IsolationLevel`:
 * `Serializable`
 
 `transaction_with_isolation(level, f)` begins the transaction and issues the matching `SET TRANSACTION ISOLATION LEVEL ...` before running `f`.
+
+---
+
+## Optional MySQL / MariaDB Backend (`mysql` Feature)
+
+Djangors 1.0 adds optional MySQL / MariaDB support gated behind the `mysql` Cargo feature flag (off by default to keep compile times and binary sizes minimal when targeting PostgreSQL or SQLite).
+
+Enable it in `Cargo.toml`:
+
+```toml
+# Enable MySQL alongside default backends
+djangors = { version = "1.0", features = ["mysql"] }
+
+# Or build a MySQL-only binary
+djangors-db = { version = "1.0", default-features = false, features = ["mysql"] }
+djangors-orm = { version = "1.0", default-features = false, features = ["mysql"] }
+```
+
+### Connection Strings & Dialect Detection
+
+`Dialect::from_url` automatically selects `Dialect::MySql` for `mysql://` and `mariadb://` URLs, and `Database::connect` opens a `Database::MySql` pool (`sqlx::MySqlPool`):
+
+```bash
+export DATABASE_URL="mysql://user:password@localhost:3306/my_app"
+```
+
+```rust,illustrative
+use djangors_db::{Database, DatabaseConfig, Dialect};
+
+let url = "mysql://user:password@localhost:3306/my_app";
+assert_eq!(Dialect::from_url(url), Dialect::MySql);
+
+let db = Database::connect(&DatabaseConfig::new(url)).await?;
+// `db.conn()` and `db.transaction_conn(...)` work transparently on MySQL, Postgres, and SQLite.
+```
+
+> [!NOTE]
+> `Dialect::MySql` uses `?` placeholders, backtick identifier quoting (`` `col` ``), and MySQL-compatible DDL/date functions across the ORM, executor, and migration engine.
+
+---
+
+## Multi-Database Routing
+
+Djangors 1.0 provides Django's `DATABASE_ROUTERS` equivalent in `djangors_db::router` so applications can route reads, writes, and migrations across multiple named databases (such as a primary/replica pair or per-app databases).
+
+### Core Types
+
+| Type | Description |
+| --- | --- |
+| `DatabaseRouter` | Trait with `db_for_read(&self, model_table)`, `db_for_write(&self, model_table)`, and `allow_migrate(&self, db_alias, app_label)` |
+| `PrimaryReplicaRouter` | Built-in router directing all reads to a replica alias and all writes/migrations to a primary alias |
+| `MultiDatabase` | Registry holding named `Database` handles (`"default"`, `"replica"`, `"analytics"`, ...) and an ordered router chain |
+| `QuerySet::using(&multi, alias)` | Resolves either an explicit alias (`Some("analytics")`) or the router-selected read database (`None`) |
+
+### Primary / Replica Setup
+
+```rust,illustrative
+use djangors_db::{Database, DatabaseConfig, MultiDatabase, PrimaryReplicaRouter};
+use djangors_orm::Model;
+
+let primary = Database::connect(&DatabaseConfig::new("postgres://.../app_primary")).await?;
+let replica = Database::connect(&DatabaseConfig::new("postgres://.../app_replica")).await?;
+
+let dbs = MultiDatabase::new(primary)
+    .register("replica", replica)
+    .with_router(PrimaryReplicaRouter::new("default", "replica"));
+
+// Router-driven lookup: reads hit "replica", writes hit "default"
+let read_db = dbs.read_db("polls_question")?;
+let write_db = dbs.write_db("polls_question")?;
+
+// Or use QuerySet::using(&dbs, alias):
+let qs = Question::objects();
+let questions = qs.all(qs.using(&dbs, None)?).await?;            // uses router -> "replica"
+let fresh = qs.all(qs.using(&dbs, Some("default"))?).await?;     // explicit primary read
+```
+
+### Custom `DatabaseRouter`
+
+Implement `DatabaseRouter` to pin specific tables or apps to dedicated databases; returning `None` defers to the next router in the chain (and ultimately `"default"`):
+
+```rust,illustrative
+use djangors_db::DatabaseRouter;
+
+struct AnalyticsRouter;
+
+impl DatabaseRouter for AnalyticsRouter {
+    fn db_for_read(&self, model_table: &str) -> Option<&str> {
+        if model_table.starts_with("analytics_") {
+            Some("analytics")
+        } else {
+            None
+        }
+    }
+
+    fn db_for_write(&self, model_table: &str) -> Option<&str> {
+        self.db_for_read(model_table)
+    }
+
+    fn allow_migrate(&self, db_alias: &str, app_label: &str) -> Option<bool> {
+        if app_label == "analytics" {
+            Some(db_alias == "analytics")
+        } else {
+            None
+        }
+    }
+}
 ```

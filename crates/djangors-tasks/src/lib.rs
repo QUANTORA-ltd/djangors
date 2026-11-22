@@ -236,7 +236,9 @@ pub async fn tick_recurring_tasks(db: &djangors_db::Database) -> Result<usize, T
         let now = chrono::Utc::now();
         let p1 = dialect.placeholder(1);
         let lock_clause = match dialect {
-            djangors_db::Dialect::Postgres => " FOR UPDATE SKIP LOCKED",
+            djangors_db::Dialect::Postgres | djangors_db::Dialect::MySql => {
+                " FOR UPDATE SKIP LOCKED"
+            }
             djangors_db::Dialect::Sqlite => "",
         };
         let sql_select = format!(
@@ -391,7 +393,9 @@ pub async fn claim_next_task(db: &djangors_db::Database) -> Result<Option<Queued
                 let now = chrono::Utc::now();
                 let p1 = dialect.placeholder(1);
                 let lock_clause = match dialect {
-                    djangors_db::Dialect::Postgres => " FOR UPDATE SKIP LOCKED",
+                    djangors_db::Dialect::Postgres | djangors_db::Dialect::MySql => {
+                        " FOR UPDATE SKIP LOCKED"
+                    }
                     djangors_db::Dialect::Sqlite => "",
                 };
                 let sql_sel = format!(

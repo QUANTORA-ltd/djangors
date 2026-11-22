@@ -16,6 +16,7 @@ authors.workspace = true
 default = ["postgres", "sqlite"]
 postgres = ["sqlx/postgres"]
 sqlite = ["sqlx/sqlite"]
+mysql = ["sqlx/mysql"]
 
 [dependencies]
 sqlx = { version = "0.9.0", features = ["runtime-tokio", "tls-rustls", "chrono", "uuid", "rust_decimal", "json"] }

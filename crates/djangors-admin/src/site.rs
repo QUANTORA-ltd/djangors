@@ -1,4 +1,6 @@
 use crate::action_view::admin_bulk_action_post;
+use crate::admindocs::{admindocs_index, admindocs_model_detail, admindocs_models};
+use crate::autocomplete::admin_autocomplete;
 use crate::changelist::{admin_changelist, admin_export_csv, admin_save_changelist_post};
 use crate::delete_view::{admin_bulk_delete_post, admin_delete_get, admin_delete_post};
 use crate::edit_view::{admin_add_get, admin_add_post, admin_change_get, admin_change_post};
@@ -173,6 +175,10 @@ impl AdminSite {
         }
         if let Some(list_filter) = config.list_filter {
             for name in list_filter {
+                let is_relation = meta.relations.iter().any(|r| r.field_name == *name);
+                if is_relation {
+                    continue;
+                }
                 let field = meta
                     .fields
                     .iter()
@@ -184,9 +190,21 @@ impl AdminSite {
                         )
                     });
                 let has_choices = !field.choices.is_empty();
+                let supported_kind = matches!(
+                    field.kind,
+                    djangors_orm::meta::FieldKind::Boolean
+                        | djangors_orm::meta::FieldKind::Char
+                        | djangors_orm::meta::FieldKind::Text
+                        | djangors_orm::meta::FieldKind::Slug
+                        | djangors_orm::meta::FieldKind::Email
+                        | djangors_orm::meta::FieldKind::Url
+                        | djangors_orm::meta::FieldKind::Date
+                        | djangors_orm::meta::FieldKind::DateTime
+                );
                 assert!(
-                    matches!(field.kind, djangors_orm::meta::FieldKind::Boolean) || has_choices,
-                    "list_filter field '{}' on model '{}' is not a Boolean field and has no choices set",
+                    supported_kind || has_choices,
+                    "list_filter field '{}' on model '{}' must be a Boolean, choice, Char/Slug, \
+                     Date/DateTime, or ForeignKey relation field",
                     name,
                     meta.struct_name
                 );
@@ -323,7 +341,11 @@ impl AdminSite {
         let branding = self.branding.clone();
 
         let index_admins = snapshot.clone();
+        let doc_index_admins = snapshot.clone();
+        let doc_models_admins = snapshot.clone();
+        let doc_detail_admins = snapshot.clone();
         let changelist_admins = admins.clone();
+        let autocomplete_admins = admins.clone();
         let add_get_admins = admins.clone();
         let add_post_admins = admins.clone();
         let change_get_admins = admins.clone();
@@ -336,6 +358,9 @@ impl AdminSite {
         let export_csv_admins = admins.clone();
 
         let index_branding = branding.clone();
+        let doc_index_branding = branding.clone();
+        let doc_models_branding = branding.clone();
+        let doc_detail_branding = branding.clone();
         let changelist_branding = branding.clone();
         let add_get_branding = branding.clone();
         let add_post_branding = branding.clone();
@@ -348,6 +373,7 @@ impl AdminSite {
         let history_branding = branding.clone();
 
         let changelist_tenant_scope = self.tenant_scope.clone();
+        let autocomplete_tenant_scope = self.tenant_scope.clone();
         let export_csv_tenant_scope = self.tenant_scope.clone();
         let add_get_tenant_scope = self.tenant_scope.clone();
         let add_post_tenant_scope = self.tenant_scope.clone();
@@ -364,6 +390,44 @@ impl AdminSite {
             .get("/", move |req: Request, params: PathParams| {
                 admin_index(req, params, index_admins.clone(), index_branding.clone())
             })
+            .get("/doc/", move |req: Request, params: PathParams| {
+                admindocs_index(
+                    req,
+                    params,
+                    doc_index_admins.clone(),
+                    doc_index_branding.clone(),
+                )
+            })
+            .get("/doc/models/", move |req: Request, params: PathParams| {
+                admindocs_models(
+                    req,
+                    params,
+                    doc_models_admins.clone(),
+                    doc_models_branding.clone(),
+                )
+            })
+            .get(
+                "/doc/models/{app:slug}/{model:slug}/",
+                move |req: Request, params: PathParams| {
+                    admindocs_model_detail(
+                        req,
+                        params,
+                        doc_detail_admins.clone(),
+                        doc_detail_branding.clone(),
+                    )
+                },
+            )
+            .get(
+                "/{app:slug}/{model:slug}/autocomplete/",
+                move |req: Request, params: PathParams| {
+                    admin_autocomplete(
+                        req,
+                        params,
+                        autocomplete_admins.clone(),
+                        autocomplete_tenant_scope.clone(),
+                    )
+                },
+            )
             .get(
                 "/{app:slug}/{model:slug}/",
                 move |req: Request, params: PathParams| {

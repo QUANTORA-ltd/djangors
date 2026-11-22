@@ -246,10 +246,15 @@ fn test_new_generates_expected_files() {
     assert!(cargo_toml_content.contains("default-run = \"my_test_proj\""));
     assert!(cargo_toml_content.contains("djangors-core = { path = "));
     assert!(cargo_toml_content.contains("djangors-db = { path = "));
+    assert!(cargo_toml_content.contains("[profile.dev]"));
+    assert!(cargo_toml_content.contains("debug = \"line-tables-only\""));
+    assert!(cargo_toml_content.contains("[profile.dev.package.\"*\"]"));
     assert!(cargo_toml_content.contains("[profile.release]"));
+    assert!(cargo_toml_content.contains("opt-level = \"z\""));
     assert!(cargo_toml_content.contains("lto = \"thin\""));
-    assert!(cargo_toml_content.contains("strip = \"symbols\""));
+    assert!(cargo_toml_content.contains("strip = true"));
     assert!(cargo_toml_content.contains("codegen-units = 1"));
+    assert!(cargo_toml_content.contains("panic = \"abort\""));
 
     let path_line = cargo_toml_content
         .lines()

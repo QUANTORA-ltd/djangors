@@ -11,17 +11,23 @@
 //! changelist cells and search queries are pre-escaped in Rust code with `html_escape` and rendered in templates
 //! via the `|safe` filter to avoid double-escaping or lowercase conversion failing assertions.
 
+/// Built-in and custom template context processors.
+pub mod context_processors;
 /// MiniJinja template engine integration and directory loading logic.
 pub mod engine;
 /// Template loading and rendering error definitions.
 pub mod error;
 /// Template filters matching standard Django built-in filters.
 pub mod filters;
-/// Built-in template functions (`url`, `static`, `csrf_token`, `now`).
+/// Built-in template functions (`url`, `static`, `csrf_token`, `now`, `querystring`).
 pub mod functions;
 /// Convenient HTTP response rendering shortcuts.
 pub mod render;
 
+pub use context_processors::{
+    ContextProcessor, CsrfContextProcessor, ExtraContextProcessor, RequestContextProcessor,
+    StaticUrlProcessor,
+};
 pub use engine::TemplateEngine;
 pub use error::TemplateError;
-pub use render::render;
+pub use render::{render, render_with_request};

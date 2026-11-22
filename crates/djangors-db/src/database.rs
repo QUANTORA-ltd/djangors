@@ -1,7 +1,11 @@
+#[cfg(feature = "mysql")]
+use sqlx::mysql::MySqlPoolOptions;
 #[cfg(feature = "postgres")]
 use sqlx::postgres::PgPoolOptions;
 #[cfg(feature = "sqlite")]
 use sqlx::sqlite::SqlitePoolOptions;
+#[cfg(feature = "mysql")]
+use sqlx::MySqlPool;
 #[cfg(feature = "sqlite")]
 use sqlx::SqlitePool;
 #[cfg(feature = "postgres")]
@@ -10,7 +14,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-#[cfg(any(feature = "postgres", feature = "sqlite"))]
+#[cfg(any(feature = "postgres", feature = "sqlite", feature = "mysql"))]
 use std::time::Duration;
 
 use crate::config::DatabaseConfig;
@@ -23,7 +27,7 @@ use crate::executor::Conn;
 #[doc(hidden)]
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
-/// Connection pool manager for Djangors backends (PostgreSQL or SQLite).
+/// Connection pool manager for Djangors backends (PostgreSQL, SQLite, or MySQL).
 #[derive(Debug, Clone)]
 pub enum Database {
     /// PostgreSQL connection pool wrapper.
@@ -39,6 +43,14 @@ pub enum Database {
     Sqlite {
         /// Underlying SQLx SQLite pool.
         pool: SqlitePool,
+        /// Recorded query counter.
+        query_count: Arc<AtomicUsize>,
+    },
+    /// MySQL / MariaDB connection pool wrapper.
+    #[cfg(feature = "mysql")]
+    MySql {
+        /// Underlying SQLx MySQL pool.
+        pool: MySqlPool,
         /// Recorded query counter.
         query_count: Arc<AtomicUsize>,
     },
@@ -69,71 +81,105 @@ impl Database {
     /// Connect to the database using the given configuration, building a connection pool.
     pub async fn connect(config: &DatabaseConfig) -> Result<Self, DbError> {
         let url = config.url.trim();
-        let is_sqlite = matches!(Dialect::from_url(url), Dialect::Sqlite);
+        match Dialect::from_url(url) {
+            Dialect::Sqlite => {
+                #[cfg(feature = "sqlite")]
+                {
+                    let mut options = SqlitePoolOptions::new()
+                        .max_connections(config.max_connections)
+                        .min_connections(config.min_connections)
+                        .acquire_timeout(Duration::from_secs(config.connect_timeout_secs));
 
-        if is_sqlite {
-            #[cfg(feature = "sqlite")]
-            {
-                let mut options = SqlitePoolOptions::new()
-                    .max_connections(config.max_connections)
-                    .min_connections(config.min_connections)
-                    .acquire_timeout(Duration::from_secs(config.connect_timeout_secs));
-
-                if let Some(idle) = config.idle_timeout_secs {
-                    options = options.idle_timeout(Duration::from_secs(idle));
-                }
-
-                let pool = options.connect(url).await.map_err(|e| {
-                    if matches!(e, sqlx::Error::PoolTimedOut) {
-                        DbError::PoolExhausted
-                    } else {
-                        DbError::ConnectionFailed(e.to_string())
+                    if let Some(idle) = config.idle_timeout_secs {
+                        options = options.idle_timeout(Duration::from_secs(idle));
                     }
-                })?;
 
-                Ok(Self::Sqlite {
-                    pool,
-                    query_count: Arc::new(AtomicUsize::new(0)),
-                })
-            }
-            #[cfg(not(feature = "sqlite"))]
-            {
-                Err(DbError::ConnectionFailed(
-                    "SQLite backend is not enabled (enable the `sqlite` feature on `djangors-db`)"
-                        .to_string(),
-                ))
-            }
-        } else {
-            #[cfg(feature = "postgres")]
-            {
-                let mut options = PgPoolOptions::new()
-                    .max_connections(config.max_connections)
-                    .min_connections(config.min_connections)
-                    .acquire_timeout(Duration::from_secs(config.connect_timeout_secs));
+                    let pool = options.connect(url).await.map_err(|e| {
+                        if matches!(e, sqlx::Error::PoolTimedOut) {
+                            DbError::PoolExhausted
+                        } else {
+                            DbError::ConnectionFailed(e.to_string())
+                        }
+                    })?;
 
-                if let Some(idle) = config.idle_timeout_secs {
-                    options = options.idle_timeout(Duration::from_secs(idle));
+                    Ok(Self::Sqlite {
+                        pool,
+                        query_count: Arc::new(AtomicUsize::new(0)),
+                    })
                 }
-
-                let pool = options.connect(url).await.map_err(|e| {
-                    if matches!(e, sqlx::Error::PoolTimedOut) {
-                        DbError::PoolExhausted
-                    } else {
-                        DbError::ConnectionFailed(e.to_string())
-                    }
-                })?;
-
-                Ok(Self::Pg {
-                    pool,
-                    query_count: Arc::new(AtomicUsize::new(0)),
-                })
+                #[cfg(not(feature = "sqlite"))]
+                {
+                    Err(DbError::ConnectionFailed(
+                        "SQLite backend is not enabled (enable the `sqlite` feature on `djangors-db`)"
+                            .to_string(),
+                    ))
+                }
             }
-            #[cfg(not(feature = "postgres"))]
-            {
-                Err(DbError::ConnectionFailed(
-                    "PostgreSQL backend is not enabled (enable the `postgres` feature on `djangors-db`)"
-                        .to_string(),
-                ))
+            Dialect::MySql => {
+                #[cfg(feature = "mysql")]
+                {
+                    let mut options = MySqlPoolOptions::new()
+                        .max_connections(config.max_connections)
+                        .min_connections(config.min_connections)
+                        .acquire_timeout(Duration::from_secs(config.connect_timeout_secs));
+
+                    if let Some(idle) = config.idle_timeout_secs {
+                        options = options.idle_timeout(Duration::from_secs(idle));
+                    }
+
+                    let pool = options.connect(url).await.map_err(|e| {
+                        if matches!(e, sqlx::Error::PoolTimedOut) {
+                            DbError::PoolExhausted
+                        } else {
+                            DbError::ConnectionFailed(e.to_string())
+                        }
+                    })?;
+
+                    Ok(Self::MySql {
+                        pool,
+                        query_count: Arc::new(AtomicUsize::new(0)),
+                    })
+                }
+                #[cfg(not(feature = "mysql"))]
+                {
+                    Err(DbError::ConnectionFailed(
+                        "MySQL backend is not enabled (enable the `mysql` feature on `djangors-db`)"
+                            .to_string(),
+                    ))
+                }
+            }
+            Dialect::Postgres => {
+                #[cfg(feature = "postgres")]
+                {
+                    let mut options = PgPoolOptions::new()
+                        .max_connections(config.max_connections)
+                        .min_connections(config.min_connections)
+                        .acquire_timeout(Duration::from_secs(config.connect_timeout_secs));
+
+                    if let Some(idle) = config.idle_timeout_secs {
+                        options = options.idle_timeout(Duration::from_secs(idle));
+                    }
+
+                    let pool = options.connect(url).await.map_err(|e| {
+                        if matches!(e, sqlx::Error::PoolTimedOut) {
+                            DbError::PoolExhausted
+                        } else {
+                            DbError::ConnectionFailed(e.to_string())
+                        }
+                    })?;
+
+                    Ok(Self::Pg {
+                        pool,
+                        query_count: Arc::new(AtomicUsize::new(0)),
+                    })
+                }
+                #[cfg(not(feature = "postgres"))]
+                {
+                    Err(DbError::ConnectionFailed(
+                        "PostgreSQL backend is not enabled (enable the `postgres` feature on `djangors-db`)"
+                            .to_string(),
+                    ))
+                }
             }
         }
     }
@@ -141,7 +187,7 @@ impl Database {
     /// Access the underlying PostgreSQL connection pool directly.
     ///
     /// # Panics
-    /// Panics if this `Database` handle is connected to a SQLite database.
+    /// Panics if this `Database` handle is not connected to PostgreSQL.
     #[cfg(feature = "postgres")]
     pub fn pool(&self) -> &PgPool {
         match self {
@@ -149,6 +195,10 @@ impl Database {
             #[cfg(feature = "sqlite")]
             Self::Sqlite { .. } => {
                 panic!("Attempted to access Postgres PgPool on a SQLite Database handle")
+            }
+            #[cfg(feature = "mysql")]
+            Self::MySql { .. } => {
+                panic!("Attempted to access Postgres PgPool on a MySQL Database handle")
             }
         }
     }
@@ -160,6 +210,20 @@ impl Database {
             Self::Sqlite { pool, .. } => Some(pool),
             #[cfg(feature = "postgres")]
             Self::Pg { .. } => None,
+            #[cfg(feature = "mysql")]
+            Self::MySql { .. } => None,
+        }
+    }
+
+    /// Access the underlying MySQL connection pool directly if connected to MySQL.
+    #[cfg(feature = "mysql")]
+    pub fn mysql_pool(&self) -> Option<&MySqlPool> {
+        match self {
+            Self::MySql { pool, .. } => Some(pool),
+            #[cfg(feature = "postgres")]
+            Self::Pg { .. } => None,
+            #[cfg(feature = "sqlite")]
+            Self::Sqlite { .. } => None,
         }
     }
 
@@ -170,6 +234,8 @@ impl Database {
             Self::Pg { pool, .. } => Conn::PgPool(pool),
             #[cfg(feature = "sqlite")]
             Self::Sqlite { pool, .. } => Conn::SqlitePool(pool),
+            #[cfg(feature = "mysql")]
+            Self::MySql { pool, .. } => Conn::MySqlPool(pool),
         }
     }
 
@@ -180,6 +246,8 @@ impl Database {
             Self::Pg { .. } => Dialect::Postgres,
             #[cfg(feature = "sqlite")]
             Self::Sqlite { .. } => Dialect::Sqlite,
+            #[cfg(feature = "mysql")]
+            Self::MySql { .. } => Dialect::MySql,
         }
     }
 
@@ -191,6 +259,8 @@ impl Database {
             Self::Pg { query_count, .. } => query_count,
             #[cfg(feature = "sqlite")]
             Self::Sqlite { query_count, .. } => query_count,
+            #[cfg(feature = "mysql")]
+            Self::MySql { query_count, .. } => query_count,
         };
         counter.fetch_add(1, Ordering::Relaxed);
     }
@@ -203,6 +273,8 @@ impl Database {
             Self::Pg { query_count, .. } => query_count,
             #[cfg(feature = "sqlite")]
             Self::Sqlite { query_count, .. } => query_count,
+            #[cfg(feature = "mysql")]
+            Self::MySql { query_count, .. } => query_count,
         };
         counter.load(Ordering::Relaxed)
     }
@@ -215,6 +287,8 @@ impl Database {
             Self::Pg { query_count, .. } => query_count,
             #[cfg(feature = "sqlite")]
             Self::Sqlite { query_count, .. } => query_count,
+            #[cfg(feature = "mysql")]
+            Self::MySql { query_count, .. } => query_count,
         };
         counter.store(0, Ordering::Relaxed);
     }
@@ -250,6 +324,10 @@ impl Database {
             #[cfg(feature = "sqlite")]
             Self::Sqlite { .. } => Err(DbError::TransactionFailed(
                 "PostgreSQL PgConnection transaction called on a SQLite Database".to_string(),
+            )),
+            #[cfg(feature = "mysql")]
+            Self::MySql { .. } => Err(DbError::TransactionFailed(
+                "PostgreSQL PgConnection transaction called on a MySQL Database".to_string(),
             )),
         }
     }
@@ -295,10 +373,14 @@ impl Database {
             Self::Sqlite { .. } => Err(DbError::TransactionFailed(
                 "PostgreSQL transaction_with_isolation called on a SQLite Database".to_string(),
             )),
+            #[cfg(feature = "mysql")]
+            Self::MySql { .. } => Err(DbError::TransactionFailed(
+                "PostgreSQL transaction_with_isolation called on a MySQL Database".to_string(),
+            )),
         }
     }
 
-    /// Run `f` inside a transaction on either backend.
+    /// Run `f` inside a transaction on any enabled backend.
     pub async fn transaction_conn<F, T, E>(&self, f: F) -> Result<T, DbError>
     where
         F: for<'c> FnOnce(&'c mut Conn<'c>) -> BoxFuture<'c, Result<T, E>> + Send,
@@ -334,6 +416,27 @@ impl Database {
                     .await
                     .map_err(|e| DbError::TransactionFailed(e.to_string()))?;
                 let mut conn = Conn::SqliteTx(&mut tx);
+                let res = f(&mut conn).await;
+                match res {
+                    Ok(val) => {
+                        tx.commit()
+                            .await
+                            .map_err(|e| DbError::TransactionFailed(e.to_string()))?;
+                        Ok(val)
+                    }
+                    Err(err) => {
+                        let _ = tx.rollback().await;
+                        Err(err.into())
+                    }
+                }
+            }
+            #[cfg(feature = "mysql")]
+            Self::MySql { pool, .. } => {
+                let mut tx = pool
+                    .begin()
+                    .await
+                    .map_err(|e| DbError::TransactionFailed(e.to_string()))?;
+                let mut conn = Conn::MySqlTx(&mut tx);
                 let res = f(&mut conn).await;
                 match res {
                     Ok(val) => {
