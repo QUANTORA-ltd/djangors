@@ -135,10 +135,18 @@ djangors-db = {djangors_db_dep}
 tokio = {{ version = "1", features = ["full"] }}
 tower = {{ version = "0.5", features = ["util"] }}
 
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = 0
+
 [profile.release]
+opt-level = "z"
 lto = "thin"
-strip = "symbols"
+strip = true
 codegen-units = 1
+panic = "abort"
 "#
     );
 
@@ -646,6 +654,16 @@ pub fn check(deploy: bool) -> Result<Vec<String>, String> {
     if let Some(ref settings) = settings_opt {
         if let Err(e) = settings.validate() {
             issues.push(e.to_string());
+        }
+
+        for msg in djangors_core::run_system_checks(&settings.silenced_system_checks) {
+            if msg.level >= djangors_core::CheckLevel::Warning {
+                let mut line = format!("[{}] {}", msg.id, msg.message);
+                if let Some(hint) = msg.hint {
+                    line.push_str(&format!(" (hint: {hint})"));
+                }
+                issues.push(line);
+            }
         }
 
         if deploy {
@@ -2432,6 +2450,95 @@ pub async fn inspect_database_models(
                         warnings.push(format!(
                             "{table_name}.{col_name}: column type `{data_type}` has no Djangors field type; generated as String (reads and writes will fail until you change it)"
                         ));
+                    }
+                    let (field_ident, column_attr) = rust_field_for_column(&col_name);
+                    if let Some(attr) = column_attr {
+                        attrs.push(attr);
+                    }
+                    if !attrs.is_empty() {
+                        out.push_str(&format!("    #[djangors({})]\n", attrs.join(", ")));
+                    }
+                    out.push_str(&format!("    pub {field_ident}: {rust_ty},\n"));
+                }
+                out.push_str("}\n\n");
+            }
+        }
+        djangors_db::Dialect::MySql => {
+            let rows = db
+                .conn()
+                .fetch_all(
+                    "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE' AND table_name != 'djangors_migrations' ORDER BY table_name",
+                    &[],
+                )
+                .await
+                .map_err(|e| e.to_string())?;
+
+            for row in rows {
+                let table_name: String = row
+                    .try_string_by_name("table_name")
+                    .or_else(|_| row.try_string_by_name("TABLE_NAME"))
+                    .map_err(|e| e.to_string())?
+                    .unwrap_or_default();
+                let cols = db
+                    .conn()
+                    .fetch_all(
+                        "SELECT column_name, data_type, character_maximum_length, is_nullable, column_key FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? ORDER BY ordinal_position",
+                        &[djangors_db::BindValue::Text(table_name.clone())],
+                    )
+                    .await
+                    .map_err(|e| e.to_string())?;
+
+                let struct_name = to_pascal_case(&table_name);
+                out.push_str(&format!(
+                    "#[derive(Model, Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]\n\
+                     #[djangors(app = \"{app_label}\", table_name = \"{table_name}\")]\n\
+                     pub struct {struct_name} {{\n"
+                ));
+
+                for col in cols {
+                    let col_name: String = col
+                        .try_string_by_name("column_name")
+                        .or_else(|_| col.try_string_by_name("COLUMN_NAME"))
+                        .map_err(|e| e.to_string())?
+                        .unwrap_or_default();
+                    let data_type: String = col
+                        .try_string_by_name("data_type")
+                        .or_else(|_| col.try_string_by_name("DATA_TYPE"))
+                        .ok()
+                        .flatten()
+                        .unwrap_or_default();
+                    let max_len_db: Option<i64> = col
+                        .try_i64_by_name("character_maximum_length")
+                        .or_else(|_| col.try_i64_by_name("CHARACTER_MAXIMUM_LENGTH"))
+                        .ok()
+                        .flatten();
+                    let is_nullable = col
+                        .try_string_by_name("is_nullable")
+                        .or_else(|_| col.try_string_by_name("IS_NULLABLE"))
+                        .ok()
+                        .flatten()
+                        .unwrap_or_default()
+                        .eq_ignore_ascii_case("YES");
+                    let is_pk = col
+                        .try_string_by_name("column_key")
+                        .or_else(|_| col.try_string_by_name("COLUMN_KEY"))
+                        .ok()
+                        .flatten()
+                        .unwrap_or_default()
+                        .eq_ignore_ascii_case("PRI");
+                    let (rust_ty, inferred_max_len) =
+                        map_inspected_sql_type(&data_type, is_pk, is_nullable && !is_pk);
+                    let max_len = max_len_db.map(|n| n as u32).or(inferred_max_len);
+
+                    let mut attrs = Vec::new();
+                    if is_pk {
+                        attrs.push("primary_key".to_string());
+                        if rust_ty == "i64" || rust_ty == "i32" {
+                            attrs.push("auto".to_string());
+                        }
+                    }
+                    if let Some(len) = max_len {
+                        attrs.push(format!("max_length = {len}"));
                     }
                     let (field_ident, column_attr) = rust_field_for_column(&col_name);
                     if let Some(attr) = column_attr {

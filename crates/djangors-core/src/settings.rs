@@ -147,6 +147,12 @@ pub struct DjangorsSettings {
     /// Defaults to `false`. Set with `require_verified_email_for_login` in `djangors.toml`
     /// or `DJANGORS_REQUIRE_VERIFIED_EMAIL_FOR_LOGIN`.
     pub require_verified_email_for_login: bool,
+
+    /// System check IDs (e.g. `"security.W009"`) to silence when running
+    /// [`run_system_checks`](crate::checks::run_system_checks).
+    /// Mirrors Django's `SILENCED_SYSTEM_CHECKS`. Set with `silenced_system_checks`
+    /// in `djangors.toml` or the comma-separated `DJANGORS_SILENCED_SYSTEM_CHECKS` env var.
+    pub silenced_system_checks: Vec<String>,
 }
 
 impl fmt::Debug for DjangorsSettings {
@@ -168,6 +174,7 @@ impl fmt::Debug for DjangorsSettings {
                 "require_verified_email_for_login",
                 &self.require_verified_email_for_login,
             )
+            .field("silenced_system_checks", &self.silenced_system_checks)
             .finish()
     }
 }
@@ -185,6 +192,7 @@ impl Default for DjangorsSettings {
             cors_allowed_origins: Vec::new(),
             session_remember_age: 30 * 24 * 60 * 60,
             require_verified_email_for_login: false,
+            silenced_system_checks: Vec::new(),
         }
     }
 }
@@ -263,6 +271,15 @@ impl DjangorsSettings {
         self.require_verified_email_for_login = require;
         self
     }
+
+    /// Sets system check IDs to silence when running system checks.
+    pub fn with_silenced_system_checks(
+        mut self,
+        checks: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.silenced_system_checks = checks.into_iter().map(Into::into).collect();
+        self
+    }
 }
 
 #[derive(Deserialize)]
@@ -277,6 +294,8 @@ struct PartialSettings {
     cors_allowed_origins: Option<Vec<String>>,
     session_remember_age: Option<u64>,
     require_verified_email_for_login: Option<bool>,
+    #[serde(default)]
+    silenced_system_checks: Vec<String>,
 }
 
 impl DjangorsSettings {
@@ -365,6 +384,14 @@ impl DjangorsSettings {
             }
         }
 
+        if let Ok(val) = std::env::var("DJANGORS_SILENCED_SYSTEM_CHECKS") {
+            self.silenced_system_checks = val
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+        }
+
         warnings
     }
 
@@ -412,6 +439,9 @@ impl DjangorsSettings {
         }
         if let Some(require_verified) = partial.require_verified_email_for_login {
             settings.require_verified_email_for_login = require_verified;
+        }
+        if !partial.silenced_system_checks.is_empty() {
+            settings.silenced_system_checks = partial.silenced_system_checks;
         }
 
         Ok(settings)

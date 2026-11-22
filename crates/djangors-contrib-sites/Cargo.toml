@@ -1,0 +1,34 @@
+[package]
+name = "djangors-contrib-sites"
+description = "Multi-site domain resolution and Site model for Djangors"
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["django", "web-framework", "sites", "multi-site", "contrib"]
+categories = ["web-programming"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[features]
+default = ["postgres", "sqlite"]
+postgres = ["djangors-admin/postgres", "djangors-core/postgres", "djangors-orm/postgres", "djangors-db/postgres"]
+sqlite = ["djangors-admin/sqlite", "djangors-core/sqlite", "djangors-orm/sqlite", "djangors-db/sqlite"]
+
+[dependencies]
+djangors-admin = { path = "../djangors-admin", version = "0.14.0", default-features = false }
+djangors-core = { path = "../djangors-core", version = "0.14.0", default-features = false }
+djangors-db = { path = "../djangors-db", version = "0.14.0", default-features = false }
+djangors-macros = { path = "../djangors-macros", version = "0.14.0" }
+djangors-orm = { path = "../djangors-orm", version = "0.14.0", default-features = false }
+bytes = "1.12.1"
+http-body-util = "0.1.4"
+hyper = { version = "1.10.1", features = ["http1"] }
+tower = { version = "0.5.3", features = ["util"] }
+
+[dev-dependencies]
+djangors-test = { path = "../djangors-test" }
+tokio = { version = "1.53.0", features = ["macros", "rt-multi-thread"] }
+sqlx = { version = "0.9.0", features = ["runtime-tokio", "postgres"] }

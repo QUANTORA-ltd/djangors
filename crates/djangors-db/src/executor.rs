@@ -1,6 +1,8 @@
 //! Abstraction over where a query runs: a connection pool, or an open
 //! transaction.
 
+#[cfg(feature = "mysql")]
+use sqlx::{MySqlConnection, MySqlPool};
 #[cfg(feature = "postgres")]
 use sqlx::{PgConnection, PgPool};
 #[cfg(feature = "sqlite")]
@@ -28,6 +30,12 @@ pub enum Conn<'a> {
     /// Run against a single SQLite connection in a transaction.
     #[cfg(feature = "sqlite")]
     SqliteTx(&'a mut SqliteConnection),
+    /// Run against the MySQL connection pool.
+    #[cfg(feature = "mysql")]
+    MySqlPool(&'a MySqlPool),
+    /// Run against a single MySQL connection in a transaction.
+    #[cfg(feature = "mysql")]
+    MySqlTx(&'a mut MySqlConnection),
 }
 
 #[cfg(feature = "postgres")]
@@ -62,6 +70,33 @@ fn build_sqlite_query<'q>(
     sql: &'q str,
     params: &'q [BindValue],
 ) -> sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments> {
+    let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
+    for val in params {
+        q = match val {
+            BindValue::I64(v) => q.bind(*v),
+            BindValue::F64(v) => q.bind(*v),
+            BindValue::Text(v) => q.bind(v.as_str()),
+            BindValue::Bool(v) => q.bind(*v),
+            BindValue::DateTime(v) => q.bind(*v),
+            BindValue::Bytes(v) => q.bind(v.as_slice()),
+            BindValue::Null(kind) => match kind {
+                NullKind::I64 => q.bind(None::<i64>),
+                NullKind::F64 => q.bind(None::<f64>),
+                NullKind::Text => q.bind(None::<String>),
+                NullKind::Bool => q.bind(None::<bool>),
+                NullKind::DateTime => q.bind(None::<chrono::DateTime<chrono::Utc>>),
+                NullKind::Bytes => q.bind(None::<Vec<u8>>),
+            },
+        };
+    }
+    q
+}
+
+#[cfg(feature = "mysql")]
+fn build_mysql_query<'q>(
+    sql: &'q str,
+    params: &'q [BindValue],
+) -> sqlx::query::Query<'q, sqlx::MySql, sqlx::mysql::MySqlArguments> {
     let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
     for val in params {
         q = match val {
@@ -126,6 +161,18 @@ impl<'a> Conn<'a> {
                 let rows = q.fetch_all(&mut **tx).await?;
                 Ok(rows.into_iter().map(DbRow::Sqlite).collect())
             }
+            #[cfg(feature = "mysql")]
+            Conn::MySqlPool(pool) => {
+                let q = build_mysql_query(sql, params);
+                let rows = q.fetch_all(*pool).await?;
+                Ok(rows.into_iter().map(DbRow::MySql).collect())
+            }
+            #[cfg(feature = "mysql")]
+            Conn::MySqlTx(tx) => {
+                let q = build_mysql_query(sql, params);
+                let rows = q.fetch_all(&mut **tx).await?;
+                Ok(rows.into_iter().map(DbRow::MySql).collect())
+            }
         };
         if let Some(t0) = start {
             crate::query_log::record_query(sql, params.len(), t0.elapsed().as_micros() as u64);
@@ -173,6 +220,18 @@ impl<'a> Conn<'a> {
                 let q = build_sqlite_query(sql, params);
                 let row = q.fetch_one(&mut **tx).await?;
                 Ok(DbRow::Sqlite(row))
+            }
+            #[cfg(feature = "mysql")]
+            Conn::MySqlPool(pool) => {
+                let q = build_mysql_query(sql, params);
+                let row = q.fetch_one(*pool).await?;
+                Ok(DbRow::MySql(row))
+            }
+            #[cfg(feature = "mysql")]
+            Conn::MySqlTx(tx) => {
+                let q = build_mysql_query(sql, params);
+                let row = q.fetch_one(&mut **tx).await?;
+                Ok(DbRow::MySql(row))
             }
         };
         if let Some(t0) = start {
@@ -224,6 +283,18 @@ impl<'a> Conn<'a> {
                 let row = q.fetch_optional(&mut **tx).await?;
                 Ok(row.map(DbRow::Sqlite))
             }
+            #[cfg(feature = "mysql")]
+            Conn::MySqlPool(pool) => {
+                let q = build_mysql_query(sql, params);
+                let row = q.fetch_optional(*pool).await?;
+                Ok(row.map(DbRow::MySql))
+            }
+            #[cfg(feature = "mysql")]
+            Conn::MySqlTx(tx) => {
+                let q = build_mysql_query(sql, params);
+                let row = q.fetch_optional(&mut **tx).await?;
+                Ok(row.map(DbRow::MySql))
+            }
         };
         if let Some(t0) = start {
             crate::query_log::record_query(sql, params.len(), t0.elapsed().as_micros() as u64);
@@ -268,6 +339,18 @@ impl<'a> Conn<'a> {
                 let res = q.execute(&mut **tx).await?;
                 Ok(res.rows_affected())
             }
+            #[cfg(feature = "mysql")]
+            Conn::MySqlPool(pool) => {
+                let q = build_mysql_query(sql, params);
+                let res = q.execute(*pool).await?;
+                Ok(res.rows_affected())
+            }
+            #[cfg(feature = "mysql")]
+            Conn::MySqlTx(tx) => {
+                let q = build_mysql_query(sql, params);
+                let res = q.execute(&mut **tx).await?;
+                Ok(res.rows_affected())
+            }
         };
         if let Some(t0) = start {
             crate::query_log::record_query(sql, params.len(), t0.elapsed().as_micros() as u64);
@@ -282,6 +365,8 @@ impl<'a> Conn<'a> {
             Conn::PgPool(_) | Conn::PgTx(_) => Dialect::Postgres,
             #[cfg(feature = "sqlite")]
             Conn::SqlitePool(_) | Conn::SqliteTx(_) => Dialect::Sqlite,
+            #[cfg(feature = "mysql")]
+            Conn::MySqlPool(_) | Conn::MySqlTx(_) => Dialect::MySql,
         }
     }
 
@@ -292,6 +377,8 @@ impl<'a> Conn<'a> {
             Conn::PgTx(_) => true,
             #[cfg(feature = "sqlite")]
             Conn::SqliteTx(_) => true,
+            #[cfg(feature = "mysql")]
+            Conn::MySqlTx(_) => true,
             _ => false,
         }
     }
@@ -388,6 +475,13 @@ impl DbExecutor for &mut SqliteConnection {
     }
 }
 
+#[cfg(feature = "mysql")]
+impl DbExecutor for &mut MySqlConnection {
+    fn conn(&mut self) -> Conn<'_> {
+        Conn::MySqlTx(self)
+    }
+}
+
 impl DbExecutor for Conn<'_> {
     fn conn(&mut self) -> Conn<'_> {
         match self {
@@ -399,6 +493,10 @@ impl DbExecutor for Conn<'_> {
             Conn::SqlitePool(pool) => Conn::SqlitePool(pool),
             #[cfg(feature = "sqlite")]
             Conn::SqliteTx(tx) => Conn::SqliteTx(tx),
+            #[cfg(feature = "mysql")]
+            Conn::MySqlPool(pool) => Conn::MySqlPool(pool),
+            #[cfg(feature = "mysql")]
+            Conn::MySqlTx(tx) => Conn::MySqlTx(tx),
         }
     }
 }

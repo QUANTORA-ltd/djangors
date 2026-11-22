@@ -4,45 +4,52 @@
 //! This crate provides connection pooling, config-driven database setup,
 //! and transaction support with explicit isolation levels, built on top of SQLx.
 
-#[cfg(not(any(feature = "postgres", feature = "sqlite")))]
-compile_error!("djangors-db requires at least one backend feature: enable `postgres` or `sqlite`.");
+#[cfg(not(any(feature = "postgres", feature = "sqlite", feature = "mysql")))]
+compile_error!(
+    "djangors-db requires at least one backend feature: enable `postgres`, `sqlite`, or `mysql`."
+);
 
 /// Bind parameter values and NULL kinds.
 pub mod bind;
 /// Connection pool and database configuration options.
 pub mod config;
 /// Core database connection wrapper and transaction helpers.
-#[cfg(any(feature = "postgres", feature = "sqlite"))]
+#[cfg(any(feature = "postgres", feature = "sqlite", feature = "mysql"))]
 pub mod database;
 /// Database dialects for SQL syntax.
 pub mod dialect;
 /// Database errors and failure types.
 pub mod error;
 /// Query execution targets: run against the pool or inside a transaction.
-#[cfg(any(feature = "postgres", feature = "sqlite"))]
+#[cfg(any(feature = "postgres", feature = "sqlite", feature = "mysql"))]
 pub mod executor;
 /// Distributed (and process-local SQLite) transaction-scoped advisory locks.
-#[cfg(any(feature = "postgres", feature = "sqlite"))]
+#[cfg(any(feature = "postgres", feature = "sqlite", feature = "mysql"))]
 pub mod locks;
 /// Task-local SQL query recording and N+1 duplicate query detection.
 pub mod query_log;
+/// Multi-database routing (`DATABASE_ROUTERS` equivalent).
+#[cfg(any(feature = "postgres", feature = "sqlite", feature = "mysql"))]
+pub mod router;
 /// Backend-agnostic row abstraction.
-#[cfg(any(feature = "postgres", feature = "sqlite"))]
+#[cfg(any(feature = "postgres", feature = "sqlite", feature = "mysql"))]
 pub mod row;
 
 pub use bind::{BindValue, NullKind};
 pub use config::DatabaseConfig;
-#[cfg(any(feature = "postgres", feature = "sqlite"))]
+#[cfg(any(feature = "postgres", feature = "sqlite", feature = "mysql"))]
 #[doc(hidden)]
 pub use database::{isolation_level_sql, BoxFuture};
-#[cfg(any(feature = "postgres", feature = "sqlite"))]
+#[cfg(any(feature = "postgres", feature = "sqlite", feature = "mysql"))]
 pub use database::{Database, IsolationLevel};
 pub use dialect::{DatePart, Dialect};
 pub use error::DbError;
-#[cfg(any(feature = "postgres", feature = "sqlite"))]
+#[cfg(any(feature = "postgres", feature = "sqlite", feature = "mysql"))]
 pub use executor::{Conn, DbExecutor};
-#[cfg(any(feature = "postgres", feature = "sqlite"))]
+#[cfg(any(feature = "postgres", feature = "sqlite", feature = "mysql"))]
 pub use locks::{with_lock, with_lock_wait};
 pub use query_log::{with_query_log, DuplicateQueryWarning, QueryStats, RecordedQuery};
-#[cfg(any(feature = "postgres", feature = "sqlite"))]
+#[cfg(any(feature = "postgres", feature = "sqlite", feature = "mysql"))]
+pub use router::{DatabaseRouter, MultiDatabase, PrimaryReplicaRouter};
+#[cfg(any(feature = "postgres", feature = "sqlite", feature = "mysql"))]
 pub use row::DbRow;

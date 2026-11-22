@@ -1,4 +1,4 @@
-use crate::forms::{build_inline_tables, render_form};
+use crate::forms::{build_inline_tables, render_form, FormOptions};
 use crate::log::{log_action, FieldDiffItem, ACTION_ADDITION, ACTION_CHANGE};
 use crate::model_admin::{parse_field_value, parse_relation_value};
 use crate::perms::{action_codename, require_perm, resolve_tenant};
@@ -39,6 +39,7 @@ pub(crate) async fn admin_add_get(
         .ext::<djangors_core::middleware::CsrfToken>()
         .map(|t| t.0.clone())
         .unwrap_or_default();
+    let options = FormOptions::from_admin(admin.as_ref());
     render_form(
         meta,
         &field_names,
@@ -49,9 +50,7 @@ pub(crate) async fn admin_add_get(
         csrf_token,
         true,
         false,
-        admin.fieldsets(),
-        admin.readonly_fields(),
-        admin.raw_id_fields(),
+        &options,
         vec![],
     )
 }
@@ -103,6 +102,7 @@ pub(crate) async fn admin_add_post(
                 .ext::<djangors_core::middleware::CsrfToken>()
                 .map(|t| t.0.clone())
                 .unwrap_or_default();
+            let options = FormOptions::from_admin(admin.as_ref());
             render_form(
                 meta,
                 &field_names,
@@ -113,9 +113,7 @@ pub(crate) async fn admin_add_post(
                 csrf_token,
                 true,
                 false,
-                admin.fieldsets(),
-                admin.readonly_fields(),
-                admin.raw_id_fields(),
+                &options,
                 vec![],
             )
         }
@@ -174,6 +172,7 @@ pub(crate) async fn admin_change_get(
         .map(|t| t.0.clone())
         .unwrap_or_default();
     let inlines_data = build_inline_tables(db, admin.inlines_config(), pk).await?;
+    let options = FormOptions::from_admin(admin.as_ref());
     render_form(
         meta,
         &field_names,
@@ -184,9 +183,7 @@ pub(crate) async fn admin_change_get(
         csrf_token,
         true,
         has_delete,
-        admin.fieldsets(),
-        admin.readonly_fields(),
-        admin.raw_id_fields(),
+        &options,
         inlines_data,
     )
 }
@@ -219,6 +216,56 @@ pub(crate) async fn admin_change_post(
 
     let Form(form_data) =
         Form::<std::collections::HashMap<String, String>>::from_request(&req).await?;
+
+    if admin.save_as() && form_data.contains_key("_saveasnew") {
+        let _add_user = require_perm(&req, db, admin.model_meta(), "add").await?;
+        match admin.create_from_form(db, &form_data, tenant).await? {
+            Ok(new_pk) => {
+                log_action(
+                    db,
+                    user.id,
+                    admin.model_meta(),
+                    new_pk,
+                    ACTION_ADDITION,
+                    "Added (saved as new).",
+                    None,
+                )
+                .await?;
+                return Ok(Response::redirect(&format!("/{}/{}/", app, model)));
+            }
+            Err(errors) => {
+                let meta = admin.model_meta();
+                let has_delete = if user.is_superuser {
+                    true
+                } else {
+                    let codename = action_codename(meta, "delete");
+                    djangors_auth::has_perm(db, user.id, &codename)
+                        .await
+                        .map_err(|e| DjangorsError::Internal(e.to_string()))?
+                };
+                let field_names = admin.field_names();
+                let csrf_token = req
+                    .ext::<djangors_core::middleware::CsrfToken>()
+                    .map(|t| t.0.clone())
+                    .unwrap_or_default();
+                let inlines_data = build_inline_tables(db, admin.inlines_config(), pk).await?;
+                let options = FormOptions::from_admin(admin.as_ref());
+                return render_form(
+                    meta,
+                    &field_names,
+                    &form_data,
+                    &errors,
+                    false,
+                    &branding,
+                    csrf_token,
+                    true,
+                    has_delete,
+                    &options,
+                    inlines_data,
+                );
+            }
+        }
+    }
 
     let old_row_vals = admin.get_by_pk(db, pk, tenant).await?;
 
@@ -305,6 +352,7 @@ pub(crate) async fn admin_change_post(
                 .map(|t| t.0.clone())
                 .unwrap_or_default();
             let inlines_data = build_inline_tables(db, admin.inlines_config(), pk).await?;
+            let options = FormOptions::from_admin(admin.as_ref());
             render_form(
                 meta,
                 &field_names,
@@ -315,9 +363,7 @@ pub(crate) async fn admin_change_post(
                 csrf_token,
                 true,
                 has_delete,
-                admin.fieldsets(),
-                admin.readonly_fields(),
-                admin.raw_id_fields(),
+                &options,
                 inlines_data,
             )
         }

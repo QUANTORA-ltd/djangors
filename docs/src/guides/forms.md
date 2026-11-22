@@ -284,3 +284,94 @@ exactly the shape `djangors-views`' `UpdateView` implements for you.
 Use with `djangors-views`' generic `CreateView`/`UpdateView` (see the
 [Class-Based Views guide](class-based-views.md)) to get a full
 form-render-and-submit flow without writing a handler by hand.
+
+---
+
+## Djangors 1.0 Field Types, Widgets, Media & Inline FormSets
+
+### Built-in Form Field Types
+
+In addition to `CharField`, `IntegerField`, `BooleanField`, `EmailField`, and `ChoiceField`, Djangors 1.0 ships 17 new `FormField` types in `djangors_forms`:
+
+| Field Type | Parsed / Cleaned Value | Key Validations |
+| --- | --- | --- |
+| `FloatField` | `f64` | Rejects NaN/Inf; optional `min_value` / `max_value` |
+| `DecimalField` | `rust_decimal::Decimal` | `max_digits`, `decimal_places`, min/max bounds |
+| `DateField` | `chrono::NaiveDate` | Parses ISO `YYYY-MM-DD` (and custom formats) |
+| `DateTimeField` | `chrono::NaiveDateTime` / `DateTime` | Parses ISO-8601 and HTML `datetime-local` strings |
+| `TimeField` | `chrono::NaiveTime` | Parses `HH:MM` and `HH:MM:SS` |
+| `DurationField` | `chrono::Duration` | Parses ISO-8601 or `HH:MM:SS` / seconds |
+| `UrlField` | `String` | Validates `http://` / `https://` scheme and host |
+| `SlugField` | `String` | Allows ASCII letters, digits, hyphens, and underscores |
+| `UuidField` | `uuid::Uuid` | Validates canonical UUID strings |
+| `FileField` | `String` / upload metadata | Optional `max_length` and allowed extensions |
+| `ImageField` | `String` / image upload metadata | Validates image MIME/extension allowlist |
+| `MultipleChoiceField` | `Vec<String>` | Ensures every submitted choice is in `choices` |
+| `TypedChoiceField<T>` | `T` | Validates choice membership and coerces via custom parser |
+| `JsonField` | `serde_json::Value` | Parses valid JSON payloads |
+| `GenericIpAddressField` | `std::net::IpAddr` | Configurable `IpProtocol::{Both, IPv4, IPv6}` |
+| `ModelChoiceField` | `i64` / PK string | Validates against an allowed set of model primary keys |
+| `ModelMultipleChoiceField` | `Vec<i64>` / PK list | Validates multiple selected model primary keys |
+
+```rust,illustrative
+use djangors_forms::{
+    DateField, DecimalField, FormField, GenericIpAddressField, IpProtocol, JsonField, SlugField,
+    UrlField, UuidField,
+};
+
+let slug = SlugField::new().clean("hello-djangors-1-0")?;
+let url = UrlField::new().clean("https://djangors.dev")?;
+let ip = GenericIpAddressField::new(IpProtocol::Both).clean("2001:db8::1")?;
+let payload = JsonField::new().clean(r#"{"active": true}"#)?;
+let date = DateField::new().clean("2026-07-30")?;
+```
+
+### New Widgets & `FormMedia`
+
+Djangors 1.0 adds 8 new HTML widgets (all XSS-escaped):
+
+| Widget | Rendered HTML |
+| --- | --- |
+| `FileInput` | `<input type="file">` |
+| `ClearableFileInput` | File input plus current file link and clear checkbox |
+| `SelectMultiple` | `<select multiple>` with multi-value selection |
+| `CheckboxSelectMultiple` | List of `<input type="checkbox">` options |
+| `DateTimeInput` | `<input type="datetime-local">` |
+| `TimeInput` | `<input type="time">` |
+| `UrlInput` | `<input type="url">` |
+| `SplitDateTimeWidget` | Paired `<input type="date">` and `<input type="time">` inputs |
+
+Use **`FormMedia`** (`djangors_forms::FormMedia`) to declare, merge, and render CSS/JS assets required by custom widgets or forms:
+
+```rust,illustrative
+use djangors_forms::FormMedia;
+
+let media = FormMedia::new()
+    .add_css("all", "/static/widgets/datepicker.css")
+    .add_js("/static/widgets/datepicker.js");
+
+let combined = media.merge(&FormMedia::new().add_js("/static/app.js"));
+let head_tags = combined.render(); // <link rel="stylesheet" ...> and <script src="..."></script>
+```
+
+### `ManagementForm` & `InlineFormSet`
+
+- **`ManagementForm`** models and validates the hidden `TOTAL_FORMS`, `INITIAL_FORMS`, `MIN_NUM_FORMS`, and `MAX_NUM_FORMS` fields for any `FormSet`.
+- **`InlineFormSet`** wraps a `FormSet` bound to a parent record's foreign-key field (`parent_fk_name`) and primary key (`parent_pk`), automatically injecting the parent FK into every child form during cleaning:
+
+```rust,illustrative
+use djangors_forms::{FormSet, InlineFormSet};
+use std::collections::HashMap;
+
+let inline: InlineFormSet<()> = InlineFormSet::new(
+    FormSet::new().with_prefix("items").with_can_delete(true),
+    "order_id",
+    "42",
+);
+
+let mgmt_html = inline.formset.render_management_form();
+let cleaned = inline.clean_with(&post_data, |child_map| {
+    // `child_map["order_id"]` is automatically populated with `"42"`
+    Ok(child_map.get("sku").cloned().unwrap_or_default())
+})?;
+```

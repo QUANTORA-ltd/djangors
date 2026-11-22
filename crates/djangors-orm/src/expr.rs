@@ -161,6 +161,28 @@ pub enum CompareOp {
     Regex,
     /// Case-insensitive POSIX regular-expression match (`~*`). Lookup suffix `iregex`.
     IRegex,
+    /// Case-insensitive prefix string match (`ILIKE 'val%'`). Lookup suffix `istartswith`.
+    IStartsWith,
+    /// Case-insensitive suffix string match (`ILIKE '%val'`). Lookup suffix `iendswith`.
+    IEndsWith,
+    /// Inclusive range test (`BETWEEN $1 AND $2`). Lookup suffix `range`; expects a 2-element [`Value::List`].
+    Range,
+    /// Extract year from date/datetime (`EXTRACT(YEAR FROM col) = $1`). Lookup suffix `year`.
+    Year,
+    /// Extract month (1..=12) from date/datetime. Lookup suffix `month`.
+    Month,
+    /// Extract day of month (1..=31) from date/datetime. Lookup suffix `day`.
+    Day,
+    /// Extract day of week (1=Sunday..=7=Saturday) from date/datetime. Lookup suffix `week_day`.
+    WeekDay,
+    /// Cast/extract date portion (`DATE(col) = $1`). Lookup suffix `date`.
+    Date,
+    /// Extract hour (0..=23) from datetime. Lookup suffix `hour`.
+    Hour,
+    /// JSON object key existence test (Postgres `col ? $1`, SQLite `json_extract(col, '$.key') IS NOT NULL`). Lookup suffix `has_key`.
+    JsonHasKey,
+    /// JSON containment test (Postgres `col @> $1::jsonb`, SQLite fallback `LIKE`). Lookup suffix `json_contains`.
+    JsonContains,
 }
 
 /// Resolved boolean expression tree for query WHERE clauses.
@@ -595,9 +617,9 @@ pub fn split_field_lookup(s: &'static str) -> (&'static str, &'static str) {
         let suffix = &s[idx + 2..];
         match suffix {
             "eq" | "lt" | "lte" | "gt" | "gte" | "contains" | "icontains" | "startswith"
-            | "endswith" | "ne" | "iexact" | "in" | "isnull" | "regex" | "iregex" => {
-                (field, suffix)
-            }
+            | "endswith" | "istartswith" | "iendswith" | "ne" | "iexact" | "in" | "isnull"
+            | "regex" | "iregex" | "range" | "year" | "month" | "day" | "week_day" | "date"
+            | "hour" | "has_key" | "json_contains" => (field, suffix),
             _ => (s, "eq"),
         }
     } else {

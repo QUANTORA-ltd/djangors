@@ -33,13 +33,14 @@ It's built for the workloads Django gets nervous about at scale: banking backend
 management systems, high-traffic e-commerce. The kind of system where "it usually works" isn't
 good enough.
 
-**Status**: pre-1.0, under active development. The core (ORM, admin, auth, migrations, CLI,
-contrib batteries, a REST framework, WebSockets/SSE, background tasks, payments, multi-tenancy) is
-built and tested; see [`PLAN.md`](PLAN.md) for the full phase-by-phase roadmap and what's done vs.
-remaining. All 32 crates are published on
-[crates.io](https://crates.io/search?q=djangors) at `0.14.0`, including the full contrib battery:
-PDF generation, deployment, payments, multi-tenancy, sitemaps, RSS/Atom syndication, flat pages,
-redirects, flash messages, object-level permissions, TOTP/2FA, and content types / generic FKs.
+**Status**: **`1.0.0` stable** (Semantic Versioning guarantees active; see
+[`docs/src/api-stability.md`](docs/src/api-stability.md)). All 38 workspace crates are published on
+[crates.io](https://crates.io/search?q=djangors) at `1.0.0`, covering the full Django battery:
+ORM, multi-DB/MySQL/PostgreSQL/SQLite, migrations, admin + admindocs, forms & formsets, auth with
+pluggable hashers, templates with partials & context processors, i18n/l10n, REST + OpenAPI 3.1 /
+TypeScript codegen, WebSockets/SSE, background tasks, PDF generation, deployment, payments,
+multi-tenancy, GIS/PostGIS, sites, sitemaps, RSS/Atom syndication, flat pages, redirects, flash
+messages, object-level permissions, TOTP/2FA, and content types / generic FKs.
 
 ## Why Rust instead of Python for this?
 
@@ -85,7 +86,9 @@ of composable pieces:
 | `djangors-deploy` | `DeployProvider` trait for `dj deploy`. Ships a Render provider (real REST API) and an SSH/VPS provider (shells out to the system `ssh`); Railway/GCP/AWS not yet implemented |
 | `djangors-contrib-payments` | Payment provider integrations (**Paystack** and **Bachs**) with HMAC-SHA512 webhook verification and idempotent, DB-constraint-backed transaction recording; amounts always in integer minor units, never a float |
 | `djangors-contrib-tenancy` | Multi-tenancy: a `Tenant` model, membership-verified per-request tenant resolution, and a one-line `Scoped` helper for real cross-tenant row isolation |
-| `djangors-contrib-*` | Sitemaps, RSS/Atom syndication, flat pages, redirects, flash messages, object-level permissions (guardian-style), TOTP/2FA, content types / generic foreign keys |
+| `djangors-contrib-sites` | Django's Sites framework: `Site` model, `CurrentSite`, `CurrentSiteLayer`, and admin registration (`sites` facade feature) |
+| `djangors-contrib-gis` | GeoDjango-style spatial types (`Point`, `LineString`, `Polygon`, `Geometry`), WKT/EWKT parsing, Haversine distance, and PostGIS SQL helpers (`gis` facade feature) |
+| `djangors-contrib-*` | Sitemaps, RSS/Atom syndication, flat pages, redirects, flash messages, object-level permissions (guardian-style), TOTP/2FA, content types / generic foreign keys, organizations, OAuth 2 / OIDC, SAML SSO, history |
 
 Three example apps exercise the framework end-to-end: `examples/polls` (the tutorial app, mirrors
 Django's own polls tutorial), `examples/school` (an admin-heavy example proving the generic admin

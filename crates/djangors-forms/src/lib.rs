@@ -14,6 +14,8 @@ pub mod fields;
 pub mod formsets;
 /// Bot-mitigation helpers (honeypot fields, minimum submit time, UA checks).
 pub mod honeypot;
+/// Static CSS and JavaScript media asset declarations for forms and widgets.
+pub mod media;
 /// Form rendering engines (`as_div`, `as_table`, `as_p`) and `BoundField`.
 pub mod renderers;
 /// Form widgets and HTML rendering.
@@ -27,12 +29,18 @@ pub use captcha::{
 };
 pub use djangors_macros::Form;
 pub use error::{FieldError, FormErrors};
-pub use fields::{BooleanField, CharField, ChoiceField, EmailField, FormField, IntegerField};
+pub use fields::{
+    BooleanField, CharField, ChoiceField, DateField, DateTimeField, DecimalField, DurationField,
+    EmailField, FileField, FloatField, FormField, GenericIpAddressField, ImageField, IntegerField,
+    IpProtocol, JsonField, ModelChoiceField, ModelMultipleChoiceField, MultipleChoiceField,
+    SlugField, TimeField, TypedChoiceField, UrlField, UuidField,
+};
 pub use formsets::*;
 pub use honeypot::{
     is_suspicious_user_agent, BotGuard, HoneypotError, HoneypotField, MinSubmitTime,
     SubmissionCheck,
 };
+pub use media::FormMedia;
 pub use renderers::*;
 pub use widgets::*;
 

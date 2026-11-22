@@ -306,6 +306,77 @@ pub(crate) struct FilterBlockData {
     pub(crate) all_href: String,
     pub(crate) yes_href: String,
     pub(crate) no_href: String,
+    pub(crate) all_count: Option<i64>,
+    pub(crate) yes_count: Option<i64>,
+    pub(crate) no_count: Option<i64>,
+}
+
+async fn count_boolean_facets(
+    db: &djangors_db::Database,
+    table_name: &'static str,
+    col: &'static str,
+    tenant: crate::TenantFilter,
+) -> Result<(i64, i64, i64), DjangorsError> {
+    let mut conn = db.conn();
+    let dialect = conn.dialect();
+    let table_q = dialect.quote_ident(table_name);
+    let col_q = dialect.quote_ident(col);
+
+    let (tenant_clause, tenant_bind) = match tenant {
+        Some((tf, tid)) => (
+            Some(format!(
+                "{} = {}",
+                dialect.quote_ident(tf),
+                dialect.placeholder(1)
+            )),
+            Some(djangors_db::BindValue::I64(tid)),
+        ),
+        None => (None, None),
+    };
+
+    let all_sql = match &tenant_clause {
+        Some(tc) => format!("SELECT COUNT(*) FROM {table_q} WHERE {tc}"),
+        None => format!("SELECT COUNT(*) FROM {table_q}"),
+    };
+    let mut binds_all = Vec::new();
+    if let Some(b) = tenant_bind.clone() {
+        binds_all.push(b);
+    }
+    let all_count = conn
+        .fetch_one(&all_sql, &binds_all)
+        .await
+        .map_err(|e| DjangorsError::Internal(e.to_string()))?
+        .try_i64(0)
+        .map_err(|e| DjangorsError::Internal(e.to_string()))?
+        .unwrap_or(0);
+
+    let p_bool = dialect.placeholder(binds_all.len() + 1);
+    let bool_sql = match &tenant_clause {
+        Some(tc) => format!("SELECT COUNT(*) FROM {table_q} WHERE {tc} AND {col_q} = {p_bool}"),
+        None => format!("SELECT COUNT(*) FROM {table_q} WHERE {col_q} = {p_bool}"),
+    };
+
+    let mut binds_yes = binds_all.clone();
+    binds_yes.push(djangors_db::BindValue::Bool(true));
+    let yes_count = conn
+        .fetch_one(&bool_sql, &binds_yes)
+        .await
+        .map_err(|e| DjangorsError::Internal(e.to_string()))?
+        .try_i64(0)
+        .map_err(|e| DjangorsError::Internal(e.to_string()))?
+        .unwrap_or(0);
+
+    let mut binds_no = binds_all;
+    binds_no.push(djangors_db::BindValue::Bool(false));
+    let no_count = conn
+        .fetch_one(&bool_sql, &binds_no)
+        .await
+        .map_err(|e| DjangorsError::Internal(e.to_string()))?
+        .try_i64(0)
+        .map_err(|e| DjangorsError::Internal(e.to_string()))?
+        .unwrap_or(0);
+
+    Ok((all_count, yes_count, no_count))
 }
 
 #[derive(serde::Serialize)]
@@ -618,11 +689,27 @@ pub(crate) async fn admin_changelist(
             pairs_no.push(("day", day_str.as_deref()));
             let no_href = build_query_string(&pairs_no);
 
+            let (all_count, yes_count, no_count) = if admin.show_facets() {
+                let col_name = meta
+                    .fields
+                    .iter()
+                    .find(|f| f.name == filter_field)
+                    .map(|f| f.column_name)
+                    .unwrap_or(filter_field);
+                let (a, y, n) = count_boolean_facets(db, meta.table_name, col_name, tenant).await?;
+                (Some(a), Some(y), Some(n))
+            } else {
+                (None, None, None)
+            };
+
             list_filter_blocks.push(FilterBlockData {
                 field: filter_field.to_string(),
                 all_href,
                 yes_href,
                 no_href,
+                all_count,
+                yes_count,
+                no_count,
             });
         }
     }

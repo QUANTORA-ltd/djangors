@@ -258,3 +258,15 @@ fn internal_error_text_is_hidden_from_json_clients_outside_debug() {
         .unwrap()
         .contains("secret_table"));
 }
+
+#[test]
+fn vary_on_headers_and_cookie_deduplicates_case_insensitively() {
+    let resp = Response::text(StatusCode::OK, "hi")
+        .vary_on_headers(&["Accept-Encoding", "Accept-Language"])
+        .vary_on_cookie()
+        .vary_on_headers(&["cookie", "accept-encoding", "Origin"]);
+    assert_eq!(
+        resp.headers().get("vary").unwrap(),
+        "Accept-Encoding, Accept-Language, Cookie, Origin"
+    );
+}

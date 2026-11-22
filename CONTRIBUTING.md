@@ -1,82 +1,43 @@
 # Contributing to Djangors
 
-Thank you for your interest in contributing to Djangors! This document outlines the development workflow, code standards, and verification requirements for this repository.
+Thank you for your interest in contributing to Djangors!
 
----
+## Development Setup
 
-## Workspace & Versioning
+- **Rust toolchain**: see `rust-version` in [Cargo.toml](Cargo.toml) (MSRV is CI-enforced).
+- **Test runner**: we recommend [`cargo-nextest`](https://nexte.st/) (`cargo install cargo-nextest`).
+- **Fast local tests (SQLite, ~15s)**:
+  ```bash
+  TEST_BACKEND=sqlite cargo nextest run --workspace
+  ```
+- **Full suite with PostgreSQL 16**:
+  ```bash
+  docker run -d --rm --name djangors-pg -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=djangors_test -p 5432:5432 postgres:16-alpine
+  DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/djangors_test cargo nextest run --workspace
+  ```
 
-Djangors is structured as a single Cargo workspace comprising **32 crates** that share a unified version number (`0.6.0`). All crates are versioned and released together.
+## Quality Gates
 
----
-
-## Design-Doc-First Process
-
-For any non-trivial architectural change, new feature, or subsystem addition, **write a design document under `docs/design/` before writing code**.
-
-This repository currently contains **99 design documents** under `docs/design/`. Design docs articulate the design goals, API contracts, threat model considerations, and open trade-offs. This process is our standard development convention, not an optional aspiration.
-
----
-
-## Code Standards & Documentation
-
-- **Doc Comments**: `#![deny(missing_docs)]` is enabled across every crate in the workspace. All new public modules, structs, enums, traits, methods, and functions must include descriptive doc comments (`///`).
-- **Doc Code Block Tags**: Every Rust code block in documentation files (`docs/src/**/*.md`) must be explicitly tagged as either:
-  - ` ```rust,compile ` for code examples that must compile clean.
-  - ` ```rust,illustrative ` for conceptual or incomplete code snippets.
-
-> [!WARNING]
-> A bare ` ```rust ` fence in `docs/src/` is a hard build error enforced via `tools/doc-code-check`.
-
----
-
-## Running Tests
-
-### Running Tests Without PostgreSQL (Recommended Fast Path)
-
-To run the test suite locally without needing a PostgreSQL database server:
+Before opening a pull request, please ensure all of the following pass:
 
 ```bash
-env -u DATABASE_URL TEST_BACKEND=sqlite cargo test
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+TEST_BACKEND=sqlite cargo nextest run --workspace
 ```
 
-Using the SQLite test backend requires no external database setup and is dramatically faster. For instance, running tests for `djangors-admin` takes **0.69s** with SQLite versus **15.8s** with PostgreSQL.
+All workspace crates enforce `#![deny(missing_docs)]`. Please document every new public item
+and include unit or integration tests covering your change.
 
-PostgreSQL-only tests are marked with `#[ignore = "requires PostgreSQL"]` and will be skipped automatically when running with the SQLite backend.
+## Pull Requests & RFCs
 
-To run PostgreSQL tests, ensure a PostgreSQL instance is running, set `DATABASE_URL` (e.g. `postgres://postgres:postgres@localhost/djangors_test`), and execute:
+- Small bug fixes and documentation improvements can go straight to a PR.
+- Medium or larger public API changes should include a short design doc in `docs/design/`
+  explaining the motivation and API shape (see `docs/src/api-stability.md`).
+- Keep commits focused and descriptive.
+- Update `CHANGELOG.md` under `[Unreleased]` for user-visible changes.
 
-```bash
-cargo test --workspace
-```
+## Code of Conduct
 
----
-
-## Verification Commands (CI Enforced)
-
-Every Pull Request is validated in Continuous Integration (CI) against five checks. All five must pass before a PR can be merged:
-
-1. **Format Check**:
-   ```bash
-   cargo fmt --all -- --check
-   ```
-
-2. **Clippy Lints**:
-   ```bash
-   cargo clippy --workspace --all-targets -- -D warnings
-   ```
-
-3. **Workspace Build**:
-   ```bash
-   cargo build --workspace --all-targets
-   ```
-
-4. **Workspace Test Suite**:
-   ```bash
-   cargo test --workspace
-   ```
-
-5. **Workspace Documentation Build**:
-   ```bash
-   RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
-   ```
+All contributors are expected to abide by our [Code of Conduct](CODE_OF_CONDUCT.md).

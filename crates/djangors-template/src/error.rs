@@ -17,6 +17,15 @@ pub enum TemplateError {
     #[error("I/O error reading template: {0}")]
     Io(#[from] std::io::Error),
 
+    /// A named template partial was not found inside the template.
+    #[error("Partial '{partial}' not found in template '{template}'")]
+    PartialNotFound {
+        /// The template that was searched.
+        template: String,
+        /// The name of the missing partial.
+        partial: String,
+    },
+
     /// A template parsing or rendering error from MiniJinja.
     #[error("MiniJinja error: {0}")]
     MiniJinja(#[from] minijinja::Error),

@@ -35,6 +35,9 @@ homepage = "https://djangors.vercel.app"
 [profile.dev]
 debug = "line-tables-only"
 
+[profile.dev.package."*"]
+debug = 0
+
 # Pure-Rust crypto & password hashing are 30-150x slower at opt-level = 0,
 # turning Argon2 and 2048-bit RSA tests into multi-second bottlenecks.
 # Compiling just these leaf crates at opt-level = 3 keeps debug builds fast
@@ -61,7 +64,8 @@ opt-level = 3
 opt-level = 3
 
 [profile.release]
+opt-level = "z"
 lto = "thin"
-strip = "symbols"
+strip = true
 codegen-units = 1
 

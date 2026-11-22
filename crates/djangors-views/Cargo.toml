@@ -18,6 +18,7 @@ postgres = ["djangors-core/postgres", "djangors-orm/postgres", "djangors-templat
 sqlite = ["djangors-core/sqlite", "djangors-orm/sqlite", "djangors-template/sqlite"]
 
 [dependencies]
+chrono = { version = "0.4", features = ["std", "serde"] }
 djangors-core = { path = "../djangors-core", version = "0.14.0", default-features = false }
 djangors-orm = { path = "../djangors-orm", version = "0.14.0", default-features = false }
 djangors-template = { path = "../djangors-template", version = "0.14.0", default-features = false }

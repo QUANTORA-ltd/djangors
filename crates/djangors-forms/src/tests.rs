@@ -568,3 +568,525 @@ async fn test_captcha_always_pass_fail_and_field() {
     assert!(html.contains("challenges.cloudflare.com/turnstile"));
     assert!(html.contains("cf-turnstile-response"));
 }
+
+// --- NEW TESTS: Standard Django Form Fields ---
+
+#[test]
+fn test_float_field() {
+    let field = FloatField {
+        min_value: Some(0.5),
+        max_value: Some(10.5),
+        ..FloatField::new()
+    };
+    assert_eq!(field.clean(Some("4.25")), Ok(Some(4.25)));
+    assert_eq!(field.clean(Some("0.5")), Ok(Some(0.5)));
+    assert_eq!(field.clean(Some("10.5")), Ok(Some(10.5)));
+    assert!(field.clean(Some("0.49")).is_err());
+    assert!(field.clean(Some("10.51")).is_err());
+    assert!(field.clean(Some("NaN")).is_err());
+    assert!(field.clean(Some("inf")).is_err());
+    assert!(field.clean(Some("abc")).is_err());
+    assert!(field.clean(None).is_err());
+
+    let optional = FloatField {
+        required: false,
+        ..FloatField::new()
+    };
+    assert_eq!(optional.clean(None), Ok(None));
+    assert_eq!(optional.clean(Some("")), Ok(None));
+}
+
+#[test]
+fn test_decimal_field() {
+    let field = DecimalField {
+        max_digits: Some(5),
+        decimal_places: Some(2),
+        min_value: Some(-10.0),
+        max_value: Some(500.0),
+        ..DecimalField::new()
+    };
+    assert_eq!(field.clean(Some("123.45")), Ok(Some("123.45".to_string())));
+    assert_eq!(field.clean(Some("0.50")), Ok(Some("0.50".to_string())));
+    assert_eq!(field.clean(Some("-9.99")), Ok(Some("-9.99".to_string())));
+    assert!(field.clean(Some("12.345")).is_err()); // too many decimal places
+    assert!(field.clean(Some("1234.5")).is_err()); // too many digits before decimal
+    assert!(field.clean(Some("123456")).is_err()); // too many total digits
+    assert!(field.clean(Some("-10.01")).is_err()); // below min
+    assert!(field.clean(Some("500.01")).is_err()); // above max
+    assert!(field.clean(Some("12.3.4")).is_err()); // malformed
+    assert!(field.clean(Some("abc")).is_err());
+    assert!(field.clean(None).is_err());
+
+    let optional = DecimalField {
+        required: false,
+        ..DecimalField::new()
+    };
+    assert_eq!(optional.clean(None), Ok(None));
+}
+
+#[test]
+fn test_date_field() {
+    let field = DateField::new();
+    assert_eq!(
+        field.clean(Some("2024-02-29")),
+        Ok(Some("2024-02-29".to_string()))
+    ); // leap year
+    assert!(field.clean(Some("2023-02-29")).is_err()); // non-leap year
+    assert!(field.clean(Some("2024-13-01")).is_err()); // invalid month
+    assert!(field.clean(Some("2024-04-31")).is_err()); // April has 30 days
+    assert!(field.clean(Some("not-a-date")).is_err());
+    assert!(field.clean(None).is_err());
+
+    let custom_fmt = DateField {
+        input_formats: vec!["%m/%d/%Y".to_string(), "%Y-%m-%d".to_string()],
+        required: false,
+        ..DateField::new()
+    };
+    assert_eq!(
+        custom_fmt.clean(Some("07/04/2026")),
+        Ok(Some("2026-07-04".to_string()))
+    );
+    assert_eq!(custom_fmt.clean(None), Ok(None));
+}
+
+#[test]
+fn test_datetime_and_time_fields() {
+    let dt = DateTimeField::new();
+    assert_eq!(
+        dt.clean(Some("2026-07-31 14:30:00")),
+        Ok(Some("2026-07-31 14:30:00".to_string()))
+    );
+    assert_eq!(
+        dt.clean(Some("2026-07-31T14:30")),
+        Ok(Some("2026-07-31T14:30".to_string()))
+    );
+    assert_eq!(
+        dt.clean(Some("2026-07-31T14:30:45.123Z")),
+        Ok(Some("2026-07-31T14:30:45.123Z".to_string()))
+    );
+    assert_eq!(
+        dt.clean(Some("2026-07-31T14:30:45+02:00")),
+        Ok(Some("2026-07-31T14:30:45+02:00".to_string()))
+    );
+    assert!(dt.clean(Some("2026-02-30T14:30:00")).is_err());
+    assert!(dt.clean(Some("2026-07-31T25:00:00")).is_err());
+    assert!(dt.clean(Some("2026-07-31")).is_err());
+
+    let t = TimeField::new();
+    assert_eq!(t.clean(Some("08:15")), Ok(Some("08:15".to_string())));
+    assert_eq!(
+        t.clean(Some("23:59:59.500")),
+        Ok(Some("23:59:59.500".to_string()))
+    );
+    assert!(t.clean(Some("24:00")).is_err());
+    assert!(t.clean(Some("12:60")).is_err());
+    assert!(t.clean(Some("invalid")).is_err());
+}
+
+#[test]
+fn test_duration_field() {
+    use std::time::Duration;
+
+    let field = DurationField::new();
+    assert_eq!(field.clean(Some("90")), Ok(Some(Duration::from_secs(90))));
+    assert_eq!(
+        field.clean(Some("1.5")),
+        Ok(Some(Duration::from_millis(1500)))
+    );
+    assert_eq!(
+        field.clean(Some("01:30:15")),
+        Ok(Some(Duration::from_secs(3600 + 1800 + 15)))
+    );
+    assert_eq!(
+        field.clean(Some("2 03:04:05")),
+        Ok(Some(Duration::from_secs(2 * 86400 + 3 * 3600 + 4 * 60 + 5)))
+    );
+    assert_eq!(
+        field.clean(Some("PT1H30M15S")),
+        Ok(Some(Duration::from_secs(3600 + 1800 + 15)))
+    );
+    assert_eq!(
+        field.clean(Some("P1DT2H")),
+        Ok(Some(Duration::from_secs(86400 + 7200)))
+    );
+    assert!(field.clean(Some("P")).is_err());
+    assert!(field.clean(Some("PT")).is_err());
+    assert!(field.clean(Some("-5")).is_err());
+    assert!(field.clean(Some("01:99:00")).is_err());
+}
+
+#[test]
+fn test_url_slug_and_uuid_fields() {
+    let url = UrlField {
+        max_length: Some(50),
+        ..UrlField::new()
+    };
+    assert_eq!(
+        url.clean(Some("https://example.com/path?a=1")),
+        Ok("https://example.com/path?a=1".to_string())
+    );
+    assert_eq!(
+        url.clean(Some("http://localhost:8000/admin")),
+        Ok("http://localhost:8000/admin".to_string())
+    );
+    assert!(url.clean(Some("ftp://example.com")).is_err());
+    assert!(url.clean(Some("https://bad host.com")).is_err());
+    assert!(url
+        .clean(Some(
+            "https://example.com/very-long-path-exceeding-fifty-characters-easily"
+        ))
+        .is_err());
+
+    let slug = SlugField {
+        max_length: Some(20),
+        ..SlugField::new()
+    };
+    assert_eq!(
+        slug.clean(Some("my-post_123")),
+        Ok("my-post_123".to_string())
+    );
+    assert!(slug.clean(Some("has spaces")).is_err());
+    assert!(slug.clean(Some("no/slashes")).is_err());
+    assert!(slug.clean(Some("this-slug-is-way-too-long")).is_err());
+
+    let uuid = UuidField::new();
+    assert_eq!(
+        uuid.clean(Some("550E8400-E29B-41D4-A716-446655440000")),
+        Ok(Some("550e8400-e29b-41d4-a716-446655440000".to_string()))
+    );
+    assert_eq!(
+        uuid.clean(Some("550e8400e29b41d4a716446655440000")),
+        Ok(Some("550e8400-e29b-41d4-a716-446655440000".to_string()))
+    );
+    assert!(uuid.clean(Some("not-a-uuid")).is_err());
+    assert!(uuid
+        .clean(Some("550e8400-e29b-41d4-a716-44665544000z"))
+        .is_err());
+}
+
+#[test]
+fn test_file_and_image_fields() {
+    let file_field = FileField {
+        max_length: Some(30),
+        allowed_extensions: vec!["pdf".to_string(), "txt".to_string()],
+        ..FileField::new()
+    };
+    assert_eq!(
+        file_field.clean(Some("report.PDF")),
+        Ok(Some("report.PDF".to_string()))
+    );
+    assert!(file_field.clean(Some("malware.exe")).is_err());
+    assert!(file_field.validate_bytes("empty.txt", b"").is_err());
+    assert_eq!(
+        file_field.validate_bytes("notes.txt", b"hello"),
+        Ok("notes.txt".to_string())
+    );
+
+    let img_field = ImageField::new();
+    assert_eq!(
+        img_field.clean(Some("avatar.png")),
+        Ok(Some("avatar.png".to_string()))
+    );
+    assert!(img_field.clean(Some("doc.pdf")).is_err());
+    assert_eq!(
+        img_field.validate_bytes("avatar.png", b"\x89PNG\r\n\x1a\nrest"),
+        Ok("avatar.png".to_string())
+    );
+    assert_eq!(
+        img_field.validate_bytes("photo.jpg", &[0xFF, 0xD8, 0xFF, 0xE0]),
+        Ok("photo.jpg".to_string())
+    );
+    assert_eq!(
+        img_field.validate_bytes(
+            "icon.svg",
+            b"<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>"
+        ),
+        Ok("icon.svg".to_string())
+    );
+    assert!(img_field
+        .validate_bytes("fake.png", b"not actually a png")
+        .is_err());
+}
+
+#[test]
+fn test_choice_json_ip_and_model_choice_fields() {
+    let multi = MultipleChoiceField::new(vec![
+        ("r".to_string(), "Red".to_string()),
+        ("g".to_string(), "Green".to_string()),
+        ("b".to_string(), "Blue".to_string()),
+    ]);
+    assert_eq!(
+        multi.clean(Some("r, b")),
+        Ok(vec!["r".to_string(), "b".to_string()])
+    );
+    assert!(multi.clean(Some("r, yellow")).is_err());
+    assert!(multi.clean(None).is_err());
+
+    let typed = TypedChoiceField::new(
+        vec![
+            ("1".to_string(), "Low".to_string()),
+            ("2".to_string(), "High".to_string()),
+        ],
+        |s| s.parse::<u32>().map_err(|e| e.to_string()),
+    );
+    assert_eq!(typed.clean(Some("2")), Ok(Some(2u32)));
+    assert!(typed.clean(Some("3")).is_err());
+
+    let json = JsonField::new();
+    assert_eq!(
+        json.clean(Some(r#"{"active": true, "count": 3}"#)),
+        Ok(Some(serde_json::json!({"active": true, "count": 3})))
+    );
+    assert!(json.clean(Some("{bad json")).is_err());
+
+    let ip_both = GenericIpAddressField {
+        unpack_ipv4: true,
+        ..GenericIpAddressField::new()
+    };
+    assert_eq!(
+        ip_both.clean(Some("192.168.1.1")),
+        Ok(Some("192.168.1.1".to_string()))
+    );
+    assert_eq!(
+        ip_both.clean(Some("::ffff:192.0.2.1")),
+        Ok(Some("192.0.2.1".to_string()))
+    );
+    assert!(ip_both.clean(Some("999.999.999.999")).is_err());
+
+    let ipv4_only = GenericIpAddressField {
+        protocol: IpProtocol::Ipv4,
+        ..GenericIpAddressField::new()
+    };
+    assert!(ipv4_only.clean(Some("::1")).is_err());
+
+    let ipv6_only = GenericIpAddressField {
+        protocol: IpProtocol::Ipv6,
+        ..GenericIpAddressField::new()
+    };
+    assert_eq!(ipv6_only.clean(Some("::1")), Ok(Some("::1".to_string())));
+    assert!(ipv6_only.clean(Some("127.0.0.1")).is_err());
+
+    let model_choice = ModelChoiceField::new(vec![
+        ("1".to_string(), "Alice".to_string()),
+        ("2".to_string(), "Bob".to_string()),
+    ]);
+    assert_eq!(model_choice.clean(Some("1")), Ok(Some("1".to_string())));
+    assert!(model_choice.clean(Some("99")).is_err());
+
+    let model_multi = ModelMultipleChoiceField::new(vec![
+        ("10".to_string(), "Tag A".to_string()),
+        ("20".to_string(), "Tag B".to_string()),
+    ]);
+    assert_eq!(
+        model_multi.clean(Some("10,20")),
+        Ok(vec!["10".to_string(), "20".to_string()])
+    );
+    assert!(model_multi.clean(Some("10,30")).is_err());
+}
+
+// --- NEW TESTS: Additional Widgets & FormMedia ---
+
+#[test]
+fn test_additional_widgets_and_xss() {
+    let attrs = WidgetAttrs::new();
+
+    let file_html = FileInput.render("avatar", Some("ignored.png"), &attrs);
+    assert_eq!(
+        file_html,
+        r#"<input type="file" name="avatar" id="id_avatar">"#
+    );
+
+    let clearable = ClearableFileInput::new();
+    let clearable_html = clearable.render("avatar", Some("uploads/me.png"), &attrs);
+    assert!(clearable_html.contains("avatar-clear"));
+    assert!(clearable_html.contains("uploads&#x2F;me.png"));
+    assert!(clearable_html.contains(r#"<input type="file" name="avatar" id="id_avatar">"#));
+    assert_eq!(
+        clearable.render("avatar", None, &attrs),
+        r#"<input type="file" name="avatar" id="id_avatar">"#
+    );
+
+    let choices = vec![
+        ("a".to_string(), "Alpha".to_string()),
+        ("b".to_string(), "Beta".to_string()),
+        ("c".to_string(), "Gamma".to_string()),
+    ];
+    let sel_multi = SelectMultiple::new(choices.clone()).render("tags", Some("a, c"), &attrs);
+    assert!(sel_multi.contains(r#"<select name="tags" multiple id="id_tags">"#));
+    assert!(sel_multi.contains(r#"<option value="a" selected>Alpha</option>"#));
+    assert!(sel_multi.contains(r#"<option value="b">Beta</option>"#));
+    assert!(sel_multi.contains(r#"<option value="c" selected>Gamma</option>"#));
+
+    let cb_multi = CheckboxSelectMultiple::new(choices).render("tags", Some("b"), &attrs);
+    assert!(cb_multi.contains(r#"id="id_tags_1" checked"#));
+    assert!(!cb_multi.contains(r#"id="id_tags_0" checked"#));
+
+    assert_eq!(
+        DateTimeInput.render("starts_at", Some("2026-07-31T10:30"), &attrs),
+        r#"<input type="datetime-local" name="starts_at" value="2026-07-31T10:30" id="id_starts_at">"#
+    );
+    assert_eq!(
+        TimeInput.render("alarm", Some("07:00"), &attrs),
+        r#"<input type="time" name="alarm" value="07:00" id="id_alarm">"#
+    );
+    assert_eq!(
+        UrlInput.render("homepage", Some("https://example.com"), &attrs),
+        r#"<input type="url" name="homepage" value="https:&#x2F;&#x2F;example.com" id="id_homepage">"#
+    );
+
+    let split_html = SplitDateTimeWidget.render("event_at", Some("2026-07-31 15:45"), &attrs);
+    assert!(split_html.contains(
+        r#"<input type="date" name="event_at_0" value="2026-07-31" id="id_event_at_0">"#
+    ));
+    assert!(split_html
+        .contains(r#"<input type="time" name="event_at_1" value="15:45" id="id_event_at_1">"#));
+
+    // XSS safety on new widgets
+    let payload = "\"><script>alert(1)</script>";
+    assert!(!clearable
+        .render("f", Some(payload), &attrs)
+        .contains("<script>"));
+    assert!(!SplitDateTimeWidget
+        .render(payload, Some(payload), &attrs)
+        .contains("<script>"));
+}
+
+#[test]
+fn test_form_media_merge_and_render() {
+    let m1 = FormMedia::new()
+        .with_css("all", "/static/base.css")
+        .with_css("screen", "/static/screen.css")
+        .with_js("/static/jquery.js")
+        .with_js("/static/widget1.js");
+
+    let m2 = FormMedia::new()
+        .with_css("all", "/static/base.css") // duplicate
+        .with_css("all", "/static/extra.css")
+        .with_js("/static/jquery.js") // duplicate
+        .with_js("/static/widget2.js");
+
+    let merged = m1.merge(&m2);
+    assert_eq!(
+        merged.css.get("all"),
+        Some(&vec![
+            "/static/base.css".to_string(),
+            "/static/extra.css".to_string()
+        ])
+    );
+    assert_eq!(
+        merged.js,
+        vec![
+            "/static/jquery.js".to_string(),
+            "/static/widget1.js".to_string(),
+            "/static/widget2.js".to_string()
+        ]
+    );
+
+    let html = merged.render_html();
+    assert!(html.contains(r#"rel="stylesheet""#));
+    assert!(html.contains(r#"media="all""#));
+    assert!(html.contains(r#"<script src="&#x2F;static&#x2F;widget2.js"></script>"#));
+}
+
+// --- NEW TESTS: ManagementForm, FormSet::validate, InlineFormSet ---
+
+#[test]
+fn test_management_form_parse_and_render() {
+    let mgmt = ManagementForm::new("items", 3, 1, 1, 10);
+    let html = mgmt.render_html();
+    assert!(html.contains(r#"name="items-TOTAL_FORMS" value="3""#));
+    assert!(html.contains(r#"name="items-INITIAL_FORMS" value="1""#));
+    assert!(html.contains(r#"name="items-MIN_NUM_FORMS" value="1""#));
+    assert!(html.contains(r#"name="items-MAX_NUM_FORMS" value="10""#));
+
+    let mut data = HashMap::new();
+    data.insert("items-TOTAL_FORMS".to_string(), "3".to_string());
+    data.insert("items-INITIAL_FORMS".to_string(), "1".to_string());
+    data.insert("items-MIN_NUM_FORMS".to_string(), "1".to_string());
+    data.insert("items-MAX_NUM_FORMS".to_string(), "10".to_string());
+    assert_eq!(ManagementForm::parse(&data, "items"), Ok(mgmt));
+
+    let empty = HashMap::new();
+    let errs = ManagementForm::parse(&empty, "items").unwrap_err();
+    assert_eq!(errs.len(), 2);
+}
+
+#[test]
+fn test_formset_validate_ordering_deletion_and_bounds() {
+    let formset: FormSet<()> = FormSet::new()
+        .with_prefix("row")
+        .with_can_delete(true)
+        .with_can_order(true)
+        .with_min_num(2)
+        .with_max_num(3)
+        .with_validate_min(true)
+        .with_validate_max(true);
+
+    let mut post = HashMap::new();
+    post.insert("row-TOTAL_FORMS".to_string(), "3".to_string());
+    post.insert("row-INITIAL_FORMS".to_string(), "2".to_string());
+    post.insert("row-0-title".to_string(), "Second".to_string());
+    post.insert("row-0-ORDER".to_string(), "2".to_string());
+    post.insert("row-1-title".to_string(), "To Delete".to_string());
+    post.insert("row-1-DELETE".to_string(), "on".to_string());
+    post.insert("row-2-title".to_string(), "First".to_string());
+    post.insert("row-2-ORDER".to_string(), "1".to_string());
+
+    let res = formset.validate(&post, |row| {
+        let title = row.get("title").cloned().unwrap_or_default();
+        if title.is_empty() {
+            let mut errs = FormErrors::new();
+            errs.add_field_error("title", "Required");
+            Err(errs)
+        } else {
+            Ok(title)
+        }
+    });
+
+    assert!(res.is_valid());
+    assert_eq!(res.deleted_indices, vec![1]);
+    assert_eq!(res.ordered_indices, vec![2, 0]);
+    assert_eq!(
+        res.cleaned_forms,
+        vec!["Second".to_string(), "First".to_string()]
+    );
+
+    // Violate min_num by deleting another row (leaving only 1 active form < min_num 2)
+    post.insert("row-0-DELETE".to_string(), "on".to_string());
+    let under_min = formset.validate(&post, |row| {
+        Ok(row.get("title").cloned().unwrap_or_default())
+    });
+    assert!(!under_min.is_valid());
+    assert!(under_min
+        .non_form_errors
+        .iter()
+        .any(|e| e.contains("at least 2")));
+}
+
+#[test]
+fn test_inline_formset_parent_fk_injection() {
+    let inline: InlineFormSet<()> = InlineFormSet::new("order_id", "42")
+        .with_prefix("line")
+        .with_can_delete(true);
+
+    let mut post = HashMap::new();
+    post.insert("line-TOTAL_FORMS".to_string(), "2".to_string());
+    post.insert("line-INITIAL_FORMS".to_string(), "0".to_string());
+    post.insert("line-0-sku".to_string(), "WIDGET-A".to_string());
+    post.insert("line-1-sku".to_string(), "WIDGET-B".to_string());
+
+    let res = inline.validate(&post, |row| {
+        let fk = row.get("order_id").cloned().unwrap_or_default();
+        let sku = row.get("sku").cloned().unwrap_or_default();
+        Ok((fk, sku))
+    });
+
+    assert!(res.is_valid());
+    assert_eq!(
+        res.cleaned_forms,
+        vec![
+            ("42".to_string(), "WIDGET-A".to_string()),
+            ("42".to_string(), "WIDGET-B".to_string()),
+        ]
+    );
+}

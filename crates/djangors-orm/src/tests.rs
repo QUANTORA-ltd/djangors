@@ -3889,3 +3889,207 @@ mod soft_delete {
         assert!(sql.contains("FALSE"), "{sql}");
     }
 }
+
+#[cfg(test)]
+mod v1_orm_parity_tests {
+    use super::*;
+    use crate::{
+        CompositePrimaryKey, FuncExpr, GeneratedFieldSpec, TruncKind, WhenBranch, WindowFunc,
+    };
+
+    #[test]
+    fn new_lookups_and_expressions_compile_cleanly() {
+        let qs = QuerySet::<QuerySetTestModel>::new()
+            .filter(crate::q!(name__istartswith = "al"))
+            .unwrap()
+            .filter(crate::q!(name__iendswith = "ce"))
+            .unwrap()
+            .filter(crate::q!(id__range = vec![1i64, 10i64]))
+            .unwrap()
+            .distinct();
+        let (sql, params) =
+            qs.compile_select_with_order("*", false, djangors_db::Dialect::Postgres);
+        assert!(sql.starts_with("SELECT DISTINCT * FROM"), "sql={sql}");
+        assert!(sql.contains("ILIKE"), "sql={sql}");
+        assert!(sql.contains("BETWEEN"), "sql={sql}");
+        assert_eq!(params.len(), 4);
+
+        // DISTINCT ON (Postgres)
+        let qs_on = QuerySet::<QuerySetTestModel>::new()
+            .distinct_on(&["name"])
+            .unwrap();
+        let (sql_on, _) =
+            qs_on.compile_select_with_order("*", false, djangors_db::Dialect::Postgres);
+        assert!(
+            sql_on.starts_with("SELECT DISTINCT ON (\"name\")"),
+            "sql_on={sql_on}"
+        );
+
+        // defer / only / none
+        let qs_only = QuerySet::<QuerySetTestModel>::new()
+            .only(&["name"])
+            .unwrap();
+        let (sql_only, _) =
+            qs_only.compile_select_with_order("*", false, djangors_db::Dialect::Sqlite);
+        assert!(sql_only.contains("\"id\""), "pk always kept: {sql_only}");
+        assert!(sql_only.contains("\"name\""), "sql_only={sql_only}");
+
+        let qs_none = QuerySet::<QuerySetTestModel>::new().none();
+        let (sql_none, _) =
+            qs_none.compile_select_with_order("*", false, djangors_db::Dialect::Sqlite);
+        assert!(sql_none.contains("WHERE FALSE"), "sql_none={sql_none}");
+
+        // FuncExpr: Case, Window, Cast, Extract, Trunc, Subquery, TrigramSimilarity, RawSql
+        let case_sql = FuncExpr::case(vec![WhenBranch::new("\"id\" > 10", "high")], "low", "tier")
+            .to_sql(&djangors_db::Dialect::Postgres);
+        assert_eq!(case_sql, "CASE WHEN \"id\" > 10 THEN 'high' ELSE 'low' END");
+
+        let win_sql = FuncExpr::window(WindowFunc::RowNumber, &["name"], &[("id", true)], "rn")
+            .to_sql(&djangors_db::Dialect::Postgres);
+        assert_eq!(
+            win_sql,
+            "ROW_NUMBER() OVER (PARTITION BY \"name\" ORDER BY \"id\" DESC)"
+        );
+
+        let trunc_pg =
+            FuncExpr::trunc("created_at", TruncKind::Month).to_sql(&djangors_db::Dialect::Postgres);
+        assert_eq!(trunc_pg, "DATE_TRUNC('month', \"created_at\")");
+
+        let trgm =
+            FuncExpr::trigram_similarity("name", "alice").to_sql(&djangors_db::Dialect::Postgres);
+        assert_eq!(trgm, "similarity(\"name\", 'alice')");
+
+        let cpk = CompositePrimaryKey::new(&["tenant_id", "code"]);
+        assert_eq!(
+            cpk.to_sql(djangors_db::Dialect::Postgres),
+            "PRIMARY KEY (\"tenant_id\", \"code\")"
+        );
+        let gen = GeneratedFieldSpec {
+            column_name: "total".into(),
+            sql_type: "NUMERIC(10, 2)".into(),
+            expression: "price * qty".into(),
+            stored: true,
+        };
+        assert!(gen
+            .to_column_ddl(djangors_db::Dialect::Postgres)
+            .contains("GENERATED ALWAYS AS (price * qty) STORED"));
+    }
+
+    #[tokio::test]
+    async fn sqlite_union_bulk_update_in_bulk_raw_earliest_latest_iterator() {
+        let config = djangors_db::DatabaseConfig::new("sqlite::memory:");
+        let db = djangors_db::Database::connect(&config).await.unwrap();
+
+        sqlx::query(
+            "CREATE TABLE \"test_sqlite_roundtrip\" (
+                \"id\" INTEGER PRIMARY KEY AUTOINCREMENT,
+                \"name\" TEXT NOT NULL,
+                \"is_active\" INTEGER NOT NULL
+            )",
+        )
+        .execute(db.sqlite_pool().unwrap())
+        .await
+        .unwrap();
+
+        for (name, active) in [("Alice", true), ("Bob", false), ("Charlie", true)] {
+            QuerySet::<SqliteTestModel>::insert_raw(
+                &db,
+                vec![
+                    ("name", Value::Text(name.into())),
+                    ("is_active", Value::Bool(active)),
+                ],
+            )
+            .await
+            .unwrap();
+        }
+
+        // earliest / latest / reverse
+        let first = SqliteTestModel::objects()
+            .earliest("name", &db)
+            .await
+            .unwrap()
+            .unwrap();
+        let last = SqliteTestModel::objects()
+            .latest("name", &db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(first.name, "Alice");
+        assert_eq!(last.name, "Charlie");
+
+        let rev = SqliteTestModel::objects()
+            .order_by("name")
+            .unwrap()
+            .reverse()
+            .all(&db)
+            .await
+            .unwrap();
+        assert_eq!(rev[0].name, "Charlie");
+
+        // in_bulk
+        let map = SqliteTestModel::objects().in_bulk(&db).await.unwrap();
+        assert_eq!(map.len(), 3);
+        assert_eq!(map.get("1").unwrap().name, "Alice");
+
+        // raw
+        let raw_rows = QuerySet::<SqliteTestModel>::raw(
+            &db,
+            "SELECT * FROM \"test_sqlite_roundtrip\" WHERE \"name\" = ?",
+            &[Value::Text("Bob".into())],
+        )
+        .await
+        .unwrap();
+        assert_eq!(raw_rows.len(), 1);
+        assert_eq!(raw_rows[0].name, "Bob");
+
+        // union
+        let q1 = SqliteTestModel::objects()
+            .filter(crate::q!(name = "Alice"))
+            .unwrap();
+        let q2 = SqliteTestModel::objects()
+            .filter(crate::q!(name = "Charlie"))
+            .unwrap();
+        let unioned = q1.union(q2, false).all(&db).await.unwrap();
+        assert_eq!(unioned.len(), 2);
+
+        // bulk_update
+        let mut all = SqliteTestModel::objects()
+            .order_by("id")
+            .unwrap()
+            .all(&db)
+            .await
+            .unwrap();
+        all[0].name = "Alicia".into();
+        all[1].name = "Robert".into();
+        let updated = QuerySet::<SqliteTestModel>::bulk_update(&db, &all[..2], &["name"])
+            .await
+            .unwrap();
+        assert_eq!(updated, 2);
+        let check = SqliteTestModel::objects()
+            .filter(crate::q!(id = 1i64))
+            .unwrap()
+            .get(&db)
+            .await
+            .unwrap();
+        assert_eq!(check.name, "Alicia");
+
+        // iterator
+        let mut chunks = 0usize;
+        let total = SqliteTestModel::objects()
+            .order_by("id")
+            .unwrap()
+            .iterator(&db, 2, |batch| -> Result<(), &'static str> {
+                chunks += 1;
+                assert!(!batch.is_empty());
+                Ok(())
+            })
+            .await
+            .unwrap();
+        assert_eq!(total, 3);
+        assert_eq!(chunks, 2);
+
+        // none()
+        let empty = SqliteTestModel::objects().none().all(&db).await.unwrap();
+        assert!(empty.is_empty());
+    }
+}

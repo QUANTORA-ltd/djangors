@@ -31,19 +31,20 @@ pub use sqlx;
 
 pub use djangors_db::{BindValue, DbRow, Dialect, NullKind};
 pub use meta::{
-    all_registered_models, m2m_through_table, DefaultValue, EncryptedFieldsRegistration, FieldKind,
-    FieldMeta, FieldSnapshot, ForeignKey, IndexMeta, IndexSnapshot, Manager, ManyToMany, Model,
+    all_registered_models, m2m_through_table, CompositePrimaryKey, ConstraintMeta, DefaultValue,
+    EncryptedFieldsRegistration, FieldKind, FieldMeta, FieldSnapshot, ForeignKey,
+    GeneratedFieldSpec, IndexKind, IndexMeta, IndexSnapshot, Manager, ManyToMany, Model,
     ModelDatabaseMap, ModelForm, ModelMeta, ModelRegistration, ModelSnapshot, OnDelete, OneToOne,
     RelationKind, RelationMeta, RelationSnapshot, SnapshotDefault,
 };
 
-pub use aggregate::{AggExpr, AggResult, FuncExpr};
+pub use aggregate::{AggExpr, AggResult, FuncExpr, TruncKind, WhenBranch, WindowFunc};
 pub use error::{FromRow, OrmError};
 pub use expr::{
     ArithOp, CompareOp, Exists, Expr, IntoSetExpr, NotExists, OuterRef, SetExpr, UnresolvedCompare,
     UnresolvedExpr, UnresolvedFieldCompare, UnresolvedOuterCompare, Value, F,
 };
-pub use queryset::{m2m_add, m2m_related, m2m_remove, prefetch_related, GroupRow, QuerySet};
+pub use queryset::{m2m_add, m2m_related, m2m_remove, prefetch_related, GroupRow, QuerySet, SetOp};
 
 #[cfg(test)]
 #[allow(unused_extern_crates)]

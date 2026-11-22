@@ -686,3 +686,136 @@ async fn test_csp_layer_with_nonce_per_request_and_livereload() {
         .to_string();
     assert_ne!(csp1, csp2);
 }
+
+#[tokio::test]
+async fn test_conditional_get_layer_etag_and_304() {
+    use http_body_util::BodyExt;
+    use tower::{service_fn, Service, ServiceBuilder};
+
+    let svc_fn = service_fn(|_req: hyper::Request<Full<Bytes>>| async move {
+        let resp = hyper::Response::builder()
+            .status(200)
+            .header("last-modified", "Wed, 21 Oct 2015 07:28:00 GMT")
+            .body(Full::new(Bytes::from("hello conditional get")))
+            .unwrap();
+        Ok::<_, std::convert::Infallible>(resp)
+    });
+    let mut svc = ServiceBuilder::new()
+        .layer(conditional_get_layer())
+        .service(svc_fn);
+
+    // First GET computes ETag
+    let req1 = hyper::Request::builder()
+        .uri("/data")
+        .body(Full::new(Bytes::new()))
+        .unwrap();
+    let resp1 = svc.ready().await.unwrap().call(req1).await.unwrap();
+    assert_eq!(resp1.status(), 200);
+    let etag = resp1
+        .headers()
+        .get("etag")
+        .expect("etag should be computed")
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(etag.starts_with('"') && etag.ends_with('"'));
+
+    // Second GET with matching If-None-Match returns 304 with empty body
+    let req2 = hyper::Request::builder()
+        .uri("/data")
+        .header("if-none-match", &etag)
+        .body(Full::new(Bytes::new()))
+        .unwrap();
+    let resp2 = svc.ready().await.unwrap().call(req2).await.unwrap();
+    assert_eq!(resp2.status(), 304);
+    let body2 = resp2.into_body().collect().await.unwrap().to_bytes();
+    assert!(body2.is_empty());
+
+    // Third GET with matching If-Modified-Since returns 304
+    let req3 = hyper::Request::builder()
+        .uri("/data")
+        .header("if-modified-since", "Wed, 21 Oct 2015 07:28:00 GMT")
+        .body(Full::new(Bytes::new()))
+        .unwrap();
+    let resp3 = svc.ready().await.unwrap().call(req3).await.unwrap();
+    assert_eq!(resp3.status(), 304);
+}
+
+#[tokio::test]
+async fn test_login_required_layer_redirects_and_exemptions() {
+    use tower::{service_fn, Service, ServiceBuilder};
+
+    let svc_fn = service_fn(|_req: hyper::Request<Full<Bytes>>| async move {
+        let resp = hyper::Response::builder()
+            .status(200)
+            .body(Full::new(Bytes::from("secret")))
+            .unwrap();
+        Ok::<_, std::convert::Infallible>(resp)
+    });
+    let mut svc = ServiceBuilder::new()
+        .layer(
+            login_required_layer("/accounts/login/")
+                .exempt_path("/healthz")
+                .exempt_prefix("/public/"),
+        )
+        .service(svc_fn);
+
+    // Unauthenticated private path -> 302 redirect with ?next=
+    let req = hyper::Request::builder()
+        .uri("/dashboard?tab=1")
+        .body(Full::new(Bytes::new()))
+        .unwrap();
+    let resp = svc.ready().await.unwrap().call(req).await.unwrap();
+    assert_eq!(resp.status(), 302);
+    let loc = resp.headers().get("location").unwrap().to_str().unwrap();
+    assert!(loc.starts_with("/accounts/login/?next="), "got {loc}");
+
+    // Exempt path passes through
+    let req_health = hyper::Request::builder()
+        .uri("/healthz")
+        .body(Full::new(Bytes::new()))
+        .unwrap();
+    assert_eq!(
+        svc.ready()
+            .await
+            .unwrap()
+            .call(req_health)
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+
+    // Exempt prefix passes through
+    let req_pub = hyper::Request::builder()
+        .uri("/public/logo.png")
+        .body(Full::new(Bytes::new()))
+        .unwrap();
+    assert_eq!(
+        svc.ready()
+            .await
+            .unwrap()
+            .call(req_pub)
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+
+    // Authenticated via sessionid cookie passes through
+    let req_authed = hyper::Request::builder()
+        .uri("/dashboard")
+        .header("cookie", "sessionid=abc123")
+        .body(Full::new(Bytes::new()))
+        .unwrap();
+    assert_eq!(
+        svc.ready()
+            .await
+            .unwrap()
+            .call(req_authed)
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+}

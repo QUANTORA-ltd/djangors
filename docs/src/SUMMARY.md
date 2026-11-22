@@ -19,6 +19,8 @@
 # Building Applications
 
 - [Application Architecture](guides/application-architecture.md)
+- [Quick Reference for Developers & AI Agents](guides/ai-agents.md)
+- [CLI Reference (`dj`)](guides/cli-reference.md)
 
 # For Rust Web Developers
 
@@ -68,6 +70,8 @@
 - [Sessions and CSRF Protection](guides/sessions.md)
 - [Static Files](guides/static-files.md)
 - [Signals](guides/signals.md)
+- [Sites Framework](guides/sites.md)
+- [Geospatial & PostGIS (GIS)](guides/gis.md)
 - [Sites, Feeds, and 2FA](guides/sites-and-2fa.md)
 
 # How-To Guides

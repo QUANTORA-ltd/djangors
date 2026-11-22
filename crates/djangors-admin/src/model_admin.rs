@@ -31,6 +31,33 @@ pub struct InlineConfig {
     pub fields: &'static [&'static str],
 }
 
+/// A custom filter specification for the admin changelist sidebar
+/// (analogous to Django's `admin.SimpleListFilter`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SimpleListFilter {
+    /// Human-readable title displayed above the filter options.
+    pub title: String,
+    /// URL query parameter name used when filtering (e.g. `"status"`).
+    pub parameter_name: String,
+    /// Available `(value, label)` lookup choices displayed in the sidebar.
+    pub lookups: Vec<(String, String)>,
+}
+
+impl SimpleListFilter {
+    /// Creates a new [`SimpleListFilter`].
+    pub fn new(
+        title: impl Into<String>,
+        parameter_name: impl Into<String>,
+        lookups: Vec<(String, String)>,
+    ) -> Self {
+        Self {
+            title: title.into(),
+            parameter_name: parameter_name.into(),
+            lookups,
+        }
+    }
+}
+
 /// Configuration options for custom model admin registration.
 #[derive(Default, Clone)]
 pub struct ModelAdminConfig {
@@ -40,7 +67,8 @@ pub struct ModelAdminConfig {
     /// Real, text-like field names to ILIKE-match against `?q=`.
     /// `None` or empty = no search box rendered, `?q=` ignored if present.
     pub search_fields: Option<&'static [&'static str]>,
-    /// Boolean field names only.
+    /// Field names to expose as changelist sidebar filters (boolean, choice,
+    /// char/slug, date/datetime, or foreign key relation fields).
     pub list_filter: Option<&'static [&'static str]>,
     /// Date or datetime field name to display date hierarchy navigation bar.
     pub date_hierarchy: Option<&'static str>,
@@ -66,6 +94,27 @@ pub struct ModelAdminConfig {
     pub base_filter: Option<djangors_orm::UnresolvedExpr>,
     /// Inline child model configurations rendered below the add/change form.
     pub inlines: Option<&'static [InlineConfig]>,
+    /// Foreign key / many-to-many field names that use the autocomplete JSON endpoint.
+    pub autocomplete_fields: Option<&'static [&'static str]>,
+    /// Mapping of target field names to source field names used to auto-populate slugs
+    /// (e.g. `&[("slug", &["title"])]`).
+    pub prepopulated_fields: Option<&'static [(&'static str, &'static [&'static str])]>,
+    /// Many-to-many field names rendered with a horizontal filter widget.
+    pub filter_horizontal: Option<&'static [&'static str]>,
+    /// Many-to-many field names rendered with a vertical filter widget.
+    pub filter_vertical: Option<&'static [&'static str]>,
+    /// Related field names to eagerly join when querying the changelist.
+    pub list_select_related: Option<&'static [&'static str]>,
+    /// Default ordering for the changelist (e.g. `&["-created_at"]`).
+    pub ordering: Option<&'static [&'static str]>,
+    /// Subset of columns that are sortable on the changelist.
+    pub sortable_by: Option<&'static [&'static str]>,
+    /// Whether to display Django 5.0-style facet counts `(N)` next to changelist filter options.
+    pub show_facets: bool,
+    /// Whether to show a "Save as new" button on the change form.
+    pub save_as: bool,
+    /// Whether to also render the save bar at the top of the change form.
+    pub save_on_top: bool,
 }
 
 /// A resolved, request-scoped tenant restriction: the tenant FK field name on the
@@ -140,6 +189,56 @@ pub trait ModelAdmin: Send + Sync {
     /// Returns configured inline child model configurations.
     fn inlines_config(&self) -> &[InlineConfig] {
         &[]
+    }
+
+    /// Returns field names configured for autocomplete lookups.
+    fn autocomplete_fields(&self) -> &[&'static str] {
+        &[]
+    }
+
+    /// Returns `(target_field, source_fields)` pairs for client-side slug prepopulation.
+    fn prepopulated_fields(&self) -> &[(&'static str, &'static [&'static str])] {
+        &[]
+    }
+
+    /// Returns field names configured with a horizontal filter widget.
+    fn filter_horizontal(&self) -> &[&'static str] {
+        &[]
+    }
+
+    /// Returns field names configured with a vertical filter widget.
+    fn filter_vertical(&self) -> &[&'static str] {
+        &[]
+    }
+
+    /// Returns related field names configured for `select_related` on the changelist.
+    fn list_select_related(&self) -> &[&'static str] {
+        &[]
+    }
+
+    /// Returns the default changelist ordering fields.
+    fn ordering(&self) -> &[&'static str] {
+        &[]
+    }
+
+    /// Returns the explicit subset of sortable columns, or `None` if all columns are sortable.
+    fn sortable_by(&self) -> Option<&[&'static str]> {
+        None
+    }
+
+    /// Returns whether facet counts `(N)` should be shown next to changelist filter options.
+    fn show_facets(&self) -> bool {
+        false
+    }
+
+    /// Returns whether the change form should offer a "Save as new" button.
+    fn save_as(&self) -> bool {
+        false
+    }
+
+    /// Returns whether the change form should also render the save bar at the top.
+    fn save_on_top(&self) -> bool {
+        false
     }
 
     /// Fetches a single object by primary key as name/value tuples.
@@ -227,7 +326,9 @@ impl<M: Model + djangors_orm::error::FromRow + Send + Sync + 'static> DefaultMod
         tenant: TenantFilter,
     ) -> Result<djangors_orm::queryset::QuerySet<M>, DjangorsError> {
         let mut qs = M::objects();
-        if let Some(o) = order {
+        let effective_order =
+            order.or_else(|| self.config.ordering.and_then(|o| o.first().copied()));
+        if let Some(o) = effective_order {
             qs = qs.order_by(o).map_err(|e| match e {
                 djangors_orm::error::OrmError::FieldNotFound { .. } => {
                     DjangorsError::BadRequest(e.to_string())
@@ -379,6 +480,46 @@ impl<M: Model + djangors_orm::error::FromRow + Send + Sync + 'static> ModelAdmin
 
     fn inlines_config(&self) -> &[InlineConfig] {
         self.config.inlines.unwrap_or(&[])
+    }
+
+    fn autocomplete_fields(&self) -> &[&'static str] {
+        self.config.autocomplete_fields.unwrap_or(&[])
+    }
+
+    fn prepopulated_fields(&self) -> &[(&'static str, &'static [&'static str])] {
+        self.config.prepopulated_fields.unwrap_or(&[])
+    }
+
+    fn filter_horizontal(&self) -> &[&'static str] {
+        self.config.filter_horizontal.unwrap_or(&[])
+    }
+
+    fn filter_vertical(&self) -> &[&'static str] {
+        self.config.filter_vertical.unwrap_or(&[])
+    }
+
+    fn list_select_related(&self) -> &[&'static str] {
+        self.config.list_select_related.unwrap_or(&[])
+    }
+
+    fn ordering(&self) -> &[&'static str] {
+        self.config.ordering.unwrap_or(&[])
+    }
+
+    fn sortable_by(&self) -> Option<&[&'static str]> {
+        self.config.sortable_by
+    }
+
+    fn show_facets(&self) -> bool {
+        self.config.show_facets
+    }
+
+    fn save_as(&self) -> bool {
+        self.config.save_as
+    }
+
+    fn save_on_top(&self) -> bool {
+        self.config.save_on_top
     }
 
     #[allow(clippy::too_many_arguments)]

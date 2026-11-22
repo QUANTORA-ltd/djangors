@@ -1117,11 +1117,13 @@ dependencies = [
  "djangors-admin",
  "djangors-auth",
  "djangors-cache",
+ "djangors-contrib-gis",
  "djangors-contrib-history",
  "djangors-contrib-oauth",
  "djangors-contrib-orgs",
  "djangors-contrib-payments",
  "djangors-contrib-saml",
+ "djangors-contrib-sites",
  "djangors-contrib-tenancy",
  "djangors-core",
  "djangors-db",
@@ -1269,6 +1271,14 @@ dependencies = [
  "hyper",
  "sqlx",
  "tokio",
+]
+
+[[package]]
+name = "djangors-contrib-gis"
+version = "0.14.0"
+dependencies = [
+ "serde",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -1450,6 +1460,24 @@ version = "0.14.0"
 dependencies = [
  "chrono",
  "djangors-core",
+]
+
+[[package]]
+name = "djangors-contrib-sites"
+version = "0.14.0"
+dependencies = [
+ "bytes",
+ "djangors-admin",
+ "djangors-core",
+ "djangors-db",
+ "djangors-macros",
+ "djangors-orm",
+ "djangors-test",
+ "http-body-util",
+ "hyper",
+ "sqlx",
+ "tokio",
+ "tower 0.5.3",
 ]
 
 [[package]]
@@ -1746,11 +1774,14 @@ dependencies = [
 name = "djangors-template"
 version = "0.14.0"
 dependencies = [
+ "bytes",
  "chrono",
  "djangors-core",
  "djangors-i18n",
+ "hyper",
  "minijinja",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.18",
 ]
@@ -1779,6 +1810,7 @@ name = "djangors-views"
 version = "0.14.0"
 dependencies = [
  "bytes",
+ "chrono",
  "djangors-core",
  "djangors-db",
  "djangors-macros",

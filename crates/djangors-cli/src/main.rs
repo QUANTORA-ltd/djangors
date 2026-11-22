@@ -1,5 +1,6 @@
 mod cli;
 mod commands;
+mod manage_commands;
 
 use clap::Parser;
 use cli::{Cli, Commands, GenerateCommands};
@@ -27,6 +28,17 @@ fn builtin_command_names() -> std::collections::HashSet<&'static str> {
         "inspectdb",
         "clearsessions",
         "rotate-encryption-keys",
+        "dumpdata",
+        "loaddata",
+        "flush",
+        "squashmigrations",
+        "diffsettings",
+        "sendtestemail",
+        "makemessages",
+        "compilemessages",
+        "changepassword",
+        "createcachetable",
+        "showurls",
     ]
     .into_iter()
     .collect()
@@ -222,6 +234,107 @@ async fn main() {
             if let Err(e) = commands::rotate_encryption_keys(&model, batch, database_url.as_deref())
             {
                 eprintln!("[dj rotate-encryption-keys] error: {e}");
+                std::process::exit(1);
+            }
+        }
+        Commands::Dumpdata {
+            tables,
+            output,
+            database_url,
+        } => {
+            if let Err(e) =
+                manage_commands::dumpdata(&tables, output.as_deref(), database_url.as_deref()).await
+            {
+                eprintln!("[dj dumpdata] error: {e}");
+                std::process::exit(1);
+            }
+        }
+        Commands::Loaddata {
+            files,
+            database_url,
+        } => {
+            if let Err(e) = manage_commands::loaddata(&files, database_url.as_deref()).await {
+                eprintln!("[dj loaddata] error: {e}");
+                std::process::exit(1);
+            }
+        }
+        Commands::Flush {
+            no_input,
+            database_url,
+        } => {
+            if let Err(e) = manage_commands::flush(no_input, database_url.as_deref()).await {
+                eprintln!("[dj flush] error: {e}");
+                std::process::exit(1);
+            }
+        }
+        Commands::Squashmigrations {
+            start,
+            end,
+            name,
+            dir,
+        } => {
+            if let Err(e) = manage_commands::squashmigrations(&dir, &start, &end, &name) {
+                eprintln!("[dj squashmigrations] error: {e}");
+                std::process::exit(1);
+            }
+        }
+        Commands::Diffsettings => {
+            if let Err(e) = manage_commands::diffsettings() {
+                eprintln!("[dj diffsettings] error: {e}");
+                std::process::exit(1);
+            }
+        }
+        Commands::Sendtestemail {
+            recipients,
+            subject,
+        } => {
+            if let Err(e) = manage_commands::sendtestemail(&recipients, &subject) {
+                eprintln!("[dj sendtestemail] error: {e}");
+                std::process::exit(1);
+            }
+        }
+        Commands::Makemessages { locale, output_dir } => {
+            if let Err(e) = manage_commands::makemessages(&locale, &output_dir) {
+                eprintln!("[dj makemessages] error: {e}");
+                std::process::exit(1);
+            }
+        }
+        Commands::Compilemessages { dir } => {
+            if let Err(e) = manage_commands::compilemessages(&dir) {
+                eprintln!("[dj compilemessages] error: {e}");
+                std::process::exit(1);
+            }
+        }
+        Commands::Changepassword {
+            username,
+            password,
+            database_url,
+        } => {
+            if let Err(e) = manage_commands::changepassword(
+                &username,
+                password.as_deref(),
+                database_url.as_deref(),
+            )
+            .await
+            {
+                eprintln!("[dj changepassword] error: {e}");
+                std::process::exit(1);
+            }
+        }
+        Commands::Createcachetable {
+            table_name,
+            database_url,
+        } => {
+            if let Err(e) =
+                manage_commands::createcachetable(&table_name, database_url.as_deref()).await
+            {
+                eprintln!("[dj createcachetable] error: {e}");
+                std::process::exit(1);
+            }
+        }
+        Commands::Showurls => {
+            if let Err(e) = manage_commands::showurls() {
+                eprintln!("[dj showurls] error: {e}");
                 std::process::exit(1);
             }
         }

@@ -366,3 +366,112 @@ dj migrate --fake
 > `--fake` can silently desynchronise the migration history table from the actual database schema. Use with caution when schema changes have been made out of band.
 
 Note that `--fake`, `--plan`, and `--rollback` are mutually exclusive flags.
+
+---
+
+## Djangors 1.0 Migration Additions
+
+### Extended `Operation` Variants
+
+Djangors 1.0 adds six new DDL and custom-SQL `Operation` variants in `djangors_migrations`:
+
+| Variant | Fields | Reversible? |
+| --- | --- | --- |
+| `RenameTable` | `old_name`, `new_name` | **Yes** (`RenameTable` swapped) |
+| `AddConstraint` | `table_name`, `constraint: ConstraintMeta` | **Yes** (`RemoveConstraint`) |
+| `RemoveConstraint` | `table_name`, `constraint_name` | **No** |
+| `AlterColumnNullability` | `table_name`, `column_name`, `nullable: bool` | **Yes** (flips `nullable`) |
+| `AlterColumnDefault` | `table_name`, `column_name`, `default_sql: Option<String>` | **No** |
+| `RunSql` | `sql`, `reverse_sql: Option<String>` | **Yes** when `reverse_sql` is `Some` |
+
+```rust,illustrative
+use djangors_db::Dialect;
+use djangors_migrations::Operation;
+use djangors_orm::ConstraintMeta;
+
+let ops = vec![
+    Operation::RenameTable {
+        old_name: "blog_post".into(),
+        new_name: "blog_article".into(),
+    },
+    Operation::AddConstraint {
+        table_name: "blog_article".into(),
+        constraint: ConstraintMeta::Check {
+            name: "chk_views_nonneg".into(),
+            expression: "views >= 0".into(),
+        },
+    },
+    Operation::AlterColumnNullability {
+        table_name: "blog_article".into(),
+        column_name: "subtitle".into(),
+        nullable: true,
+    },
+    Operation::AlterColumnDefault {
+        table_name: "blog_article".into(),
+        column_name: "views".into(),
+        default_sql: Some("0".into()),
+    },
+    Operation::RunSql {
+        sql: "UPDATE blog_article SET views = 0 WHERE views IS NULL;".into(),
+        reverse_sql: Some("SELECT 1;".into()),
+    },
+];
+
+for op in &ops {
+    println!("{}", op.to_sql(Dialect::Postgres)?);
+}
+```
+
+### Rust Data Migrations (`DataMigration` & `RunRust`)
+
+For migrations that require Rust business logic inside a transaction (Django's `RunPython` equivalent), implement `DataMigration` or construct a `RunRust` step and execute it with `apply_data_migration` / `rollback_data_migration`:
+
+```rust,illustrative
+use djangors_migrations::{apply_data_migration, rollback_data_migration, RunRust};
+
+let backfill = RunRust {
+    name: "0003_backfill_slugs",
+    up: |conn| {
+        Box::pin(async move {
+            conn.execute("UPDATE blog_article SET slug = lower(title) WHERE slug IS NULL", &[])
+                .await?;
+            Ok(())
+        })
+    },
+    down: Some(|_conn| Box::pin(async move { Ok(()) })),
+};
+
+apply_data_migration(&db, backfill).await?;
+```
+
+### `MigrateOptions`, Dependency Ordering & Squashing
+
+- **`MigrateOptions { fake, fake_initial, plan_only }`**: Pass to `migrate_from_dir_with_options(&db, dir, opts)` to preview a plan (`plan_only`), record without running (`fake`), or skip already-existing initial tables (`fake_initial`, Django's `--fake-initial`).
+- **Topological Dependency Headers (`-- dependencies:`)**: Declare cross-file prerequisites at the top of any `.sql` migration file; `migrate_from_dir_with_options` resolves them via topological sort before falling back to filename order:
+
+```sql
+-- dependencies: 0001_initial, 0002_auth_tables
+-- up
+ALTER TABLE "polls_question" ADD COLUMN "author_id" BIGINT;
+-- down
+ALTER TABLE "polls_question" DROP COLUMN "author_id";
+```
+
+- **Squashing Migrations (`squash_migrations` & `dj squashmigrations`)**: Combine a range of sequential migration files into a single squashed `.sql` file:
+
+```bash
+# Combine migrations from 0001 through 0005 into a single squashed file
+dj squashmigrations 0001 0005 --name 0001_squashed_0005
+```
+
+```rust,illustrative
+use djangors_migrations::squash_migrations;
+use std::path::Path;
+
+let squashed_path = squash_migrations(
+    Path::new("migrations"),
+    "0001",
+    "0005",
+    "0001_squashed_0005",
+)?;
+```

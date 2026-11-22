@@ -709,3 +709,166 @@ pub struct Product {
     pub attributes: Value,
 }
 ```
+
+---
+
+## Djangors 1.0 ORM Additions
+
+### Extended `CompareOp` Lookups
+
+Djangors 1.0 expands `CompareOp` (and `q!` lookup suffixes) with case-insensitive prefix/suffix matching, inclusive ranges, date/time component extraction, and JSON queries:
+
+| `CompareOp` Variant | `q!` Lookup Suffix | SQL Behavior |
+| --- | --- | --- |
+| `IStartsWith` | `__istartswith` | Case-insensitive prefix match (`ILIKE 'val%'` / `LIKE`) |
+| `IEndsWith` | `__iendswith` | Case-insensitive suffix match (`ILIKE '%val'` / `LIKE`) |
+| `Range` | `__range` | Inclusive `BETWEEN $1 AND $2` (expects a 2-element `Vec`) |
+| `Year` | `__year` | Extract year from date/datetime (`EXTRACT(YEAR FROM col) = $1`) |
+| `Month` | `__month` | Extract month (`1..=12`) |
+| `Day` | `__day` | Extract day of month (`1..=31`) |
+| `WeekDay` | `__week_day` | Extract day of week (`1` = Sunday .. `7` = Saturday) |
+| `Date` | `__date` | Cast/extract calendar date (`DATE(col) = $1`) |
+| `Hour` | `__hour` | Extract hour (`0..=23`) |
+| `JsonHasKey` | `__has_key` | JSON key existence (Postgres `col ? $1`, SQLite `json_extract(col, '$.key') IS NOT NULL`) |
+| `JsonContains` | `__json_contains` | JSON containment (Postgres `col @> $1::jsonb`, SQLite `LIKE` fallback) |
+
+```rust,illustrative
+use djangors_orm::{q, Model};
+
+let recent = Question::objects()
+    .filter(q!(question_text__istartswith = "how"))?
+    .filter(q!(pub_date__year = 2026i64))?
+    .filter(q!(pub_date__month = 7i64))?
+    .filter(q!(id__range = vec![10i64, 50i64]))?
+    .all(db)
+    .await?;
+
+let tagged = Product::objects()
+    .filter(q!(attributes__has_key = "color"))?
+    .filter(q!(attributes__json_contains = r#"{"featured":true}"#))?
+    .all(db)
+    .await?;
+```
+
+### Extended `FuncExpr` Expressions
+
+`FuncExpr` (in `djangors_orm::aggregate`) adds type casting, date extraction/truncation, conditional `CASE`/`WHEN`, SQL window functions, scalar subqueries, PostgreSQL trigram similarity, and raw SQL fragments:
+
+| Variant | Purpose | Key Supporting Types |
+| --- | --- | --- |
+| `FuncExpr::Cast { field, sql_type }` | `CAST(field AS sql_type)` | — |
+| `FuncExpr::Extract { field, part }` | Extract date/time integer component | `djangors_db::DatePart` (`Year`, `Month`, `Day`, `Hour`, `WeekDay`) |
+| `FuncExpr::Trunc { field, kind }` | Truncate timestamp/date (`DATE_TRUNC` / `strftime`) | `TruncKind::{Year, Month, Day, Hour}` |
+| `FuncExpr::Case { whens, default, alias_name }` | `CASE WHEN ... THEN ... ELSE ... END` | `WhenBranch::new(condition_sql, then)` |
+| `FuncExpr::Window { func, partition_by, order_by, alias_name }` | `FUNC(...) OVER (PARTITION BY ... ORDER BY ...)` | `WindowFunc::{RowNumber, Rank, DenseRank, Lead, Lag}` |
+| `FuncExpr::Subquery { sql, alias_name }` | Correlated or uncorrelated scalar `(SELECT ...)` | — |
+| `FuncExpr::TrigramSimilarity { field, query }` | PostgreSQL `pg_trgm` `similarity(col, 'query')` | — |
+| `FuncExpr::RawSql { sql, alias_name }` | Raw SQL expression fragment (`RawSQL`) | — |
+
+```rust,illustrative
+use djangors_db::DatePart;
+use djangors_orm::{FuncExpr, TruncKind, Value, WhenBranch, WindowFunc};
+
+let cast_expr = FuncExpr::Cast { field: "votes", sql_type: "DOUBLE PRECISION" };
+let year_expr = FuncExpr::Extract { field: "pub_date", part: DatePart::Year };
+let month_bucket = FuncExpr::Trunc { field: "pub_date", kind: TruncKind::Month };
+
+let tier = FuncExpr::Case {
+    whens: vec![
+        WhenBranch::new(r#""votes" >= 100"#, Value::Text("popular".into())),
+        WhenBranch::new(r#""votes" >= 10"#, Value::Text("active".into())),
+    ],
+    default: Value::Text("new".into()),
+    alias_name: "tier".into(),
+};
+
+let rank = FuncExpr::Window {
+    func: WindowFunc::Rank,
+    partition_by: vec!["question"],
+    order_by: vec![("votes", true)],
+    alias_name: "vote_rank".into(),
+};
+```
+
+### Schema Metadata (`IndexKind`, `ConstraintMeta`, `CompositePrimaryKey`, `GeneratedFieldSpec`)
+
+`djangors_orm::meta` provides rich declarative schema metadata used by migrations and introspection:
+
+- **`IndexKind`**: Selects the index access method — `BTree` (default), `Gin`, `Gist`, `Brin`, `Hash`.
+- **`ConstraintMeta`**: Declares table-level constraints:
+  - `ConstraintMeta::Check { name, expression }` — `CHECK (<expression>)`.
+  - `ConstraintMeta::Unique { name, fields, condition }` — `UNIQUE (<fields>)` with an optional partial `WHERE <condition>` predicate.
+- **`CompositePrimaryKey`**: Multi-column primary keys (`CompositePrimaryKey::new(&["tenant_id", "item_id"])`, rendered via `.to_sql(dialect)`).
+- **`GeneratedFieldSpec`**: Database-computed columns (`GENERATED ALWAYS AS (<expression>) STORED | VIRTUAL`), rendered via `.to_column_ddl(dialect)`.
+
+```rust,illustrative
+use djangors_db::Dialect;
+use djangors_orm::{CompositePrimaryKey, ConstraintMeta, GeneratedFieldSpec, IndexKind};
+
+let kind = IndexKind::Gin;
+let partial_unique = ConstraintMeta::Unique {
+    name: "uq_active_email".into(),
+    fields: vec!["email".into()],
+    condition: Some("deleted_at IS NULL".into()),
+};
+let cpk = CompositePrimaryKey::new(&["tenant_id", "sku"]);
+let generated = GeneratedFieldSpec {
+    column_name: "total_cents".into(),
+    sql_type: "BIGINT".into(),
+    expression: "unit_price_cents * quantity".into(),
+    stored: true,
+};
+let ddl = generated.to_column_ddl(Dialect::Postgres);
+```
+
+### New `QuerySet` Methods
+
+Djangors 1.0 adds Django's full suite of `QuerySet` combinators, projections, bulk operations, and streaming helpers:
+
+| Method | Signature / Notes |
+| --- | --- |
+| `distinct()` | Emits `SELECT DISTINCT` |
+| `distinct_on(&[fields])` | Emits PostgreSQL `SELECT DISTINCT ON (...)` |
+| `defer(&[fields])` / `only(&[fields])` | Defers or restricts selected columns |
+| `none()` | Short-circuits to an empty queryset (returns no rows) |
+| `reverse()` | Reverses the active (or model default) ordering |
+| `union(other, all)` / `intersection(other)` / `difference(other)` | SQL set operations (`SetOp::{Union, UnionAll, Intersection, Difference}`) |
+| `earliest(field, db)` / `latest(field, db)` | Returns the single earliest or latest row ordered by `field` |
+| `in_bulk(db)` | Returns `HashMap<String, T>` keyed by primary key string |
+| `QuerySet::<T>::bulk_update(db, &objs, &fields)` | Batches updates of specified fields across multiple model instances |
+| `QuerySet::<T>::raw(db, sql, &params)` | Executes raw SQL and maps rows into `Vec<T>` via `FromRow` |
+| `iterator(db, chunk_size, f)` | Streams rows in `chunk_size` batches to avoid loading large tables into memory |
+| `using(&multi, alias)` | Resolves a `&Database` handle from a [`MultiDatabase`](databases.md#multi-database-routing) registry |
+
+```rust,illustrative
+use djangors_orm::{q, Model, QuerySet, Value};
+
+// Distinct, reverse, set operations, and earliest/latest
+let combined = Choice::objects()
+    .filter(q!(votes__gte = 10i32))?
+    .union(Choice::objects().filter(q!(choice_text__istartswith = "rust"))?, false)
+    .distinct()
+    .reverse()
+    .all(db)
+    .await?;
+
+let newest = Question::objects().latest("pub_date", db).await?;
+let by_pk = Question::objects().in_bulk(db).await?;
+
+// Bulk update specific fields & raw SQL mapping
+QuerySet::<Choice>::bulk_update(db, &updated_choices, &["votes"]).await?;
+let raw_rows = QuerySet::<Question>::raw(
+    db,
+    "SELECT * FROM polls_question WHERE id > $1",
+    &[Value::I64(10)],
+).await?;
+
+// Stream large tables in chunks
+Question::objects()
+    .only(&["id", "question_text"])?
+    .iterator(db, 500, |batch| async move {
+        println!("processed {} rows", batch.len());
+        Ok(())
+    })
+    .await?;
+```

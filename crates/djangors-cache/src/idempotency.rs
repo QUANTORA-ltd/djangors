@@ -330,6 +330,7 @@ fn store_unavailable() -> Response<Full<Bytes>> {
 
 /// Reads the body, refusing it with 413 as soon as it is known to exceed `limit`
 /// (from `Content-Length`, or while streaming) so oversized bodies are never buffered.
+#[allow(clippy::result_large_err)]
 async fn read_limited<B>(
     parts: &Parts,
     body: B,

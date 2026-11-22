@@ -1163,6 +1163,349 @@ pub fn cors_layer(
     Ok(layer)
 }
 
+/// Conditional GET middleware (`ETag` / `If-None-Match` / `If-Modified-Since` -> `304 Not Modified`).
+///
+/// Mirrors Django's `ConditionalGetMiddleware`:
+/// - On `GET` and `HEAD` responses with status `200 OK`, computes a SHA-256 `ETag`
+///   if one is not already set on the response.
+/// - If the request's `If-None-Match` matches the response `ETag` (using RFC 9110 weak comparison),
+///   returns `304 Not Modified` with an empty body.
+/// - Otherwise, if `If-None-Match` is absent and both `If-Modified-Since` and `Last-Modified`
+///   are present and equal, returns `304 Not Modified` with an empty body.
+#[derive(Clone, Default)]
+pub struct ConditionalGetLayer {
+    weak_etag: bool,
+}
+
+impl ConditionalGetLayer {
+    /// Creates a new [`ConditionalGetLayer`] emitting strong ETags (`"<sha256>"`).
+    pub fn new() -> Self {
+        Self { weak_etag: false }
+    }
+
+    /// Configures whether generated ETags are weak (`W/"<sha256>"`).
+    pub fn weak(mut self, weak: bool) -> Self {
+        self.weak_etag = weak;
+        self
+    }
+}
+
+/// Returns a [`ConditionalGetLayer`] with default settings.
+pub fn conditional_get_layer() -> ConditionalGetLayer {
+    ConditionalGetLayer::new()
+}
+
+impl<S> Layer<S> for ConditionalGetLayer {
+    type Service = ConditionalGetService<S>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        ConditionalGetService {
+            inner,
+            weak_etag: self.weak_etag,
+        }
+    }
+}
+
+/// Service for [`ConditionalGetLayer`].
+#[derive(Clone)]
+pub struct ConditionalGetService<S> {
+    inner: S,
+    weak_etag: bool,
+}
+
+fn strip_weak_prefix(tag: &str) -> &str {
+    let trimmed = tag.trim();
+    trimmed
+        .strip_prefix("W/")
+        .or_else(|| trimmed.strip_prefix("w/"))
+        .unwrap_or(trimmed)
+}
+
+fn etag_matches(if_none_match: &str, response_etag: &str) -> bool {
+    let trimmed = if_none_match.trim();
+    if trimmed == "*" {
+        return true;
+    }
+    let target = strip_weak_prefix(response_etag);
+    trimmed
+        .split(',')
+        .map(strip_weak_prefix)
+        .any(|candidate| candidate == target)
+}
+
+impl<S, B> Service<hyper::Request<B>> for ConditionalGetService<S>
+where
+    S: Service<hyper::Request<B>, Response = hyper::Response<Full<Bytes>>, Error = Infallible>
+        + Clone
+        + Send
+        + 'static,
+    S::Future: Send + 'static,
+    B: Send + 'static,
+{
+    type Response = hyper::Response<Full<Bytes>>;
+    type Error = Infallible;
+    type Future = std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>> + Send>,
+    >;
+
+    fn poll_ready(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, req: hyper::Request<B>) -> Self::Future {
+        let mut inner = self.inner.clone();
+        let weak_etag = self.weak_etag;
+
+        let is_get_or_head =
+            req.method() == hyper::Method::GET || req.method() == hyper::Method::HEAD;
+        let if_none_match = req
+            .headers()
+            .get(hyper::header::IF_NONE_MATCH)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+        let if_modified_since = req
+            .headers()
+            .get(hyper::header::IF_MODIFIED_SINCE)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+
+        Box::pin(async move {
+            let mut resp = inner.call(req).await?;
+
+            if !is_get_or_head || resp.status() != hyper::StatusCode::OK {
+                return Ok(resp);
+            }
+
+            let etag = if let Some(existing) = resp
+                .headers()
+                .get(hyper::header::ETAG)
+                .and_then(|v| v.to_str().ok())
+            {
+                existing.to_owned()
+            } else {
+                use http_body_util::BodyExt;
+                use sha2::{Digest, Sha256};
+
+                let (parts, body) = resp.into_parts();
+                let bytes = body
+                    .collect()
+                    .await
+                    .map(|c| c.to_bytes())
+                    .unwrap_or_default();
+                let digest = Sha256::digest(&bytes);
+                let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+                let computed = if weak_etag {
+                    format!("W/\"{hex}\"")
+                } else {
+                    format!("\"{hex}\"")
+                };
+                resp = hyper::Response::from_parts(parts, Full::new(bytes));
+                if let Ok(val) = hyper::header::HeaderValue::from_str(&computed) {
+                    resp.headers_mut().insert(hyper::header::ETAG, val);
+                }
+                computed
+            };
+
+            let not_modified = if let Some(inm) = if_none_match.as_deref() {
+                etag_matches(inm, &etag)
+            } else if let (Some(ims), Some(lm)) = (
+                if_modified_since.as_deref(),
+                resp.headers()
+                    .get(hyper::header::LAST_MODIFIED)
+                    .and_then(|v| v.to_str().ok()),
+            ) {
+                ims.trim() == lm.trim()
+            } else {
+                false
+            };
+
+            if not_modified {
+                let mut not_mod = hyper::Response::new(Full::new(Bytes::new()));
+                *not_mod.status_mut() = hyper::StatusCode::NOT_MODIFIED;
+                for header_name in [
+                    hyper::header::ETAG,
+                    hyper::header::CACHE_CONTROL,
+                    hyper::header::EXPIRES,
+                    hyper::header::DATE,
+                    hyper::header::LOCATION,
+                    hyper::header::VARY,
+                    hyper::header::LAST_MODIFIED,
+                ] {
+                    if let Some(val) = resp.headers().get(&header_name) {
+                        not_mod.headers_mut().insert(header_name, val.clone());
+                    }
+                }
+                return Ok(not_mod);
+            }
+
+            Ok(resp)
+        })
+    }
+}
+
+type AuthCheckFn =
+    std::sync::Arc<dyn Fn(&hyper::http::HeaderMap, &hyper::http::Extensions) -> bool + Send + Sync>;
+
+/// Django 5.1-style `LoginRequiredMiddleware` as a Tower [`Layer`].
+///
+/// Redirects unauthenticated requests to `{login_url}?next={encoded_path}` unless
+/// the path matches `login_url`, an explicit [`exempt_path`](Self::exempt_path),
+/// or an [`exempt_prefix`](Self::exempt_prefix).
+///
+/// By default, authentication is checked by looking for a non-empty `sessionid`
+/// cookie (customizable via [`session_cookie_name`](Self::session_cookie_name) or
+/// replaced completely with [`with_auth_check`](Self::with_auth_check)).
+#[derive(Clone)]
+pub struct LoginRequiredLayer {
+    login_url: String,
+    exempt_paths: Vec<String>,
+    exempt_prefixes: Vec<String>,
+    session_cookie_name: String,
+    auth_check: Option<AuthCheckFn>,
+}
+
+impl LoginRequiredLayer {
+    /// Creates a new [`LoginRequiredLayer`] redirecting unauthenticated requests to `login_url`.
+    pub fn new(login_url: impl Into<String>) -> Self {
+        Self {
+            login_url: login_url.into(),
+            exempt_paths: Vec::new(),
+            exempt_prefixes: Vec::new(),
+            session_cookie_name: "sessionid".to_string(),
+            auth_check: None,
+        }
+    }
+
+    /// Exempts an exact request path from authentication (e.g. `"/healthz"`).
+    pub fn exempt_path(mut self, path: impl Into<String>) -> Self {
+        self.exempt_paths.push(path.into());
+        self
+    }
+
+    /// Exempts any request path starting with `prefix` (e.g. `"/static/"`).
+    pub fn exempt_prefix(mut self, prefix: impl Into<String>) -> Self {
+        self.exempt_prefixes.push(prefix.into());
+        self
+    }
+
+    /// Overrides the default session cookie name checked for authentication (default `"sessionid"`).
+    pub fn session_cookie_name(mut self, name: impl Into<String>) -> Self {
+        self.session_cookie_name = name.into();
+        self
+    }
+
+    /// Replaces the default cookie check with a custom authentication predicate inspecting
+    /// request headers and extensions.
+    pub fn with_auth_check<F>(mut self, check: F) -> Self
+    where
+        F: Fn(&hyper::http::HeaderMap, &hyper::http::Extensions) -> bool + Send + Sync + 'static,
+    {
+        self.auth_check = Some(std::sync::Arc::new(check));
+        self
+    }
+}
+
+/// Returns a [`LoginRequiredLayer`] redirecting unauthenticated requests to `login_url`.
+pub fn login_required_layer(login_url: impl Into<String>) -> LoginRequiredLayer {
+    LoginRequiredLayer::new(login_url)
+}
+
+impl<S> Layer<S> for LoginRequiredLayer {
+    type Service = LoginRequiredService<S>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        LoginRequiredService {
+            inner,
+            login_url: self.login_url.clone(),
+            exempt_paths: self.exempt_paths.clone(),
+            exempt_prefixes: self.exempt_prefixes.clone(),
+            session_cookie_name: self.session_cookie_name.clone(),
+            auth_check: self.auth_check.clone(),
+        }
+    }
+}
+
+/// Service for [`LoginRequiredLayer`].
+#[derive(Clone)]
+pub struct LoginRequiredService<S> {
+    inner: S,
+    login_url: String,
+    exempt_paths: Vec<String>,
+    exempt_prefixes: Vec<String>,
+    session_cookie_name: String,
+    auth_check: Option<AuthCheckFn>,
+}
+
+impl<S, B> Service<hyper::Request<B>> for LoginRequiredService<S>
+where
+    S: Service<hyper::Request<B>, Response = hyper::Response<Full<Bytes>>, Error = Infallible>
+        + Clone
+        + Send
+        + 'static,
+    S::Future: Send + 'static,
+    B: Send + 'static,
+{
+    type Response = hyper::Response<Full<Bytes>>;
+    type Error = Infallible;
+    type Future = std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>> + Send>,
+    >;
+
+    fn poll_ready(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, req: hyper::Request<B>) -> Self::Future {
+        let mut inner = self.inner.clone();
+        let path = req.uri().path();
+
+        let is_exempt = path == self.login_url
+            || self.exempt_paths.iter().any(|p| p == path)
+            || self.exempt_prefixes.iter().any(|p| path.starts_with(p));
+
+        if !is_exempt {
+            let authenticated = match &self.auth_check {
+                Some(check) => check(req.headers(), req.extensions()),
+                None => extract_cookie(req.headers(), &self.session_cookie_name)
+                    .is_some_and(|v| !v.is_empty()),
+            };
+
+            if !authenticated {
+                let next_target = req
+                    .uri()
+                    .path_and_query()
+                    .map(|pq| pq.as_str())
+                    .unwrap_or(path);
+                let encoded_next = percent_encoding::utf8_percent_encode(
+                    next_target,
+                    percent_encoding::NON_ALPHANUMERIC,
+                )
+                .to_string();
+                let sep = if self.login_url.contains('?') {
+                    '&'
+                } else {
+                    '?'
+                };
+                let location = format!("{}{sep}next={encoded_next}", self.login_url);
+                let response = hyper::Response::builder()
+                    .status(hyper::StatusCode::FOUND)
+                    .header(hyper::header::LOCATION, location)
+                    .body(Full::new(Bytes::new()))
+                    .unwrap();
+                return Box::pin(async move { Ok(response) });
+            }
+        }
+
+        Box::pin(async move { inner.call(req).await })
+    }
+}
+
 #[cfg(test)]
 #[path = "middleware_tests.rs"]
 mod tests;
