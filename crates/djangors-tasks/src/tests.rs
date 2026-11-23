@@ -326,6 +326,104 @@ async fn test_register_recurring_rejects_invalid_cron_expression(
 }
 
 #[tokio::test]
+async fn test_recurring_registration_is_idempotent_and_can_be_managed(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let test_db = djangors_test::TestDatabase::connect().await?;
+    let _guard = TEST_DB_LOCK.lock().await;
+    let db = test_db.database();
+    create_recurring_task_table(db).await?;
+    db.conn()
+        .execute("DELETE FROM djangors_recurring_task", &[])
+        .await?;
+
+    let first_id = register_recurring(
+        db,
+        "idempotent_recurring_test",
+        &SamplePayload {
+            message: "first".into(),
+        },
+        "*/5 * * * *",
+    )
+    .await?;
+    let second_id = register_recurring(
+        db,
+        "idempotent_recurring_test",
+        &SamplePayload {
+            message: "updated".into(),
+        },
+        "*/5 * * * *",
+    )
+    .await?;
+
+    assert_eq!(
+        first_id, second_id,
+        "re-registration should update the same row"
+    );
+    let registrations = list_recurring(db).await?;
+    assert_eq!(registrations.len(), 1);
+    assert_eq!(registrations[0].id, first_id);
+    assert_eq!(
+        serde_json::from_str::<SamplePayload>(&registrations[0].payload)?.message,
+        "updated"
+    );
+
+    assert!(unregister_recurring(db, "idempotent_recurring_test", "*/5 * * * *").await?);
+    assert!(!unregister_recurring(db, "idempotent_recurring_test", "*/5 * * * *").await?);
+    assert!(list_recurring(db).await?.is_empty());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_recurring_table_setup_removes_preexisting_duplicates(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let test_db = djangors_test::TestDatabase::connect().await?;
+    let _guard = TEST_DB_LOCK.lock().await;
+    let db = test_db.database();
+    create_recurring_task_table(db).await?;
+    db.conn()
+        .execute("DELETE FROM djangors_recurring_task", &[])
+        .await?;
+
+    // Simulate rows written by an older release before the unique index existed.
+    db.conn()
+        .execute(
+            "DROP INDEX IF EXISTS djangors_recurring_task_name_cron_uq",
+            &[],
+        )
+        .await?;
+    let now = chrono::Utc::now();
+    let dialect = db.dialect();
+    let p1 = dialect.placeholder(1);
+    let p2 = dialect.placeholder(2);
+    let p3 = dialect.placeholder(3);
+    let p4 = dialect.placeholder(4);
+    let sql = format!(
+        "INSERT INTO djangors_recurring_task (task_name, payload, cron_expr, next_run_at, enabled) VALUES ({p1}, {p2}, {p3}, {p4}, TRUE)"
+    );
+    for payload in ["first", "duplicate"] {
+        db.conn()
+            .execute(
+                &sql,
+                &[
+                    djangors_db::BindValue::Text("legacy_duplicate_test".into()),
+                    djangors_db::BindValue::Text(payload.into()),
+                    djangors_db::BindValue::Text("*/10 * * * *".into()),
+                    djangors_db::BindValue::DateTime(now),
+                ],
+            )
+            .await?;
+    }
+
+    create_recurring_task_table(db).await?;
+    let registrations = list_recurring(db).await?;
+    assert_eq!(registrations.len(), 1);
+    assert_eq!(registrations[0].payload, "first");
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_disabled_recurring_task_never_enqueues() -> Result<(), Box<dyn std::error::Error>> {
     let test_db = djangors_test::TestDatabase::connect().await?;
     let _guard = TEST_DB_LOCK.lock().await;
