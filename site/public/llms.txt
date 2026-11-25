@@ -3,6 +3,7 @@
 The Django of Rust: batteries-included web development with Rust.
 
 - [Home](/)
+- [Engineering Blog](/blog)
 - [Django comparison](/compare)
 - [Benchmarks](/benchmarks)
 - [Full documentation](/docs/)

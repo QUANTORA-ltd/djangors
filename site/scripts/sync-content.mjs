@@ -36,7 +36,7 @@ const full = [await readFile(join(root, 'README.md'), 'utf8')];
 for (const path of docs.sort()) full.push(`\n\n<!-- ${path.slice(root.length + 1)} -->\n\n${await readFile(path, 'utf8')}`);
 full.push(`\n\n<!-- PLAN.md -->\n\n${await readFile(join(root, 'PLAN.md'), 'utf8')}`);
 await writeFile(join(publicDir, 'llms-full.txt'), full.join(''));
-await writeFile(join(publicDir, 'llms.txt'), '# Djangors\n\nThe Django of Rust: batteries-included web development with Rust.\n\n- [Home](/)\n- [Django comparison](/compare)\n- [Benchmarks](/benchmarks)\n- [Full documentation](/docs/)\n- [Full Markdown corpus](/llms-full.txt)\n');
+await writeFile(join(publicDir, 'llms.txt'), '# Djangors\n\nThe Django of Rust: batteries-included web development with Rust.\n\n- [Home](/)\n- [Engineering Blog](/blog)\n- [Django comparison](/compare)\n- [Benchmarks](/benchmarks)\n- [Full documentation](/docs/)\n- [Full Markdown corpus](/llms-full.txt)\n');
 
 execFileSync('mdbook', ['build', join(root, 'docs')], { stdio: 'inherit' });
 execFileSync(join(root, 'docs/scripts/copy-raw-markdown.sh'), { stdio: 'inherit' });

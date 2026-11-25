@@ -1,0 +1,90 @@
+---
+import { marked } from 'marked';
+import Layout from '../../layouts/Layout.astro';
+import '../../styles/global.css';
+import { posts, type BlogPost } from '../../blog/posts';
+
+export function getStaticPaths() {
+  return posts.map((post) => ({
+    params: { slug: post.slug },
+    props: { post },
+  }));
+}
+
+interface Props {
+  post: BlogPost;
+}
+
+const { post } = Astro.props;
+const html = marked.parse(post.markdown);
+const related = posts.filter((p) => p.slug !== post.slug);
+
+const articleJsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'BlogPosting',
+  headline: post.title,
+  description: post.description,
+  datePublished: post.date,
+  image: new URL(post.cover, Astro.site).toString(),
+  url: new URL(`/blog/${post.slug}`, Astro.site).toString(),
+  author: {
+    '@type': 'Organization',
+    name: 'Djangors',
+    url: 'https://djangors.vercel.app/',
+  },
+};
+---
+<Layout
+  title={`${post.title} · Djangors Blog`}
+  description={post.description}
+  image={post.cover}
+  type="article"
+>
+  <script type="application/ld+json" set:html={JSON.stringify(articleJsonLd)} />
+
+  <article class="blog-article">
+    <div class="blog-post-hero">
+      <div class="blog-post-top">
+        <a class="blog-back" href="/blog">&larr; All posts</a>
+        <button class="copy" data-markdown={post.markdown}>Copy as Markdown</button>
+      </div>
+      <div class="blog-meta">
+        <time datetime={post.date}>{post.date}</time>
+        <span>&middot;</span>
+        <span>{post.readingTime}</span>
+      </div>
+      <div class="blog-tags">
+        {post.tags.map((tag) => <span class="blog-tag">{tag}</span>)}
+      </div>
+      <div class="blog-post-cover">
+        <img src={post.cover} alt={post.coverAlt} loading="eager" />
+      </div>
+    </div>
+
+    <div class="markdown">
+      <Fragment set:html={html} />
+    </div>
+
+    <aside class="blog-related">
+      <h2>More from the Djangors Blog</h2>
+      <div class="blog-grid">
+        {related.map((other) => (
+          <a class="blog-card" href={`/blog/${other.slug}`}>
+            <div class="blog-cover-wrap">
+              <img src={other.cover} alt={other.coverAlt} loading="lazy" />
+            </div>
+            <div class="blog-card-body">
+              <div class="blog-meta">
+                <time datetime={other.date}>{other.date}</time>
+                <span>&middot;</span>
+                <span>{other.readingTime}</span>
+              </div>
+              <h3>{other.title}</h3>
+              <p>{other.description}</p>
+            </div>
+          </a>
+        ))}
+      </div>
+    </aside>
+  </article>
+</Layout>

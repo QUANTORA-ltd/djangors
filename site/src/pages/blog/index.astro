@@ -1,0 +1,62 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import '../../styles/global.css';
+import { posts } from '../../blog/posts';
+
+const featured = posts.find((p) => p.featured) ?? posts[0];
+const rest = posts.filter((p) => p.slug !== featured.slug);
+---
+<Layout
+  title="Engineering Blog · Djangors"
+  description="Deep-dive engineering notes on Rust build speed, Go-sized static binaries, parallel testing, and building Djangors 1.0."
+  image={featured.cover}
+>
+  <section class="blog-header">
+    <p class="blog-eyebrow">Engineering Blog</p>
+    <h1>Rust craft, without the slowness.</h1>
+    <p class="lede">Field notes from building Djangors 1.0: Cargo &amp; compiler internals, binary-size engineering, and batteries-included web architecture.</p>
+  </section>
+
+  <a class="blog-featured" href={`/blog/${featured.slug}`}>
+    <div class="blog-cover-wrap">
+      <img src={featured.cover} alt={featured.coverAlt} loading="eager" />
+    </div>
+    <div class="blog-featured-body">
+      <div class="blog-meta">
+        <span>Featured</span>
+        <span>&middot;</span>
+        <time datetime={featured.date}>{featured.date}</time>
+        <span>&middot;</span>
+        <span>{featured.readingTime}</span>
+      </div>
+      <h2>{featured.title}</h2>
+      <p>{featured.description}</p>
+      <div class="blog-tags">
+        {featured.tags.map((tag) => <span class="blog-tag">{tag}</span>)}
+      </div>
+      <span class="blog-read-more">Read article &rarr;</span>
+    </div>
+  </a>
+
+  <section class="blog-grid" aria-label="All articles">
+    {rest.map((post) => (
+      <a class="blog-card" href={`/blog/${post.slug}`}>
+        <div class="blog-cover-wrap">
+          <img src={post.cover} alt={post.coverAlt} loading="lazy" />
+        </div>
+        <div class="blog-card-body">
+          <div class="blog-meta">
+            <time datetime={post.date}>{post.date}</time>
+            <span>&middot;</span>
+            <span>{post.readingTime}</span>
+          </div>
+          <h3>{post.title}</h3>
+          <p>{post.description}</p>
+          <div class="blog-tags">
+            {post.tags.map((tag) => <span class="blog-tag">{tag}</span>)}
+          </div>
+        </div>
+      </a>
+    ))}
+  </section>
+</Layout>
