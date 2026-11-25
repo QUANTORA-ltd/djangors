@@ -19,7 +19,15 @@ jobs:
           command: rustup component add rustfmt clippy
       - restore_cache:
           keys:
-            - cargo-registry-{{ checksum "Cargo.lock" }}
+            - v2-cargo-registry-{{ checksum "Cargo.lock" }}
+            - v2-cargo-registry-
+      - run:
+          name: Install cargo-nextest
+          command: |
+            if ! command -v cargo-nextest >/dev/null 2>&1; then
+              mkdir -p "${CARGO_HOME:-$HOME/.cargo}/bin"
+              curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
+            fi
       - run:
           name: Wait for Postgres and create test database
           command: |
@@ -36,11 +44,10 @@ jobs:
           name: Clippy (deny warnings)
           command: cargo clippy --workspace --all-targets -- -D warnings
       - run:
-          name: Build
-          command: cargo build --workspace --all-targets
-      - run:
-          name: Test
-          command: cargo test --workspace -- --include-ignored
+          name: Test (nextest + doctests)
+          command: |
+            cargo nextest run --profile ci --workspace --run-ignored all
+            cargo test --workspace --doc
       - run:
           name: Doc build
           command: cargo doc --workspace --no-deps
@@ -83,9 +90,13 @@ jobs:
             test "$MIN_BYTES" -lt 6291456
             test "$POLLS_BYTES" -lt 14680064
             test "$MIN_BYTES" -lt "$POLLS_BYTES"
+      - run:
+          name: Trim target/ before saving cache
+          command: rm -rf target/doc target/tests/trybuild target/cli-test-cache target/release target/tmp
       - save_cache:
-          key: cargo-registry-{{ checksum "Cargo.lock" }}
+          key: v2-cargo-registry-{{ checksum "Cargo.lock" }}
           paths:
+            - ~/.cargo/bin
             - ~/.cargo/registry
             - target
 
@@ -96,24 +107,33 @@ jobs:
           CARGO_INCREMENTAL: "0"
     steps:
       - checkout
-      - run:
-          name: Install rustfmt / clippy components
-          command: rustup component add rustfmt clippy
       - restore_cache:
           keys:
-            - cargo-sqlite-{{ checksum "Cargo.lock" }}
+            - v2-cargo-sqlite-{{ checksum "Cargo.lock" }}
+            - v2-cargo-sqlite-
+      - run:
+          name: Install cargo-nextest
+          command: |
+            if ! command -v cargo-nextest >/dev/null 2>&1; then
+              mkdir -p "${CARGO_HOME:-$HOME/.cargo}/bin"
+              curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
+            fi
       # No DATABASE_URL is set anywhere in this job, and that is load-bearing:
       # the test harness selects its backend by checking whether DATABASE_URL is
       # present, so if it leaks into the environment this job silently runs
       # against Postgres and passes while proving nothing about SQLite.
       - run:
           name: Test SQLite backend
-          command: env -u DATABASE_URL TEST_BACKEND=sqlite cargo test --workspace
+          command: env -u DATABASE_URL TEST_BACKEND=sqlite cargo nextest run --profile sqlite --workspace
+      - run:
+          name: Trim target/ before saving cache
+          command: rm -rf target/tests/trybuild target/cli-test-cache target/tmp
       # Distinct cache key from the `test` job. Sharing one key makes whichever
       # job finishes second fail its save with "cache already exists".
       - save_cache:
-          key: cargo-sqlite-{{ checksum "Cargo.lock" }}
+          key: v2-cargo-sqlite-{{ checksum "Cargo.lock" }}
           paths:
+            - ~/.cargo/bin
             - ~/.cargo/registry
             - target
 
@@ -122,9 +142,19 @@ jobs:
       - image: cimg/rust:1.96.0
     steps:
       - checkout
+      - restore_cache:
+          keys:
+            - v1-cargo-audit-bin
       - run:
           name: Install cargo-audit
-          command: cargo install cargo-audit --locked
+          command: |
+            if ! command -v cargo-audit >/dev/null 2>&1; then
+              cargo install cargo-audit --locked
+            fi
+      - save_cache:
+          key: v1-cargo-audit-bin
+          paths:
+            - ~/.cargo/bin/cargo-audit
       - run:
           name: Run cargo audit
           # RUSTSEC-2026-0194 / -0195 (quick-xml DoS, transitive via the `s3` crate) and
