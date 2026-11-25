@@ -2,6 +2,8 @@
 
 Djangors supports two testing paradigms: **in-process route testing** via `djangors-test` (`TestClient`) and **real-socket integration testing** over localhost TCP sockets.
 
+> **Tip:** For fast parallel SQLite test runs (`cargo t` / `cargo t-fast`), `cargo-nextest` profiles, and avoiding `target/` bloat, see [Build, Test & Disk Size Optimization](build-and-test-speed.md).
+
 ---
 
 ## 1. In-Process Testing (`TestClient` & `TestDatabase`)

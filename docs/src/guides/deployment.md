@@ -303,3 +303,5 @@ solves both out of the box when you scaffold with `dj new`:
 
 4. **Share build artifacts across projects** — set a shared `CARGO_TARGET_DIR` (or `sccache`) so
    common dependencies are compiled and stored once on disk rather than duplicated per project.
+
+For the complete set of workspace speedups (`sccache`, `bacon`, `rust-analyzer` scoping, `cargo-nextest` parallel SQLite profiles, and automatic `target/` size capping), see [Build, Test & Disk Size Optimization](build-and-test-speed.md).

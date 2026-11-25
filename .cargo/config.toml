@@ -1,3 +1,7 @@
 [alias]
+# Fast single-target lib check (skips codegen, linking, and test harnesses).
+cf = "check --lib"
 # Fast parallel SQLite test suite (when DATABASE_URL is unset, TestBackend defaults to SQLite).
 t = "nextest run --profile sqlite --workspace --exclude doc-code-check"
+# Instant inner-loop suite (~4s warm across 747 tests; skips Postgres-only crates and nested-cargo tests).
+t-fast = "nextest run --profile sqlite --workspace --exclude doc-code-check --exclude polls --exclude school --exclude djangors-contrib-tenancy -E 'not (binary(trybuild) or binary(management_command_e2e) or binary(full_stack) or test(test_makemigrations_generated_project_introspects) or test(test_dj_test_command))'"

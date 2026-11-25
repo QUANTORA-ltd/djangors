@@ -21,6 +21,7 @@
 - [Application Architecture](guides/application-architecture.md)
 - [Quick Reference for Developers & AI Agents](guides/ai-agents.md)
 - [CLI Reference (`dj`)](guides/cli-reference.md)
+- [Build, Test & Disk Size Optimization](guides/build-and-test-speed.md)
 
 # For Rust Web Developers
 

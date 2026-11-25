@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-6be39a06.js";
+            window.path_to_searchindex_js = "../searchindex-1b0d75c8.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-08d624e0.js"></script>
+        <script src="../toc-078f3e88.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -177,6 +177,9 @@
                     <main>
                         <h1 id="testing"><a class="header" href="#testing">Testing</a></h1>
 <p>Djangors supports two testing paradigms: <strong>in-process route testing</strong> via <code>djangors-test</code> (<code>TestClient</code>) and <strong>real-socket integration testing</strong> over localhost TCP sockets.</p>
+<blockquote>
+<p><strong>Tip:</strong> For fast parallel SQLite test runs (<code>cargo t</code> / <code>cargo t-fast</code>), <code>cargo-nextest</code> profiles, and avoiding <code>target/</code> bloat, see <a href="build-and-test-speed.html">Build, Test &amp; Disk Size Optimization</a>.</p>
+</blockquote>
 <hr>
 <h2 id="1-in-process-testing-testclient--testdatabase"><a class="header" href="#1-in-process-testing-testclient--testdatabase">1. In-Process Testing (<code>TestClient</code> &amp; <code>TestDatabase</code>)</a></h2>
 <p><code>djangors-test</code> provides an in-process client that executes requests directly through <code>Router::handle()</code> without binding network sockets.</p>

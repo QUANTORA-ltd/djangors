@@ -37,10 +37,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-6be39a06.js";
+            window.path_to_searchindex_js = "searchindex-1b0d75c8.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-08d624e0.js"></script>
+        <script src="toc-078f3e88.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -2916,6 +2916,212 @@ crates.io:</p>
 <p>Any unrecognized subcommand <code>dj &lt;my-command&gt; [args...]</code> is automatically routed to your project’s
 binary with <code>DJANGORS_RUN_COMMAND=&lt;my-command&gt;</code>, matching functions annotated with
 <code>#[management_command]</code>.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="build-test--disk-size-optimization"><a class="header" href="#build-test--disk-size-optimization">Build, Test &amp; Disk Size Optimization</a></h1>
+<p>Rust’s compiler gives you small binaries and fast runtime performance, but Cargo’s default settings optimize for debugging every third-party crate—which can leave <code>target/</code> at 13+ GiB, release binaries at 40+ MiB, and workspace checks feeling sluggish.</p>
+<p>This guide documents every optimization Djangors ships out of the box (including <code>dj new</code>) and the workflow tricks that keep inner-loop checks, tests, CI, and disk usage fast and small.</p>
+<h2 id="measured-results-in-djangors"><a class="header" href="#measured-results-in-djangors">Measured Results in Djangors</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Metric</th><th>Before</th><th>After</th></tr>
+</thead>
+<tbody>
+<tr><td>Minimal Postgres release binary (<code>examples/minimal-facade</code>)</td><td>—</td><td><strong>4.00 MiB</strong> stripped</td></tr>
+<tr><td>Full-stack release binary (<code>examples/polls</code>)</td><td>—</td><td><strong>11.51 MiB</strong> stripped</td></tr>
+<tr><td><code>target/</code> disk footprint (workspace)</td><td>9.2 GiB – 13+ GiB</td><td><strong>3.6 GiB</strong> (hard-capped at <strong>4 GiB</strong>)</td></tr>
+<tr><td>Parallel SQLite workspace suite (<code>747 tests</code>)</td><td><code>14.59s</code></td><td><strong><code>4.26s</code></strong> (~3.4x faster)</td></tr>
+<tr><td>Core DB/auth/admin/REST loop (<code>179 tests</code>)</td><td>Serialized</td><td><strong><code>1.01s</code></strong></td></tr>
+<tr><td>Real-socket SSE broadcast test</td><td>Flaky / hang risk</td><td><strong><code>0.010s</code></strong></td></tr>
+</tbody>
+</table>
+</div>
+<hr>
+<h2 id="1-small-target--go-sized-release-binaries"><a class="header" href="#1-small-target--go-sized-release-binaries">1. Small <code>target/</code> &amp; Go-Sized Release Binaries</a></h2>
+<p><code>dj new</code> and the Djangors workspace both configure <code>[profile.dev]</code> and <code>[profile.release]</code> in <code>Cargo.toml</code>:</p>
+<pre><code class="language-toml">[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = 0
+
+[profile.release]
+opt-level = "z"
+lto = "thin"
+strip = true
+codegen-units = 1
+panic = "abort"
+</code></pre>
+<ul>
+<li><strong><code>debug = "line-tables-only"</code></strong> keeps file + line numbers in panic backtraces while cutting debug info size by ~65–70%.</li>
+<li><strong><code>[profile.dev.package."*"] debug = 0</code></strong> omits DWARF debug info for third-party dependencies (which rarely need step-through debugging).</li>
+<li><strong>Feature-gate <code>djangors</code></strong>: always use <code>default-features = false</code> and enable only the batteries you use (<code>features = ["postgres", "rest", "auth"]</code>) so unused crates are never compiled or linked.</li>
+</ul>
+<hr>
+<h2 id="2-avoid-the-profiletest-vs-profiledev-double-compilation-trap"><a class="header" href="#2-avoid-the-profiletest-vs-profiledev-double-compilation-trap">2. Avoid the <code>[profile.test]</code> vs <code>[profile.dev]</code> Double-Compilation Trap</a></h2>
+<p>Never set <code>debug</code> or <code>opt-level</code> on <code>[profile.test]</code> unless it matches <code>[profile.dev]</code> identically.</p>
+<p>If <code>[profile.dev]</code> uses <code>debug = "line-tables-only"</code> and <code>[profile.test]</code> overrides <code>debug = 0</code> (or <code>opt-level = 1</code>), Cargo treats them as incompatible compiler fingerprints and compiles <strong>every dependency in your workspace twice</strong>—doubling both <code>target/debug/deps/</code> size and test build times.</p>
+<p>Keep <code>[profile.test]</code> untouched so it inherits <code>[profile.dev]</code> directly, and tune only specific leaf crates via <code>[profile.dev.package.&lt;crate&gt;]</code>.</p>
+<hr>
+<h2 id="3-selective-opt-level--3-for-crypto--hashing-crates"><a class="header" href="#3-selective-opt-level--3-for-crypto--hashing-crates">3. Selective <code>opt-level = 3</code> for Crypto &amp; Hashing Crates</a></h2>
+<p>Pure-Rust cryptography and password hashing are 30–150x slower at <code>opt-level = 0</code>. A single Argon2 hash or 2048-bit RSA signature in an unoptimized test can take seconds.</p>
+<p>Compile just those leaf crates with full optimization in dev/test builds:</p>
+<pre><code class="language-toml">[profile.dev.package.argon2]
+opt-level = 3
+[profile.dev.package.blake2]
+opt-level = 3
+[profile.dev.package.rsa]
+opt-level = 3
+[profile.dev.package.sha2]
+opt-level = 3
+[profile.dev.package.hmac]
+opt-level = 3
+[profile.dev.package.aes]
+opt-level = 3
+[profile.dev.package.aes-gcm]
+opt-level = 3
+[profile.dev.package.ghash]
+opt-level = 3
+[profile.dev.package.p256]
+opt-level = 3
+[profile.dev.package.p384]
+opt-level = 3
+[profile.dev.package.curve25519-dalek]
+opt-level = 3
+[profile.dev.package.ed25519-dalek]
+opt-level = 3
+[profile.dev.package.zxcvbn]
+opt-level = 3
+</code></pre>
+<p>Because these are leaf crates that rarely change, Cargo compiles them once and your workspace crates still rebuild incrementally at <code>opt-level = 0</code>.</p>
+<hr>
+<h2 id="4-eliminate-dead-test-binaries--slim-trybuild"><a class="header" href="#4-eliminate-dead-test-binaries--slim-trybuild">4. Eliminate Dead Test Binaries &amp; Slim <code>trybuild</code></a></h2>
+<p>By default, Cargo compiles a separate <code>--test</code> harness executable for every <code>[lib]</code> and <code>[[bin]]</code> target—even if it contains zero <code>#[test]</code> functions. In a multi-crate workspace, each empty executable links 50–60 MiB of dependencies.</p>
+<p>For binary-only or example crates whose tests live in <code>tests/*.rs</code>:</p>
+<pre><code class="language-toml">[lib]
+test = false
+doctest = false
+
+[[bin]]
+name = "my_app"
+test = false
+</code></pre>
+<p>Similarly, if you use <code>trybuild</code> for proc-macro UI tests, <code>trybuild</code> spawns an isolated inner Cargo build inside <code>target/tests/trybuild/</code>. Pin its <code>[dev-dependencies]</code> with <code>default-features = false</code> and only the single backend/feature those UI snippets need so <code>trybuild</code> does not compile C SQLite (<code>libsqlite3-sys</code>) or optional stacks inside a second <code>target/</code> tree.</p>
+<hr>
+<h2 id="5-fast-parallel-cargo-nextest--race-free-async-tests"><a class="header" href="#5-fast-parallel-cargo-nextest--race-free-async-tests">5. Fast Parallel <code>cargo-nextest</code> &amp; Race-Free Async Tests</a></h2>
+<h3 id="separate-postgres-serialization-from-sqlite-parallelism"><a class="header" href="#separate-postgres-serialization-from-sqlite-parallelism">Separate Postgres serialization from SQLite parallelism</a></h3>
+<p>Shared PostgreSQL test databases require serialized access per table (<code>max-threads = 1</code> in <code>.config/nextest.toml</code>). However, SQLite tests in Djangors use isolated in-memory <code>sqlite::memory:</code> connections and can run across every CPU core.</p>
+<p><code>.config/nextest.toml</code> defines a <code>sqlite</code> profile that promotes DB crates back to <code>@global</code> parallelism while keeping nested-<code>cargo</code> subprocess tests serialized, and sets <code>terminate-after</code> so a hung test never stalls CI or your terminal forever:</p>
+<pre><code class="language-toml">[profile.default]
+slow-timeout = { period = "15s", terminate-after = 4 }
+
+[test-groups]
+cargo-subprocess = { max-threads = 1 }
+postgres-db = { max-threads = 1 }
+
+[[profile.sqlite.overrides]]
+filter = "package(djangors-orm) or package(djangors-auth) or package(djangors-admin)"
+test-group = "@global"
+</code></pre>
+<p>Use the workspace Cargo aliases in <code>.cargo/config.toml</code>:</p>
+<pre><code class="language-bash"># Fast single-crate type/borrow check (skips codegen and linking)
+cargo cf -p djangors-orm
+
+# Full parallel SQLite suite
+cargo t
+
+# Instant ~4s inner-loop suite (747 tests; skips Postgres-only crates &amp; nested-cargo builds)
+cargo t-fast
+</code></pre>
+<h3 id="replace-fixed-sleep-calls-with-tokiosyncnotify--timeout"><a class="header" href="#replace-fixed-sleep-calls-with-tokiosyncnotify--timeout">Replace fixed <code>sleep()</code> calls with <code>tokio::sync::Notify</code> + <code>timeout</code></a></h3>
+<p>Under high parallel CPU load, <code>tokio::time::sleep(Duration::from_millis(50))</code> frequently wakes up <em>before</em> a spawned server or SSE handler has subscribed, causing flaky failures or infinite <code>read()</code> hangs.</p>
+<p>Always synchronize with <code>tokio::sync::Notify</code> and wrap socket reads in <code>tokio::time::timeout</code>:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>let subscribed = std::sync::Arc::new(tokio::sync::Notify::new());
+// Inside the handler after subscribing: subscribed.notify_one();
+
+tokio::time::timeout(std::time::Duration::from_secs(5), subscribed.notified())
+    .await
+    .expect("handler should subscribe before publish");
+<span class="boring">}</span></code></pre>
+<hr>
+<h2 id="6-making-cargo-check--your-editor-instant"><a class="header" href="#6-making-cargo-check--your-editor-instant">6. Making <code>cargo check</code> &amp; Your Editor Instant</a></h2>
+<p><code>cargo check</code> (<code>rustc --emit=metadata</code>) skips LLVM codegen and linking, but in large workspaces it can still feel slow for one main reason: <strong>feature-unification hash misses</strong>.</p>
+<ul>
+<li><code>cargo check -p djangors-orm --lib</code> resolves dependencies with <strong>Hash A</strong>.</li>
+<li><code>cargo check --workspace --lib</code> resolves them with <strong>Hash B</strong>.</li>
+<li><code>cargo test</code> resolves them with <strong>Hash C</strong> (<code>dev-dependencies</code> included).</li>
+<li><code>rust-analyzer</code> running <code>--workspace --all-targets</code> resolves <strong>Hash D</strong> and contends on <code>target/debug/.cargo-lock</code>.</li>
+</ul>
+<p>Every time you switch between them, Cargo re-checks shared dependencies (<code>sqlx</code>, <code>tokio</code>, <code>rustls</code>). Fix this with four tools:</p>
+<h3 id="1-scope-rust-analyzer-to-the-crate-you-are-editing"><a class="header" href="#1-scope-rust-analyzer-to-the-crate-you-are-editing">1. Scope <code>rust-analyzer</code> to the crate you are editing</a></h3>
+<p>Djangors includes <code>.zed/settings.json</code> so Zed checks only the active crate (<code>workspace = false</code>, <code>allTargets = false</code>) in its own <code>target/rust-analyzer</code> directory (<code>targetDir = true</code>) without blocking terminal <code>cargo</code>:</p>
+<pre><code class="language-json">{
+  "lsp": {
+    "rust-analyzer": {
+      "initialization_options": {
+        "check": {
+          "workspace": false,
+          "allTargets": false
+        },
+        "cargo": {
+          "targetDir": true
+        },
+        "cachePriming": {
+          "enable": false
+        }
+      }
+    }
+  }
+}
+</code></pre>
+<p><em>(In VS Code, set <code>"rust-analyzer.check.workspace": false</code>, <code>"rust-analyzer.check.allTargets": false</code>, and <code>"rust-analyzer.cargo.targetDir": true</code>.)</em></p>
+<h3 id="2-enable-sccache-in-your-user-level-cargoconfigtoml"><a class="header" href="#2-enable-sccache-in-your-user-level-cargoconfigtoml">2. Enable <code>sccache</code> in your user-level <code>~/.cargo/config.toml</code></a></h3>
+<p><code>sccache</code> caches compiled crates (<code>.rlib</code>, <code>.rmeta</code>, proc-macros) across feature hashes, branches, and <code>cargo clean</code>. Put this in <strong><code>~/.cargo/config.toml</code></strong> (not the project’s <code>.cargo/config.toml</code>, so contributors without <code>sccache</code> aren’t affected):</p>
+<pre><code class="language-toml">[build]
+rustc-wrapper = "sccache"
+
+[env]
+SCCACHE_CACHE_SIZE = "4G"
+</code></pre>
+<h3 id="3-live-background-checks-with-bacon"><a class="header" href="#3-live-background-checks-with-bacon">3. Live background checks with <code>bacon</code></a></h3>
+<p>Run <code>bacon check -p my_crate</code> in a side terminal. It watches file saves and runs <code>cargo check</code> continuously so diagnostics are ready before you switch windows.</p>
+<h3 id="4-workspace-hack-cargo-hakari-cranelift-and-the-lld-linker"><a class="header" href="#4-workspace-hack-cargo-hakari-cranelift-and-the-lld-linker">4. Workspace-hack (<code>cargo-hakari</code>), Cranelift, and the LLD linker</a></h3>
+<ul>
+<li><strong><code>cargo-hakari</code></strong> generates a shared <code>workspace-hack</code> crate that unifies dependency features across all workspace members into one hash—eliminating re-checks when switching <code>-p &lt;crate&gt;</code> vs <code>--workspace</code>.</li>
+<li><strong>Nightly Cranelift</strong> (<code>-Zcodegen-backend=cranelift</code>) speeds up unoptimized dev/test codegen by ~25–40% when iterating on tests.</li>
+<li><strong>Don’t blindly add custom <code>RUSTFLAGS</code> for <code>mold</code>/<code>lld</code> on modern Linux <code>rustc</code></strong>: <code>rustc</code> 1.90+ on <code>x86_64-unknown-linux-gnu</code> already links with <code>rust-lld</code> by default, and custom <code>RUSTFLAGS</code> invalidate caches whenever an editor or tool invokes Cargo without matching flags.</li>
+</ul>
+<hr>
+<h2 id="7-faster-smaller-ci"><a class="header" href="#7-faster-smaller-ci">7. Faster, Smaller CI</a></h2>
+<p>In CI (see <code>.circleci/config.yml</code>), set:</p>
+<pre><code class="language-yaml">environment:
+  CARGO_INCREMENTAL: "0"
+</code></pre>
+<p><code>target/debug/incremental/</code> can easily grow to 2.4+ GiB, bloats CI cache restore/save steps, and forces extra LLVM codegen units. Disabling incremental compilation in CI shrinks caches and speeds up clean CI builds.</p>
+<hr>
+<h2 id="8-hard-capping-target-disk-size"><a class="header" href="#8-hard-capping-target-disk-size">8. Hard-Capping <code>target/</code> Disk Size</a></h2>
+<p>On stable Rust, <code>target/</code> is append-only (even nightly <code>cargo -Z gc</code> only sweeps <code>~/.cargo</code> global caches, not per-project <code>target/</code>).</p>
+<p>Djangors includes <a href="https://github.com/QUANTORA-ltd/djangors/blob/main/scripts/trim-target.sh"><code>scripts/trim-target.sh</code></a> to enforce a hard size cap (default <code>4096 MiB</code> / 4 GiB) safely:</p>
+<ol>
+<li><strong>Build-safety guards</strong>: checks <code>flock -n</code> on <code>target/{debug,release}/.cargo-lock</code> and active <code>cargo</code>/<code>rustc</code>/<code>cargo-nextest</code> processes—exiting cleanly if a build is in progress.</li>
+<li><strong>Staged pruning</strong> (stops as soon as <code>target/</code> is under the cap):
+<ul>
+<li>Ephemeral dirs (<code>target/doc</code>, <code>target/tmp</code>, <code>target/flycheck*</code>)</li>
+<li>Nested test sub-targets (<code>target/tests/trybuild</code>, <code>target/cli-test-cache</code>, then <code>target/rust-analyzer</code>)</li>
+<li>Old incremental sessions, then <code>target/*/incremental</code> (keeps <code>.rlib</code>/<code>.rmeta</code> warm)</li>
+<li>Stale duplicate hashed artifacts in <code>deps/</code> (keeps the 2 newest hashes per crate so <code>check</code> and <code>test</code> stay warm)</li>
+<li>LRU eviction by <code>mtime</code> (preserves top-level release binaries like <code>target/release/dj</code>)</li>
+</ul>
+</li>
+</ol>
+<p>Run it manually or via a <code>systemd --user</code> timer every 15 minutes:</p>
+<pre><code class="language-bash">./scripts/trim-target.sh 4096
+</code></pre>
+<blockquote>
+<p><strong>Tip:</strong> See <a href="#keeping-binaries-and-target-small">Deployment</a> for production Docker multi-stage builds and <code>dj check --deploy</code>.</p>
+</blockquote>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="moving-from-actix-web-or-axum"><a class="header" href="#moving-from-actix-web-or-axum">Moving from Actix Web or Axum</a></h1>
 <p>This guide is for Rust developers who already know Actix Web or Axum and want
@@ -8468,6 +8674,9 @@ let status_filter = SimpleListFilter::new(
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="testing"><a class="header" href="#testing">Testing</a></h1>
 <p>Djangors supports two testing paradigms: <strong>in-process route testing</strong> via <code>djangors-test</code> (<code>TestClient</code>) and <strong>real-socket integration testing</strong> over localhost TCP sockets.</p>
+<blockquote>
+<p><strong>Tip:</strong> For fast parallel SQLite test runs (<code>cargo t</code> / <code>cargo t-fast</code>), <code>cargo-nextest</code> profiles, and avoiding <code>target/</code> bloat, see <a href="#build-test--disk-size-optimization">Build, Test &amp; Disk Size Optimization</a>.</p>
+</blockquote>
 <hr>
 <h2 id="1-in-process-testing-testclient--testdatabase"><a class="header" href="#1-in-process-testing-testclient--testdatabase">1. In-Process Testing (<code>TestClient</code> &amp; <code>TestDatabase</code>)</a></h2>
 <p><code>djangors-test</code> provides an in-process client that executes requests directly through <code>Router::handle()</code> without binding network sockets.</p>
@@ -9322,6 +9531,7 @@ panic = "abort"
 common dependencies are compiled and stored once on disk rather than duplicated per project.</p>
 </li>
 </ol>
+<p>For the complete set of workspace speedups (<code>sccache</code>, <code>bacon</code>, <code>rust-analyzer</code> scoping, <code>cargo-nextest</code> parallel SQLite profiles, and automatic <code>target/</code> size capping), see <a href="#build-test--disk-size-optimization">Build, Test &amp; Disk Size Optimization</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="security"><a class="header" href="#security">Security</a></h1>
 <p>Djangors includes built-in security middleware covering CSRF protection, security response headers, host header validation, and HMAC-signed session cookie storage.</p>

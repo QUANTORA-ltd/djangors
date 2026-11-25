@@ -62,8 +62,14 @@ if [[ "$(dir_mb)" -le "${MAX_TARGET_MB}" ]]; then
     exit 0
 fi
 
-# Stage 2: Nested test sub-targets (trybuild & cli-test-cache).
+# Stage 2: Nested test sub-targets (trybuild & cli-test-cache), then rust-analyzer target if still over cap.
 rm -rf "${TARGET_REAL}/tests/trybuild" "${TARGET_REAL}/cli-test-cache" 2>/dev/null || true
+if [[ "$(dir_mb)" -le "${MAX_TARGET_MB}" ]]; then
+    AFTER_MB="$(dir_mb)"
+    echo "trimmed target/: ${BEFORE_MB} MiB -> ${AFTER_MB} MiB (cap: ${MAX_TARGET_MB} MiB)"
+    exit 0
+fi
+rm -rf "${TARGET_REAL}/rust-analyzer" 2>/dev/null || true
 if [[ "$(dir_mb)" -le "${MAX_TARGET_MB}" ]]; then
     AFTER_MB="$(dir_mb)"
     echo "trimmed target/: ${BEFORE_MB} MiB -> ${AFTER_MB} MiB (cap: ${MAX_TARGET_MB} MiB)"
@@ -148,10 +154,10 @@ for profile in ("debug", "release"):
         except OSError:
             pass
     for entries in groups.values():
-        if len(entries) <= 1:
+        if len(entries) <= 2:
             continue
         entries.sort(reverse=True)
-        for _, _, old_fp in entries[1:]:
+        for _, _, old_fp in entries[2:]:
             try:
                 os.unlink(old_fp)
             except OSError:
