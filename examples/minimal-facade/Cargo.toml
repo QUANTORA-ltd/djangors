@@ -9,6 +9,7 @@ publish = false
 [[bin]]
 name = "minimal-facade"
 path = "src/main.rs"
+test = false
 
 [dependencies]
 djangors = { path = "../../crates/djangors", default-features = false, features = ["postgres"] }

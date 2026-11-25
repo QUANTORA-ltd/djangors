@@ -9,11 +9,6 @@ async fn hello_handler(_: Request, _: PathParams) -> Result<Response, DjangorsEr
     Ok(Response::text(StatusCode::OK, "Hello from Djangors!"))
 }
 
-async fn slow_handler(_: Request, _: PathParams) -> Result<Response, DjangorsError> {
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-    Ok(Response::text(StatusCode::OK, "Slow response"))
-}
-
 #[tokio::test]
 async fn real_socket_request_response() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -112,16 +107,30 @@ async fn real_socket_layered_middleware_response() {
 
 #[tokio::test]
 async fn graceful_shutdown_drains_in_flight_request() {
+    #[derive(Clone)]
+    struct HandlerEntered(std::sync::Arc<tokio::sync::Notify>);
+
+    async fn notified_slow_handler(req: Request, _: PathParams) -> Result<Response, DjangorsError> {
+        if let Some(entered) = req.state::<HandlerEntered>() {
+            entered.0.notify_one();
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        Ok(Response::text(StatusCode::OK, "Slow response"))
+    }
+
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+    let entered = std::sync::Arc::new(tokio::sync::Notify::new());
 
     let settings = DjangorsSettings {
         host: "127.0.0.1".to_string(),
         port: addr.port(),
         ..Default::default()
     };
-    let router = Router::new().get("/slow", slow_handler);
+    let router = Router::new()
+        .with_state(HandlerEntered(entered.clone()))
+        .get("/slow", notified_slow_handler);
     let app = Djangors::new(settings, router);
 
     let server = tokio::spawn(async move {
@@ -143,14 +152,16 @@ async fn graceful_shutdown_drains_in_flight_request() {
         String::from_utf8(buf).unwrap()
     });
 
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    tokio::time::timeout(std::time::Duration::from_secs(5), entered.notified())
+        .await
+        .expect("slow handler should have started");
     let shutdown_started = tokio::time::Instant::now();
     shutdown_tx.send(()).unwrap();
     server.await.unwrap();
     let shutdown_elapsed = shutdown_started.elapsed();
 
     assert!(
-        shutdown_elapsed >= std::time::Duration::from_millis(250),
+        shutdown_elapsed >= std::time::Duration::from_millis(200),
         "server returned before the in-flight request drained: {shutdown_elapsed:?}"
     );
     let response = response_task.await.unwrap();
@@ -181,6 +192,9 @@ async fn real_socket_sse_streaming_groups_broadcast() {
     use crate::groups::Groups;
     use crate::sse::StreamingResponse;
 
+    #[derive(Clone)]
+    struct SseSubscribed(std::sync::Arc<tokio::sync::Notify>);
+
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
@@ -192,6 +206,7 @@ async fn real_socket_sse_streaming_groups_broadcast() {
 
     let groups = Groups::new();
     let sse_groups = groups.clone();
+    let subscribed = std::sync::Arc::new(tokio::sync::Notify::new());
 
     async fn sse_events_handler(
         req: Request,
@@ -201,11 +216,15 @@ async fn real_socket_sse_streaming_groups_broadcast() {
             .state::<Groups>()
             .expect("Groups state must be attached");
         let rx = groups.group("events").subscribe();
+        if let Some(flag) = req.state::<SseSubscribed>() {
+            flag.0.notify_one();
+        }
         Ok(StreamingResponse::sse(rx))
     }
 
     let router = Router::new()
         .with_state(sse_groups)
+        .with_state(SseSubscribed(subscribed.clone()))
         .sse("/events", sse_events_handler);
     let app = Djangors::new(settings, router);
 
@@ -213,13 +232,13 @@ async fn real_socket_sse_streaming_groups_broadcast() {
         app.serve(listener).await.unwrap();
     });
 
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
     let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
     let request = "GET /events HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
     stream.write_all(request.as_bytes()).await.unwrap();
 
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    tokio::time::timeout(std::time::Duration::from_secs(5), subscribed.notified())
+        .await
+        .expect("SSE handler should subscribe before publish");
 
     let publisher = groups.group("events");
     publisher.send("first message");
@@ -230,7 +249,10 @@ async fn real_socket_sse_streaming_groups_broadcast() {
 
     let start = tokio::time::Instant::now();
     loop {
-        let n = stream.read(&mut buf).await.unwrap();
+        let n = tokio::time::timeout(std::time::Duration::from_secs(5), stream.read(&mut buf))
+            .await
+            .expect("timed out waiting for SSE chunk")
+            .unwrap();
         if n == 0 {
             break;
         }

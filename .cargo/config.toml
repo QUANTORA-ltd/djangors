@@ -1,0 +1,3 @@
+[alias]
+# Fast parallel SQLite test suite (when DATABASE_URL is unset, TestBackend defaults to SQLite).
+t = "nextest run --profile sqlite --workspace --exclude doc-code-check"

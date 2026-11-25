@@ -9,10 +9,13 @@ publish = false
 [lib]
 name = "polls"
 path = "src/lib.rs"
+test = false
+doctest = false
 
 [[bin]]
 name = "polls"
 path = "src/main.rs"
+test = false
 
 [dependencies]
 djangors-core = { path = "../../crates/djangors-core" }

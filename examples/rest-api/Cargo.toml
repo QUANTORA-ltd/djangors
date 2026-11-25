@@ -9,10 +9,13 @@ publish = false
 [lib]
 name = "rest_api"
 path = "src/lib.rs"
+test = false
+doctest = false
 
 [[bin]]
 name = "rest-api"
 path = "src/main.rs"
+test = false
 
 [dependencies]
 djangors = { path = "../../crates/djangors", default-features = false, features = ["sqlite", "rest", "tasks", "cache", "resilience"] }

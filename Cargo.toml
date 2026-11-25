@@ -62,6 +62,16 @@ opt-level = 3
 opt-level = 3
 [profile.dev.package.ed25519-dalek]
 opt-level = 3
+[profile.dev.package.hmac]
+opt-level = 3
+[profile.dev.package.aes]
+opt-level = 3
+[profile.dev.package.aes-gcm]
+opt-level = 3
+[profile.dev.package.ghash]
+opt-level = 3
+[profile.dev.package.zxcvbn]
+opt-level = 3
 
 [profile.release]
 opt-level = "z"

@@ -6,6 +6,7 @@ jobs:
       - image: cimg/rust:1.96.0
         environment:
           DATABASE_URL: postgres://postgres:postgres@localhost/djangors_test
+          CARGO_INCREMENTAL: "0"
       - image: cimg/postgres:16.0
         environment:
           POSTGRES_USER: postgres
@@ -91,6 +92,8 @@ jobs:
   test-sqlite:
     docker:
       - image: cimg/rust:1.96.0
+        environment:
+          CARGO_INCREMENTAL: "0"
     steps:
       - checkout
       - run:

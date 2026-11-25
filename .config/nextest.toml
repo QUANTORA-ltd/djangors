@@ -1,5 +1,5 @@
 [profile.default]
-slow-timeout = { period = "15s" }
+slow-timeout = { period = "15s", terminate-after = 4 }
 
 [test-groups]
 # Serialize tests that invoke nested `cargo` subprocesses so parallel nextest
@@ -12,7 +12,18 @@ postgres-db = { max-threads = 1 }
 [[profile.default.overrides]]
 filter = "package(djangors-cli) and (test(management_command_e2e) or binary(management_command_e2e) or test(test_makemigrations_generated_project_introspects) or test(test_dj_test_command) or test(test_new_app_generates_module) or test(test_new_generated_project_builds_and_serves) or test(test_run_rebuilds_after_source_change))"
 test-group = "cargo-subprocess"
+slow-timeout = { period = "30s", terminate-after = 6 }
 
 [[profile.default.overrides]]
 filter = "package(djangors-admin) or package(djangors-auth) or package(djangors-contrib-contenttypes) or package(djangors-contrib-guardian) or package(djangors-contrib-tenancy) or package(djangors-orm) or package(djangors-rest) or package(djangors-migrations) or package(djangors-cache) or package(djangors-tasks) or package(djangors-views) or package(polls) or package(school) or binary(full_stack) or (package(djangors-cli) and test(superuser))"
 test-group = "postgres-db"
+
+# SQLite tests run against per-test isolated `sqlite::memory:` connections, so DB
+# packages can run fully in parallel across CPU cores. Keep `cargo-subprocess` serialized.
+[[profile.sqlite.overrides]]
+filter = "package(djangors-admin) or package(djangors-auth) or package(djangors-contrib-contenttypes) or package(djangors-contrib-guardian) or package(djangors-contrib-tenancy) or package(djangors-orm) or package(djangors-rest) or package(djangors-migrations) or package(djangors-cache) or package(djangors-tasks) or package(djangors-views) or package(polls) or package(school) or binary(full_stack) or (package(djangors-cli) and test(superuser))"
+test-group = "@global"
+
+[profile.ci]
+fail-fast = false
+slow-timeout = { period = "30s", terminate-after = 6 }

@@ -22,8 +22,8 @@ proc-macro2 = "1.0"
 
 [dev-dependencies]
 trybuild = "1.0"
-djangors-orm = { path = "../djangors-orm" }
+djangors-orm = { path = "../djangors-orm", default-features = false, features = ["postgres"] }
 djangors-forms = { path = "../djangors-forms" }
-djangors-core = { path = "../djangors-core" }
+djangors-core = { path = "../djangors-core", default-features = false, features = ["postgres"] }
 chrono = { version = "0.4", features = ["clock"] }
 
