@@ -4,6 +4,20 @@ use async_trait::async_trait;
 use s3::{AddressingStyle, Auth, Client, Credentials};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+/// A presigned URL for direct client upload (`PUT`) or download (`GET`) against object storage.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PresignedUrl {
+    /// Fully signed request URL.
+    pub url: String,
+    /// HTTP method (`"PUT"` or `"GET"`).
+    pub method: String,
+    /// Expiry duration in seconds.
+    pub expires_in_secs: u64,
+    /// Required HTTP headers that were included in the signature.
+    pub headers: Vec<(String, String)>,
+}
 
 /// A pluggable backend for storing and retrieving files by a relative path/key.
 #[async_trait]
@@ -74,6 +88,67 @@ impl S3Storage {
             }
             Err(e) => Err(StaticFilesError::S3(e.to_string())),
         }
+    }
+
+    /// Generates a presigned `PUT` URL so clients can upload directly to S3-compatible storage.
+    pub fn presign_put(
+        &self,
+        path: &str,
+        expires_in: Duration,
+        content_type: Option<&str>,
+    ) -> Result<PresignedUrl, StaticFilesError> {
+        let mut req = self
+            .client
+            .objects()
+            .presign_put(&self.bucket, path)
+            .expires_in(expires_in)
+            .map_err(|e| StaticFilesError::S3(e.to_string()))?;
+        if let Some(ct) = content_type {
+            let val = hyper::header::HeaderValue::from_str(ct)
+                .map_err(|e| StaticFilesError::S3(e.to_string()))?;
+            req = req
+                .header(hyper::header::CONTENT_TYPE, val)
+                .map_err(|e| StaticFilesError::S3(e.to_string()))?;
+        }
+        let signed = req.build().map_err(|e| StaticFilesError::S3(e.to_string()))?;
+        let headers = signed
+            .headers
+            .iter()
+            .filter_map(|(k, v)| v.to_str().ok().map(|s| (k.to_string(), s.to_string())))
+            .collect();
+        Ok(PresignedUrl {
+            url: signed.url.to_string(),
+            method: signed.method.to_string(),
+            expires_in_secs: expires_in.as_secs(),
+            headers,
+        })
+    }
+
+    /// Generates a presigned `GET` URL for temporary private object downloads.
+    pub fn presign_get(
+        &self,
+        path: &str,
+        expires_in: Duration,
+    ) -> Result<PresignedUrl, StaticFilesError> {
+        let signed = self
+            .client
+            .objects()
+            .presign_get(&self.bucket, path)
+            .expires_in(expires_in)
+            .map_err(|e| StaticFilesError::S3(e.to_string()))?
+            .build()
+            .map_err(|e| StaticFilesError::S3(e.to_string()))?;
+        let headers = signed
+            .headers
+            .iter()
+            .filter_map(|(k, v)| v.to_str().ok().map(|s| (k.to_string(), s.to_string())))
+            .collect();
+        Ok(PresignedUrl {
+            url: signed.url.to_string(),
+            method: signed.method.to_string(),
+            expires_in_secs: expires_in.as_secs(),
+            headers,
+        })
     }
 }
 
@@ -203,5 +278,40 @@ impl Storage for LocalDiskStorage {
             self.base_url.trim_end_matches('/'),
             path.trim_start_matches('/')
         )
+    }
+}
+
+#[cfg(all(test, feature = "s3"))]
+mod presign_tests {
+    use super::*;
+
+    #[test]
+    fn s3_presign_put_and_get_include_sigv4_query_params() {
+        let s3 = S3Storage::new(
+            "my-bucket",
+            "us-east-1",
+            Some("https://s3.us-east-1.amazonaws.com"),
+            "AKIAIOSFODNN7EXAMPLE",
+            "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            "https://cdn.example.com",
+        )
+        .unwrap();
+
+        let put = s3
+            .presign_put(
+                "uploads/avatar.png",
+                Duration::from_secs(300),
+                Some("image/png"),
+            )
+            .unwrap();
+        assert_eq!(put.method, "PUT");
+        assert!(put.url.contains("X-Amz-Signature="));
+        assert!(put.url.contains("uploads/avatar.png"));
+
+        let get = s3
+            .presign_get("uploads/avatar.png", Duration::from_secs(60))
+            .unwrap();
+        assert_eq!(get.method, "GET");
+        assert!(get.url.contains("X-Amz-Signature="));
     }
 }

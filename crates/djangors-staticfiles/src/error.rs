@@ -18,4 +18,8 @@ pub enum StaticFilesError {
     /// An S3-compatible storage operation failed.
     #[error("S3 storage error: {0}")]
     S3(String),
+
+    /// Image decoding, resizing, or encoding failed.
+    #[error("Image processing error: {0}")]
+    Image(String),
 }

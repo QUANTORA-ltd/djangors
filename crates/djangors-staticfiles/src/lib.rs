@@ -15,10 +15,17 @@ pub mod serve;
 pub mod storage;
 /// Helpers for writing uploaded files through a storage backend.
 pub mod upload;
+/// Image resizing and format conversion helpers (`images` feature).
+#[cfg(feature = "images")]
+pub mod variants;
 
 pub use collect::Manifest;
 pub use error::StaticFilesError;
 pub use serve::{StaticFiles, StaticFilesHandler};
 #[cfg(feature = "s3")]
 pub use storage::S3Storage;
-pub use storage::{LocalDiskStorage, Storage};
+pub use storage::{LocalDiskStorage, PresignedUrl, Storage};
+#[cfg(feature = "images")]
+pub use variants::{
+    generate_variant, save_with_variants, ImageOutputFormat, ImageVariantSpec, ResizeFit,
+};

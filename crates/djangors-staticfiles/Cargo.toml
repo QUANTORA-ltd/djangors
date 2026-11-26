@@ -18,6 +18,7 @@ postgres = ["djangors-core/postgres"]
 sqlite = ["djangors-core/sqlite"]
 s3 = ["dep:s3"]
 clamav = ["tokio/net", "tokio/io-util"]
+images = ["dep:image"]
 
 [dependencies]
 thiserror = "2.0.18"
@@ -29,6 +30,7 @@ hyper = "1.10"
 async-trait = "0.1.86"
 tokio = { version = "1.53.0", features = ["rt"] }
 s3 = { version = "0.1.36", optional = true }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"], optional = true }
 
 [dev-dependencies]
 tempfile = "3.27.0"
