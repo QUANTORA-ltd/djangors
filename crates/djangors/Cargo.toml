@@ -65,6 +65,8 @@ postgres = [
     "djangors-contrib-flags?/postgres",
     "djangors-contrib-notifications?/postgres",
     "djangors-contrib-webhooks?/postgres",
+    "djangors-contrib-graphql?/postgres",
+    "djangors-contrib-grpc?/postgres",
 ]
 sqlite = [
     "djangors-db/sqlite",
@@ -90,6 +92,8 @@ sqlite = [
     "djangors-contrib-flags?/sqlite",
     "djangors-contrib-notifications?/sqlite",
     "djangors-contrib-webhooks?/sqlite",
+    "djangors-contrib-graphql?/sqlite",
+    "djangors-contrib-grpc?/sqlite",
 ]
 mysql = ["djangors-db/mysql"]
 migrations = ["dep:djangors-migrations"]
@@ -130,6 +134,8 @@ gis = ["dep:djangors-contrib-gis"]
 flags = ["dep:djangors-contrib-flags"]
 notifications = ["dep:djangors-contrib-notifications"]
 webhooks = ["dep:djangors-contrib-webhooks"]
+graphql = ["dep:djangors-contrib-graphql"]
+grpc = ["dep:djangors-contrib-grpc"]
 
 [dependencies]
 djangors-core = { path = "../djangors-core", version = "1.0.0", default-features = false }
@@ -159,3 +165,5 @@ djangors-contrib-gis = { path = "../djangors-contrib-gis", version = "1.0.0", op
 djangors-contrib-flags = { path = "../djangors-contrib-flags", version = "1.0.0", default-features = false, optional = true }
 djangors-contrib-notifications = { path = "../djangors-contrib-notifications", version = "1.0.0", default-features = false, optional = true }
 djangors-contrib-webhooks = { path = "../djangors-contrib-webhooks", version = "1.0.0", default-features = false, optional = true }
+djangors-contrib-graphql = { path = "../djangors-contrib-graphql", version = "1.0.0", default-features = false, optional = true }
+djangors-contrib-grpc = { path = "../djangors-contrib-grpc", version = "1.0.0", default-features = false, optional = true }

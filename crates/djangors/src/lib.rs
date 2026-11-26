@@ -26,6 +26,12 @@ pub use djangors_contrib_notifications as notifications;
 /// Outbound signed webhooks engine with retries and replay.
 #[cfg(feature = "webhooks")]
 pub use djangors_contrib_webhooks as webhooks;
+/// Optional `async-graphql` adapter (`graphql` feature).
+#[cfg(feature = "graphql")]
+pub use djangors_contrib_graphql as graphql;
+/// Optional `tonic` gRPC adapter and hybrid HTTP/gRPC server (`grpc` feature).
+#[cfg(feature = "grpc")]
+pub use djangors_contrib_grpc as grpc;
 /// Model history: records every create, update, and delete of chosen models.
 #[cfg(feature = "history")]
 pub use djangors_contrib_history as history;
