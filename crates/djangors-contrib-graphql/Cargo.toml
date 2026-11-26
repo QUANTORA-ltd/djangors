@@ -1,0 +1,31 @@
+[package]
+name = "djangors-contrib-graphql"
+description = "GraphQL integration for Djangors powered by async-graphql"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["django", "web-framework", "graphql", "async-graphql"]
+categories = ["web-programming"]
+
+[features]
+default = ["postgres", "sqlite"]
+postgres = ["djangors-core/postgres"]
+sqlite = ["djangors-core/sqlite"]
+
+[dependencies]
+async-graphql = "7"
+djangors-core = { path = "../djangors-core", version = "1.0.0", default-features = false }
+hyper = "1.10.1"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+
+[dev-dependencies]
+bytes = "1.12.1"
+http-body-util = "0.1.4"
+tokio = { version = "1.53.0", features = ["macros", "rt-multi-thread"] }
+tower = { version = "0.5.3", features = ["util"] }
