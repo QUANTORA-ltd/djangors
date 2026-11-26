@@ -1280,3 +1280,96 @@ async fn test_inspectdb_warns_on_unsupported_column_types() {
     assert!(code.contains("pub self_: Option<String>,"));
     assert!(!code.contains("TODO"));
 }
+
+#[test]
+fn test_new_with_starter_minimal_matches_new() {
+    let root = std::env::temp_dir().join(format!("dj_test_starter_min_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+
+    let proj_default = root.join("app_default");
+    let proj_minimal = root.join("app_minimal");
+    new(proj_default.to_str().unwrap()).unwrap();
+    new_with_starter(
+        proj_minimal.to_str().unwrap(),
+        crate::cli::StarterKit::Minimal,
+    )
+    .unwrap();
+
+    for rel in ["Cargo.toml", "djangors.toml", "src/main.rs"] {
+        let a = std::fs::read_to_string(proj_default.join(rel))
+            .unwrap()
+            .replace("app_default", "app");
+        let b = std::fs::read_to_string(proj_minimal.join(rel))
+            .unwrap()
+            .replace("app_minimal", "app");
+        assert_eq!(a, b, "mismatch in {rel}");
+    }
+    assert!(!proj_minimal.join("templates/index.html").exists());
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn test_new_with_starter_api_htmx_inertia_saas() {
+    let root = std::env::temp_dir().join(format!("dj_test_starters_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+
+    // Api
+    let api_dir = root.join("my_api");
+    new_with_starter(api_dir.to_str().unwrap(), crate::cli::StarterKit::Api).unwrap();
+    let api_cargo = std::fs::read_to_string(api_dir.join("Cargo.toml")).unwrap();
+    let api_main = std::fs::read_to_string(api_dir.join("src/main.rs")).unwrap();
+    assert!(api_cargo.contains("djangors-core = { path = "));
+    assert!(api_cargo.contains("djangors-rest = { path = "));
+    assert!(api_main.contains("#[endpoint("));
+    assert!(api_main.contains("OpenApiBuilder"));
+    assert!(api_main.contains("HealthChecks::new()"));
+    assert!(!api_dir.join("templates/index.html").exists());
+
+    // Htmx
+    let htmx_dir = root.join("my_htmx");
+    new_with_starter(htmx_dir.to_str().unwrap(), crate::cli::StarterKit::Htmx).unwrap();
+    let htmx_cargo = std::fs::read_to_string(htmx_dir.join("Cargo.toml")).unwrap();
+    let htmx_main = std::fs::read_to_string(htmx_dir.join("src/main.rs")).unwrap();
+    let htmx_html = std::fs::read_to_string(htmx_dir.join("templates/index.html")).unwrap();
+    assert!(htmx_cargo.contains("djangors-core = { path = "));
+    assert!(htmx_cargo.contains("djangors-template = { path = "));
+    assert!(htmx_main.contains("req.is_htmx()"));
+    assert!(htmx_main.contains(".hx_trigger("));
+    assert!(htmx_html.contains("htmx.org"));
+
+    // Inertia
+    let inertia_dir = root.join("my_inertia");
+    new_with_starter(
+        inertia_dir.to_str().unwrap(),
+        crate::cli::StarterKit::Inertia,
+    )
+    .unwrap();
+    let inertia_cargo = std::fs::read_to_string(inertia_dir.join("Cargo.toml")).unwrap();
+    let inertia_main = std::fs::read_to_string(inertia_dir.join("src/main.rs")).unwrap();
+    let inertia_html = std::fs::read_to_string(inertia_dir.join("templates/index.html")).unwrap();
+    assert!(inertia_cargo.contains("djangors-core = { path = "));
+    assert!(inertia_main.contains("InertiaConfig"));
+    assert!(inertia_main.contains("Inertia::with_config"));
+    assert!(inertia_html.contains("<div id=\"app\" data-page=\"{{page}}\"></div>"));
+
+    // Saas
+    let saas_dir = root.join("my_saas");
+    new_with_starter(saas_dir.to_str().unwrap(), crate::cli::StarterKit::Saas).unwrap();
+    let saas_cargo = std::fs::read_to_string(saas_dir.join("Cargo.toml")).unwrap();
+    let saas_main = std::fs::read_to_string(saas_dir.join("src/main.rs")).unwrap();
+    let saas_html = std::fs::read_to_string(saas_dir.join("templates/index.html")).unwrap();
+    assert!(saas_cargo.contains("djangors = { path = "));
+    assert!(saas_main.contains("AuthBackend"));
+    assert!(saas_main.contains("SessionLayer"));
+    assert!(saas_main.contains("FeatureFlags"));
+    assert!(saas_main.contains("NotificationService"));
+    assert!(saas_main.contains("ConsoleBackend"));
+    assert!(saas_main.contains("AdminSite"));
+    assert!(saas_main.contains("HealthChecks::new()"));
+    assert!(saas_html.contains("my_saas"));
+
+    let _ = std::fs::remove_dir_all(&root);
+}

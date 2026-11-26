@@ -1,6 +1,7 @@
 mod cli;
 mod commands;
 mod manage_commands;
+mod starters;
 
 use clap::Parser;
 use cli::{Cli, Commands, GenerateCommands};
@@ -80,8 +81,8 @@ async fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::New { name } => {
-            if let Err(e) = commands::new(&name) {
+        Commands::New { name, starter } => {
+            if let Err(e) = commands::new_with_starter(&name, starter) {
                 eprintln!("[dj new] error: {e}");
                 std::process::exit(1);
             }

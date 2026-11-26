@@ -15,6 +15,22 @@ pub struct Cli {
     pub command: Commands,
 }
 
+/// Starter kit template for `dj new`.
+#[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StarterKit {
+    /// Minimal Djangors project with a welcome page and health checks.
+    #[default]
+    Minimal,
+    /// REST API starter with typed `#[endpoint]` handlers, OpenAPI, and health checks.
+    Api,
+    /// Server-rendered htmx starter with `djangors-template` and htmx helpers.
+    Htmx,
+    /// Inertia.js starter with `djangors-core::Inertia` and `InertiaConfig`.
+    Inertia,
+    /// Batteries-included SaaS starter with auth, sessions, flags, notifications, mail, admin, and health checks.
+    Saas,
+}
+
 /// Available subcommands for the dj binary.
 #[derive(Subcommand, Debug, Clone)]
 pub enum Commands {
@@ -23,6 +39,9 @@ pub enum Commands {
     New {
         /// The name of the new project.
         name: String,
+        /// Project starter template to scaffold.
+        #[arg(long, value_enum, default_value_t = StarterKit::Minimal)]
+        starter: StarterKit,
     },
     /// Create a new app within a project.
     #[command(name = "new-app")]

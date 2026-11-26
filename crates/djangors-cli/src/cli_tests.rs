@@ -5,11 +5,39 @@ fn test_parse_new() {
     let args = vec!["dj", "new", "myproject"];
     let cli = Cli::try_parse_from(args).unwrap();
     match cli.command {
-        Commands::New { name } => {
+        Commands::New { name, starter } => {
             assert_eq!(name, "myproject");
+            assert_eq!(starter, StarterKit::Minimal);
         }
         _ => panic!("Expected Commands::New"),
     }
+}
+
+#[test]
+fn test_parse_new_starters() {
+    let cases = [
+        ("minimal", StarterKit::Minimal),
+        ("api", StarterKit::Api),
+        ("htmx", StarterKit::Htmx),
+        ("inertia", StarterKit::Inertia),
+        ("saas", StarterKit::Saas),
+    ];
+    for (flag, expected) in cases {
+        let cli = Cli::try_parse_from(["dj", "new", "myproject", "--starter", flag]).unwrap();
+        match cli.command {
+            Commands::New { name, starter } => {
+                assert_eq!(name, "myproject");
+                assert_eq!(starter, expected);
+            }
+            _ => panic!("Expected Commands::New"),
+        }
+    }
+}
+
+#[test]
+fn test_parse_new_invalid_starter() {
+    let res = Cli::try_parse_from(["dj", "new", "myproject", "--starter", "unknown"]);
+    assert!(res.is_err());
 }
 
 #[test]

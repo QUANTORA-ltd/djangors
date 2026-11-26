@@ -83,8 +83,14 @@ pub(crate) fn require_project_root() -> Result<(), String> {
     Ok(())
 }
 
-/// Create a new Djangors project.
+/// Create a new Djangors project using the minimal starter.
+#[allow(dead_code)]
 pub fn new(name: &str) -> Result<(), String> {
+    new_with_starter(name, crate::cli::StarterKit::Minimal)
+}
+
+/// Create a new Djangors project with the specified starter kit.
+pub fn new_with_starter(name: &str, starter: crate::cli::StarterKit) -> Result<(), String> {
     let target_dir = std::path::Path::new(name);
     let crate_name = target_dir
         .file_name()
@@ -103,7 +109,8 @@ pub fn new(name: &str) -> Result<(), String> {
         return Err(format!("destination '{name}' already exists"));
     }
 
-    let (djangors_core_dep, djangors_db_dep) = match resolve_core_dependency() {
+    let core_dep = resolve_core_dependency();
+    let (djangors_core_dep, djangors_db_dep) = match &core_dep {
         CoreDependency::Path(crates_dir) => (
             format!(
                 "{{ path = \"{}/djangors-core\" }}",
@@ -324,11 +331,27 @@ Then visit http://127.0.0.1:8000/.
     )
     .map_err(|e| format!("failed to write '{name}/templates/auth/check_inbox.html': {e}"))?;
 
+    let (cargo_toml, djangors_toml, main_rs, index_html) =
+        match crate::starters::generate_starter_files(starter, crate_name, &core_dep) {
+            Some(files) => (
+                files.cargo_toml,
+                files.djangors_toml,
+                files.main_rs,
+                files.index_html,
+            ),
+            None => (cargo_toml, djangors_toml.to_string(), main_rs, None),
+        };
+
     std::fs::write(target_dir.join("Cargo.toml"), cargo_toml)
         .map_err(|e| format!("failed to write '{name}/Cargo.toml': {e}"))?;
 
     std::fs::write(target_dir.join("src/main.rs"), main_rs)
         .map_err(|e| format!("failed to write '{name}/src/main.rs': {e}"))?;
+
+    if let Some(index_html) = index_html {
+        std::fs::write(target_dir.join("templates/index.html"), index_html)
+            .map_err(|e| format!("failed to write '{name}/templates/index.html': {e}"))?;
+    }
 
     std::fs::write(target_dir.join("src/lib.rs"), lib_rs)
         .map_err(|e| format!("failed to write '{name}/src/lib.rs': {e}"))?;
