@@ -37,6 +37,9 @@ default = [
     "password-strength",
     "resilience",
     "secrets",
+    "flags",
+    "notifications",
+    "webhooks",
 ]
 postgres = [
     "djangors-db/postgres",
@@ -59,6 +62,9 @@ postgres = [
     "djangors-contrib-oauth?/postgres",
     "djangors-contrib-saml?/postgres",
     "djangors-contrib-sites?/postgres",
+    "djangors-contrib-flags?/postgres",
+    "djangors-contrib-notifications?/postgres",
+    "djangors-contrib-webhooks?/postgres",
 ]
 sqlite = [
     "djangors-db/sqlite",
@@ -81,11 +87,14 @@ sqlite = [
     "djangors-contrib-oauth?/sqlite",
     "djangors-contrib-saml?/sqlite",
     "djangors-contrib-sites?/sqlite",
+    "djangors-contrib-flags?/sqlite",
+    "djangors-contrib-notifications?/sqlite",
+    "djangors-contrib-webhooks?/sqlite",
 ]
 mysql = ["djangors-db/mysql"]
 migrations = ["dep:djangors-migrations"]
 rest = ["dep:djangors-rest"]
-admin = ["dep:djangors-admin", "djangors-rest?/admin", "djangors-contrib-orgs?/admin", "djangors-contrib-oauth?/admin", "djangors-contrib-saml?/admin"]
+admin = ["dep:djangors-admin", "djangors-rest?/admin", "djangors-contrib-orgs?/admin", "djangors-contrib-oauth?/admin", "djangors-contrib-saml?/admin", "djangors-contrib-flags?/admin", "djangors-contrib-notifications?/admin", "djangors-contrib-webhooks?/admin"]
 auth = ["dep:djangors-auth"]
 passkeys = ["auth", "djangors-auth/passkeys"]
 password-strength = ["auth", "djangors-auth/password-strength"]
@@ -97,6 +106,7 @@ redis = ["djangors-sessions?/redis", "djangors-cache?/redis"]
 template = ["dep:djangors-template"]
 staticfiles = ["dep:djangors-staticfiles"]
 s3 = ["staticfiles", "djangors-staticfiles/s3"]
+images = ["staticfiles", "djangors-staticfiles/images"]
 cache = ["dep:djangors-cache", "djangors-core/cache"]
 mail = ["dep:djangors-mail"]
 i18n = ["dep:djangors-i18n"]
@@ -117,6 +127,9 @@ oauth-provider = ["dep:djangors-contrib-oauth", "auth", "sessions", "djangors-co
 saml = ["dep:djangors-contrib-saml", "auth", "sessions", "cache"]
 sites = ["dep:djangors-contrib-sites"]
 gis = ["dep:djangors-contrib-gis"]
+flags = ["dep:djangors-contrib-flags"]
+notifications = ["dep:djangors-contrib-notifications"]
+webhooks = ["dep:djangors-contrib-webhooks"]
 
 [dependencies]
 djangors-core = { path = "../djangors-core", version = "1.0.0", default-features = false }
@@ -143,3 +156,6 @@ djangors-contrib-orgs = { path = "../djangors-contrib-orgs", version = "1.0.0", 
 djangors-contrib-saml = { path = "../djangors-contrib-saml", version = "1.0.0", default-features = false, optional = true }
 djangors-contrib-sites = { path = "../djangors-contrib-sites", version = "1.0.0", default-features = false, optional = true }
 djangors-contrib-gis = { path = "../djangors-contrib-gis", version = "1.0.0", optional = true }
+djangors-contrib-flags = { path = "../djangors-contrib-flags", version = "1.0.0", default-features = false, optional = true }
+djangors-contrib-notifications = { path = "../djangors-contrib-notifications", version = "1.0.0", default-features = false, optional = true }
+djangors-contrib-webhooks = { path = "../djangors-contrib-webhooks", version = "1.0.0", default-features = false, optional = true }

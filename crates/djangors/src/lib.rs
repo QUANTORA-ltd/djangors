@@ -17,6 +17,15 @@ pub use djangors_cache as cache;
 /// GeoDjango-equivalent geospatial types and PostGIS SQL helpers.
 #[cfg(feature = "gis")]
 pub use djangors_contrib_gis as gis;
+/// DB and cache-backed feature flags and gradual rollouts.
+#[cfg(feature = "flags")]
+pub use djangors_contrib_flags as flags;
+/// Multi-channel notification dispatcher and in-app inbox.
+#[cfg(feature = "notifications")]
+pub use djangors_contrib_notifications as notifications;
+/// Outbound signed webhooks engine with retries and replay.
+#[cfg(feature = "webhooks")]
+pub use djangors_contrib_webhooks as webhooks;
 /// Model history: records every create, update, and delete of chosen models.
 #[cfg(feature = "history")]
 pub use djangors_contrib_history as history;
