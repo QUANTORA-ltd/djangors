@@ -49,6 +49,8 @@ pub mod groups_pg;
 pub mod handler;
 /// Liveness (`/healthz`) and readiness (`/readyz`) health-check endpoints.
 pub mod health;
+/// Inertia.js server-side protocol adapter.
+pub mod inertia;
 /// HTTP request/response logging middleware.
 pub mod logging;
 /// Standard HTTP middleware layers (CSRF, Request ID, etc.).
@@ -57,6 +59,8 @@ pub mod middleware;
 pub mod pagination;
 /// Path parameter map container.
 pub mod path_params;
+/// Real-time room presence tracking with RAII cleanup.
+pub mod presence;
 /// Named, opt-in endpoint rate limiting.
 #[cfg(feature = "cache")]
 pub mod ratelimit;
@@ -111,8 +115,10 @@ pub use handler::{Handler, StreamingHandler};
 #[cfg(feature = "cache")]
 pub use health::CacheCheck;
 pub use health::{DatabaseCheck, HealthCheck, HealthChecks};
+pub use inertia::{Inertia, InertiaConfig, InertiaPage};
 pub use pagination::{decode_cursor, encode_cursor, CursorError, CursorPage, Paginator};
 pub use path_params::PathParams;
+pub use presence::{Presence, PresenceEntry, PresenceEvent, PresenceGuard};
 #[cfg(feature = "cache")]
 pub use ratelimit::{rate_limited, ByIp, RateLimitKey, RateLimiter};
 pub use request::Request;
@@ -122,7 +128,7 @@ pub use resilience::{with_timeout, BreakerError, CircuitBreaker, CircuitState, T
 pub use response::Response;
 pub use router::Router;
 pub use settings::DjangorsSettings;
-pub use sse::StreamingResponse;
+pub use sse::{SseEvent, StreamingResponse};
 pub use state::AppState;
 pub use upload::TempFileUpload;
 pub use versioning::{ApiVersion, DeprecationLayer, DeprecationService, VersionSource, Versioning};

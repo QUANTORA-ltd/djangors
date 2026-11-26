@@ -152,9 +152,21 @@ impl Response {
     pub fn hx_trigger(self, event: &str) -> Self {
         self.htmx_header("hx-trigger", event)
     }
+    /// Adds the `HX-Trigger-After-Swap` response header.
+    pub fn hx_trigger_after_swap(self, event: &str) -> Self {
+        self.htmx_header("hx-trigger-after-swap", event)
+    }
+    /// Adds the `HX-Trigger-After-Settle` response header.
+    pub fn hx_trigger_after_settle(self, event: &str) -> Self {
+        self.htmx_header("hx-trigger-after-settle", event)
+    }
     /// Adds the `HX-Redirect` response header.
     pub fn hx_redirect(self, url: &str) -> Self {
         self.htmx_header("hx-redirect", url)
+    }
+    /// Adds the `HX-Location` response header for client-side navigation without a full reload.
+    pub fn hx_location(self, target: &str) -> Self {
+        self.htmx_header("hx-location", target)
     }
     /// Adds `HX-Refresh: true`.
     pub fn hx_refresh(self) -> Self {
@@ -163,6 +175,10 @@ impl Response {
     /// Adds the `HX-Push-Url` response header.
     pub fn hx_push_url(self, url: &str) -> Self {
         self.htmx_header("hx-push-url", url)
+    }
+    /// Adds the `HX-Replace-Url` response header.
+    pub fn hx_replace_url(self, url: &str) -> Self {
+        self.htmx_header("hx-replace-url", url)
     }
     /// Adds the `HX-Retarget` response header.
     pub fn hx_retarget(self, selector: &str) -> Self {

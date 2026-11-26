@@ -158,9 +158,47 @@ impl Request {
     pub fn htmx_trigger(&self) -> Option<&str> {
         self.header("hx-trigger").and_then(|v| v.to_str().ok())
     }
+    /// Returns the htmx trigger element `name` attribute, if present.
+    pub fn htmx_trigger_name(&self) -> Option<&str> {
+        self.header("hx-trigger-name").and_then(|v| v.to_str().ok())
+    }
+    /// Returns the user input submitted via `hx-prompt`, if present.
+    pub fn htmx_prompt(&self) -> Option<&str> {
+        self.header("hx-prompt").and_then(|v| v.to_str().ok())
+    }
     /// Returns the current browser URL reported by htmx, if present.
     pub fn htmx_current_url(&self) -> Option<&str> {
         self.header("hx-current-url").and_then(|v| v.to_str().ok())
+    }
+
+    /// Returns whether this request is an Inertia.js XHR request (`X-Inertia: true`).
+    pub fn is_inertia(&self) -> bool {
+        self.header("x-inertia")
+            .is_some_and(|v| v.to_str().is_ok_and(|s| s.eq_ignore_ascii_case("true")))
+    }
+
+    /// Returns the `X-Inertia-Version` asset version header, if present.
+    pub fn inertia_version(&self) -> Option<&str> {
+        self.header("x-inertia-version")
+            .and_then(|v| v.to_str().ok())
+    }
+
+    /// Returns the `X-Inertia-Partial-Component` header for partial reloads, if present.
+    pub fn inertia_partial_component(&self) -> Option<&str> {
+        self.header("x-inertia-partial-component")
+            .and_then(|v| v.to_str().ok())
+    }
+
+    /// Returns the requested prop keys from `X-Inertia-Partial-Data`, if present.
+    pub fn inertia_partial_data(&self) -> Option<Vec<&str>> {
+        self.header("x-inertia-partial-data")
+            .and_then(|v| v.to_str().ok())
+            .map(|raw| {
+                raw.split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
     }
 
     /// Get a decoded query-string parameter by name.
