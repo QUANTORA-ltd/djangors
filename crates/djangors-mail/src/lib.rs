@@ -7,11 +7,17 @@ use lettre::{
     AsyncSmtpTransport, AsyncTransport, Message as LettreMessage, Tokio1Executor,
 };
 use std::{
+    collections::VecDeque,
     path::PathBuf,
     sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
 use thiserror::Error;
+
+#[cfg(feature = "http")]
+pub mod http_backends;
+#[cfg(feature = "http")]
+pub use http_backends::{PostmarkBackend, ResendBackend, SendGridBackend, SesBackend};
 
 /// An outgoing email message.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -332,6 +338,75 @@ impl MailBackend for InMemoryBackend {
             .lock()
             .map_err(|_| MailError::Send("in-memory mail mutex poisoned".into()))?
             .push(message.clone());
+        Ok(())
+    }
+}
+
+/// An email recorded by [`CapturingBackend`] for local inspection or dev dashboards.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapturedEmail {
+    /// Captured outgoing message.
+    pub message: Message,
+    /// Unix epoch timestamp (seconds) when the message was captured.
+    pub sent_at_unix: u64,
+}
+
+/// Wrapper [`MailBackend`] that records a bounded history of sent emails before delegating to `inner`.
+#[derive(Debug, Clone)]
+pub struct CapturingBackend<B> {
+    inner: B,
+    captured: Arc<Mutex<VecDeque<CapturedEmail>>>,
+    max_entries: usize,
+}
+
+impl<B> CapturingBackend<B> {
+    /// Wrap `inner`, keeping up to `max_entries` most recent emails in memory.
+    pub fn new(inner: B, max_entries: usize) -> Self {
+        Self {
+            inner,
+            captured: Arc::new(Mutex::new(VecDeque::new())),
+            max_entries: max_entries.max(1),
+        }
+    }
+
+    /// Return a snapshot of captured emails (newest last).
+    pub fn captured(&self) -> Vec<CapturedEmail> {
+        self.captured
+            .lock()
+            .expect("capturing mail mutex poisoned")
+            .iter()
+            .cloned()
+            .collect()
+    }
+
+    /// Clear all captured emails.
+    pub fn clear(&self) {
+        self.captured
+            .lock()
+            .expect("capturing mail mutex poisoned")
+            .clear();
+    }
+}
+
+#[async_trait]
+impl<B: MailBackend> MailBackend for CapturingBackend<B> {
+    async fn send(&self, message: &Message) -> Result<(), MailError> {
+        self.inner.send(message).await?;
+        let sent_at_unix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let mut guard = self
+            .captured
+            .lock()
+            .map_err(|_| MailError::Send("capturing mail mutex poisoned".into()))?;
+        if guard.len() >= self.max_entries {
+            guard.pop_front();
+        }
+        guard.push_back(CapturedEmail {
+            message: message.clone(),
+            sent_at_unix,
+        });
         Ok(())
     }
 }
