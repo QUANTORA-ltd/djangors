@@ -150,7 +150,13 @@ async fn end_to_end_delivery_retry_and_replay() {
     let dispatcher = WebhookDispatcher::new(db.clone()).with_max_attempts(2);
     let secret = "whsec_live_123";
     let endpoint = dispatcher
-        .register_endpoint("tenant_1", &url, secret, &["invoice.*".trim(), "invoice.paid"], "Billing")
+        .register_endpoint(
+            "tenant_1",
+            &url,
+            secret,
+            &["invoice.*".trim(), "invoice.paid"],
+            "Billing",
+        )
         .await
         .unwrap();
     assert!(endpoint.enabled);

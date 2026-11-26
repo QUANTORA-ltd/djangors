@@ -14,18 +14,12 @@ pub use djangors_auth as auth;
 /// In-memory, database, and Redis cache backends.
 #[cfg(feature = "cache")]
 pub use djangors_cache as cache;
-/// GeoDjango-equivalent geospatial types and PostGIS SQL helpers.
-#[cfg(feature = "gis")]
-pub use djangors_contrib_gis as gis;
 /// DB and cache-backed feature flags and gradual rollouts.
 #[cfg(feature = "flags")]
 pub use djangors_contrib_flags as flags;
-/// Multi-channel notification dispatcher and in-app inbox.
-#[cfg(feature = "notifications")]
-pub use djangors_contrib_notifications as notifications;
-/// Outbound signed webhooks engine with retries and replay.
-#[cfg(feature = "webhooks")]
-pub use djangors_contrib_webhooks as webhooks;
+/// GeoDjango-equivalent geospatial types and PostGIS SQL helpers.
+#[cfg(feature = "gis")]
+pub use djangors_contrib_gis as gis;
 /// Optional `async-graphql` adapter (`graphql` feature).
 #[cfg(feature = "graphql")]
 pub use djangors_contrib_graphql as graphql;
@@ -35,6 +29,9 @@ pub use djangors_contrib_grpc as grpc;
 /// Model history: records every create, update, and delete of chosen models.
 #[cfg(feature = "history")]
 pub use djangors_contrib_history as history;
+/// Multi-channel notification dispatcher and in-app inbox.
+#[cfg(feature = "notifications")]
+pub use djangors_contrib_notifications as notifications;
 /// OAuth 2.0 and OpenID Connect social login and provider endpoints.
 #[cfg(any(feature = "oauth-client", feature = "oauth-provider"))]
 pub use djangors_contrib_oauth as oauth;
@@ -53,6 +50,9 @@ pub use djangors_contrib_sites as sites;
 /// Multi-tenancy: tenant model, membership-verified request scoping.
 #[cfg(feature = "tenancy")]
 pub use djangors_contrib_tenancy as tenancy;
+/// Outbound signed webhooks engine with retries and replay.
+#[cfg(feature = "webhooks")]
+pub use djangors_contrib_webhooks as webhooks;
 /// Core HTTP types: Router, Request, Response, middleware, and settings.
 pub use djangors_core as core;
 /// Re-export of `schemars` for OpenAPI schema generation.

@@ -59,7 +59,11 @@ pub struct QuerySet<T: Model + FromRow> {
     for_update: Option<ForUpdate>,
     search_query: Option<(Vec<&'static str>, String)>,
     fts5_query: Option<(String, String)>,
-    vector_order: Option<(String, crate::vector::VectorDistanceMetric, crate::vector::Vector)>,
+    vector_order: Option<(
+        String,
+        crate::vector::VectorDistanceMetric,
+        crate::vector::Vector,
+    )>,
     cache_ttl: Option<std::time::Duration>,
     include_deleted: bool,
     distinct: bool,
@@ -1555,7 +1559,9 @@ impl<T: Model + FromRow> QuerySet<T> {
                             .into_iter()
                             .find(|(k, _)| *k == field_name)
                             .and_then(|(_, v)| match v {
-                                Value::Text(s) => crate::vector::Vector::from_pgvector_literal(&s).ok(),
+                                Value::Text(s) => {
+                                    crate::vector::Vector::from_pgvector_literal(&s).ok()
+                                }
                                 _ => None,
                             })
                             .map(|v| v.distance(query_vec, metric))

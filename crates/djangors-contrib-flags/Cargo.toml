@@ -22,11 +22,11 @@ admin = ["dep:djangors-admin"]
 [dependencies]
 async-trait = "0.1.86"
 chrono = { version = "0.4.45", features = ["std", "serde"] }
-djangors-admin = { path = "../djangors-admin", version = "1.0.0", optional = true }
-djangors-cache = { path = "../djangors-cache", version = "1.0.0", default-features = false, optional = true }
-djangors-db = { path = "../djangors-db", version = "1.0.0", default-features = false }
-djangors-macros = { path = "../djangors-macros", version = "1.0.0" }
-djangors-orm = { path = "../djangors-orm", version = "1.0.0", default-features = false }
+djangors-admin = { path = "../djangors-admin", version = "1.1.0", optional = true }
+djangors-cache = { path = "../djangors-cache", version = "1.1.0", default-features = false, optional = true }
+djangors-db = { path = "../djangors-db", version = "1.1.0", default-features = false }
+djangors-macros = { path = "../djangors-macros", version = "1.1.0" }
+djangors-orm = { path = "../djangors-orm", version = "1.1.0", default-features = false }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 sha2 = "0.10.9"

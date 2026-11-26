@@ -228,11 +228,7 @@ impl NotificationDispatcher {
     }
 
     /// Configures the [`MailBackend`] and sender address used for [`NotificationChannel::Email`].
-    pub fn with_mail(
-        mut self,
-        mail: Arc<dyn MailBackend>,
-        from_email: impl Into<String>,
-    ) -> Self {
+    pub fn with_mail(mut self, mail: Arc<dyn MailBackend>, from_email: impl Into<String>) -> Self {
         self.mail = Some(mail);
         self.from_email = from_email.into();
         self

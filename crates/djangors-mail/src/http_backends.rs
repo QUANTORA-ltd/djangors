@@ -30,9 +30,7 @@ async fn check_response(resp: reqwest::Response, provider: &str) -> Result<(), M
         Ok(())
     } else {
         let body = resp.text().await.unwrap_or_default();
-        Err(MailError::Send(format!(
-            "{provider} HTTP {status}: {body}"
-        )))
+        Err(MailError::Send(format!("{provider} HTTP {status}: {body}")))
     }
 }
 
@@ -192,13 +190,21 @@ impl MailBackend for SendGridBackend {
             if !message.cc.is_empty() {
                 obj.insert(
                     "cc".to_string(),
-                    json!(message.cc.iter().map(|e| json!({ "email": e })).collect::<Vec<_>>()),
+                    json!(message
+                        .cc
+                        .iter()
+                        .map(|e| json!({ "email": e }))
+                        .collect::<Vec<_>>()),
                 );
             }
             if !message.bcc.is_empty() {
                 obj.insert(
                     "bcc".to_string(),
-                    json!(message.bcc.iter().map(|e| json!({ "email": e })).collect::<Vec<_>>()),
+                    json!(message
+                        .bcc
+                        .iter()
+                        .map(|e| json!({ "email": e }))
+                        .collect::<Vec<_>>()),
                 );
             }
         }
@@ -437,7 +443,9 @@ mod tests {
             .unwrap();
         let raw = h.await.unwrap();
         assert!(raw.starts_with("POST /emails "));
-        assert!(raw.to_ascii_lowercase().contains("authorization: bearer re_test_key"));
+        assert!(raw
+            .to_ascii_lowercase()
+            .contains("authorization: bearer re_test_key"));
 
         let (url, h) = spawn_mock_http().await;
         PostmarkBackend::new("pm_tok")
@@ -447,7 +455,9 @@ mod tests {
             .unwrap();
         let raw = h.await.unwrap();
         assert!(raw.starts_with("POST /email "));
-        assert!(raw.to_ascii_lowercase().contains("x-postmark-server-token: pm_tok"));
+        assert!(raw
+            .to_ascii_lowercase()
+            .contains("x-postmark-server-token: pm_tok"));
 
         let (url, h) = spawn_mock_http().await;
         SendGridBackend::new("sg_key")
@@ -457,7 +467,9 @@ mod tests {
             .unwrap();
         let raw = h.await.unwrap();
         assert!(raw.starts_with("POST /v3/mail/send "));
-        assert!(raw.to_ascii_lowercase().contains("authorization: bearer sg_key"));
+        assert!(raw
+            .to_ascii_lowercase()
+            .contains("authorization: bearer sg_key"));
 
         let (url, h) = spawn_mock_http().await;
         SesBackend::new("us-east-1", "AKIAEXAMPLE", "secret_key_123")

@@ -114,18 +114,20 @@ impl HybridServer {
         http_addr: SocketAddr,
         grpc_addr: SocketAddr,
     ) -> Result<(), GrpcError> {
-        let http_listener = TcpListener::bind(http_addr)
-            .await
-            .map_err(|source| GrpcError::Bind {
-                addr: http_addr,
-                source,
-            })?;
-        let grpc_listener = TcpListener::bind(grpc_addr)
-            .await
-            .map_err(|source| GrpcError::Bind {
-                addr: grpc_addr,
-                source,
-            })?;
+        let http_listener =
+            TcpListener::bind(http_addr)
+                .await
+                .map_err(|source| GrpcError::Bind {
+                    addr: http_addr,
+                    source,
+                })?;
+        let grpc_listener =
+            TcpListener::bind(grpc_addr)
+                .await
+                .map_err(|source| GrpcError::Bind {
+                    addr: grpc_addr,
+                    source,
+                })?;
 
         let http_router = self.http_router;
         let grpc_routes = self.grpc_routes;
@@ -218,10 +220,14 @@ async fn serve_multiplexed_connection(
         async move {
             if is_grpc_request(req.headers()) {
                 let resp = dispatch_grpc(routes, req).await?;
-                Ok::<_, Infallible>(resp.map(|b| b.map_err(|e| -> BoxError { Box::new(e) }).boxed_unsync()))
+                Ok::<_, Infallible>(
+                    resp.map(|b| b.map_err(|e| -> BoxError { Box::new(e) }).boxed_unsync()),
+                )
             } else {
                 let resp = router.dispatch_boxed(req, false).await;
-                Ok::<_, Infallible>(resp.map(|b| b.map_err(|e| -> BoxError { match e {} }).boxed_unsync()))
+                Ok::<_, Infallible>(
+                    resp.map(|b| b.map_err(|e| -> BoxError { match e {} }).boxed_unsync()),
+                )
             }
         }
     });
@@ -344,10 +350,9 @@ mod tests {
 
     #[tokio::test]
     async fn serve_multiplexed_listener_routes_http_and_grpc_over_loopback() {
-        let router = Router::new()
-            .get("/health", |_req, _params| async {
-                Ok(Response::text(StatusCode::OK, "ok"))
-            });
+        let router = Router::new().get("/health", |_req, _params| async {
+            Ok(Response::text(StatusCode::OK, "ok"))
+        });
 
         let grpc_routes = tonic::service::Routes::new(EchoGrpcService);
 

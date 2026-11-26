@@ -192,3 +192,7 @@ register_admin(&site);
 ```
 
 This registers the `QueuedTask` model under the `djangors_tasks` app label. Admin users can view the task list, search for tasks by `task_name` or `status`, monitor execution attempts, and inspect `error_message` text details for failed background tasks.
+
+### Live Queue Dashboard
+
+Mount `djangors::tasks::queue_dashboard_router(db)` (or `register_dashboard(site, db)`) for a live `/tasks/dashboard/` UI with queue counters, recent failures, 1-click **Retry** (`POST /tasks/dashboard/retry/{id}`), **Purge Completed**, and `/tasks/dashboard/stats.json`.

@@ -110,7 +110,9 @@ impl S3Storage {
                 .header(hyper::header::CONTENT_TYPE, val)
                 .map_err(|e| StaticFilesError::S3(e.to_string()))?;
         }
-        let signed = req.build().map_err(|e| StaticFilesError::S3(e.to_string()))?;
+        let signed = req
+            .build()
+            .map_err(|e| StaticFilesError::S3(e.to_string()))?;
         let headers = signed
             .headers
             .iter()

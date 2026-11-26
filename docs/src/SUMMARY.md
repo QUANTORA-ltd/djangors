@@ -74,6 +74,12 @@
 - [Sites Framework](guides/sites.md)
 - [Geospatial & PostGIS (GIS)](guides/gis.md)
 - [Sites, Feeds, and 2FA](guides/sites-and-2fa.md)
+- [Feature Flags](guides/feature-flags.md)
+- [Multi-Channel Notifications](guides/notifications.md)
+- [Outbound Webhooks](guides/webhooks.md)
+- [Vector Search & SQLite FTS5](guides/vector-search.md)
+- [Inertia.js, htmx & AI SSE](guides/inertia-and-htmx.md)
+- [GraphQL & gRPC Adapters](guides/graphql-and-grpc.md)
 
 # How-To Guides
 

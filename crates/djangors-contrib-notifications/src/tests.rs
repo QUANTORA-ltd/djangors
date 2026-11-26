@@ -38,7 +38,10 @@ impl Notification for OrderShipped {
     }
 
     fn html_body(&self) -> Option<String> {
-        Some(format!("<p>Your order #{} is on the way.</p>", self.order_id))
+        Some(format!(
+            "<p>Your order #{} is on the way.</p>",
+            self.order_id
+        ))
     }
 
     fn data(&self) -> serde_json::Value {
@@ -54,7 +57,11 @@ struct CapturedRequest {
 
 async fn spawn_mock_webhook_server(
     expected_requests: usize,
-) -> (String, Arc<Mutex<Vec<CapturedRequest>>>, tokio::task::JoinHandle<()>) {
+) -> (
+    String,
+    Arc<Mutex<Vec<CapturedRequest>>>,
+    tokio::task::JoinHandle<()>,
+) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let captured = Arc::new(Mutex::new(Vec::new()));
@@ -93,8 +100,7 @@ async fn spawn_mock_webhook_server(
                             .unwrap_or("/")
                             .to_string();
                         let body_bytes = &buf[body_start..body_start + content_length];
-                        let body: serde_json::Value =
-                            serde_json::from_slice(body_bytes).unwrap();
+                        let body: serde_json::Value = serde_json::from_slice(body_bytes).unwrap();
                         captured_clone
                             .lock()
                             .unwrap()
@@ -119,8 +125,8 @@ async fn test_multi_channel_delivery_and_webhook_payloads() {
     let mail = Arc::new(InMemoryBackend::default());
     let (base_url, captured, server_handle) = spawn_mock_webhook_server(3).await;
 
-    let dispatcher = NotificationDispatcher::new(db.clone())
-        .with_mail(mail.clone(), "alerts@example.com");
+    let dispatcher =
+        NotificationDispatcher::new(db.clone()).with_mail(mail.clone(), "alerts@example.com");
 
     let recipient = NotificationRecipient::new("user-42")
         .email("user42@example.com")
@@ -188,8 +194,8 @@ async fn test_multi_channel_delivery_and_webhook_payloads() {
 async fn test_preference_opt_out_and_re_enable() {
     let db = setup_db().await;
     let mail = Arc::new(InMemoryBackend::default());
-    let dispatcher = NotificationDispatcher::new(db.clone())
-        .with_mail(mail.clone(), "alerts@example.com");
+    let dispatcher =
+        NotificationDispatcher::new(db.clone()).with_mail(mail.clone(), "alerts@example.com");
 
     dispatcher
         .set_preference("user-1", "order.shipped", NotificationChannel::Email, false)

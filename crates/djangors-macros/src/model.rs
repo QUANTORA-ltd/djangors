@@ -102,7 +102,9 @@ fn field_value_expr(f: &ModelField) -> TokenStream {
                 }
                 "Uuid" => quote! { djangors_orm::expr::Value::Text(self.#ident.to_string()) },
                 "Decimal" => quote! { djangors_orm::expr::Value::Text(self.#ident.to_string()) },
-                "Vector" => quote! { djangors_orm::expr::Value::Text(self.#ident.to_pgvector_literal()) },
+                "Vector" => {
+                    quote! { djangors_orm::expr::Value::Text(self.#ident.to_pgvector_literal()) }
+                }
                 _ => quote! { djangors_orm::expr::Value::from(self.#ident) },
             }
         }

@@ -146,7 +146,11 @@ impl FlagService {
 
         let allowed_orgs: Vec<String> =
             serde_json::from_str(&flag.allowed_orgs).unwrap_or_default();
-        if ctx.org_id.as_ref().is_some_and(|o| allowed_orgs.contains(o)) {
+        if ctx
+            .org_id
+            .as_ref()
+            .is_some_and(|o| allowed_orgs.contains(o))
+        {
             return true;
         }
 
@@ -414,7 +418,10 @@ mod tests {
             &flag,
             &FlagContext::new().user("alice")
         ));
-        assert!(FlagService::evaluate(&flag, &FlagContext::new().org("acme")));
+        assert!(FlagService::evaluate(
+            &flag,
+            &FlagContext::new().org("acme")
+        ));
         assert!(!FlagService::evaluate(
             &flag,
             &FlagContext::new().user("charlie").org("other")
@@ -447,9 +454,7 @@ mod tests {
 
         // Roughly 30% across 1000 users
         let enabled_count = (0..1000)
-            .filter(|i| {
-                FlagService::evaluate(&flag, &FlagContext::new().user(format!("user-{i}")))
-            })
+            .filter(|i| FlagService::evaluate(&flag, &FlagContext::new().user(format!("user-{i}"))))
             .count();
         assert!(
             (200..=400).contains(&enabled_count),

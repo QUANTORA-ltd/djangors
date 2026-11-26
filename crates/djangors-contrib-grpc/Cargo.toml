@@ -19,7 +19,7 @@ sqlite = ["djangors-core/sqlite"]
 
 [dependencies]
 bytes = "1.12.1"
-djangors-core = { path = "../djangors-core", version = "1.0.0", default-features = false }
+djangors-core = { path = "../djangors-core", version = "1.1.0", default-features = false }
 http-body-util = "0.1.4"
 hyper = { version = "1.10.1", features = ["http1", "http2", "server"] }
 hyper-util = { version = "0.1.20", features = ["server-auto", "tokio", "service"] }

@@ -214,11 +214,7 @@ mod tests {
             Bytes::new(),
         );
         let resp = inertia
-            .render(
-                &req,
-                "Dashboard/Index",
-                serde_json::json!({ "count": 42 }),
-            )
+            .render(&req, "Dashboard/Index", serde_json::json!({ "count": 42 }))
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(

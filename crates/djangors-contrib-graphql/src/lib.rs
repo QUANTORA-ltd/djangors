@@ -164,10 +164,13 @@ where
                 }
             }
         })
-        .get(&playground_path, move |_req: Request, _params: PathParams| {
-            let html = graphiql_html.clone();
-            async move { Ok(Response::html(StatusCode::OK, html)) }
-        })
+        .get(
+            &playground_path,
+            move |_req: Request, _params: PathParams| {
+                let html = graphiql_html.clone();
+                async move { Ok(Response::html(StatusCode::OK, html)) }
+            },
+        )
 }
 
 #[cfg(test)]
