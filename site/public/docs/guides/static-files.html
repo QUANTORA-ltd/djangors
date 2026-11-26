@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-1b0d75c8.js";
+            window.path_to_searchindex_js = "../searchindex-233506c4.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-078f3e88.js"></script>
+        <script src="../toc-805d447c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -378,6 +378,17 @@ fn mount_static() -&gt; djangors::Router {
 <code>PathParams</code> yourself, call <code>serve(req, params)</code> directly from a custom <code>async fn</code> handler — the
 method is public and takes the buffer body <code>Request</code> plus <code>PathParams</code>, exactly like any other
 handler.</p>
+<hr>
+<h2 id="presigned-s3-urls--image-variants"><a class="header" href="#presigned-s3-urls--image-variants">Presigned S3 URLs &amp; Image Variants</a></h2>
+<p><code>S3Storage</code> supports direct client-to-S3 uploads and temporary private downloads without proxying bytes through your Rust server:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use std::time::Duration;
+
+let upload = storage.presign_put("uploads/avatar.png", Duration::from_secs(300), Some("image/png"))?;
+let download = storage.presign_get("uploads/avatar.png", Duration::from_secs(60))?;
+<span class="boring">}</span></code></pre>
+<p>Enable the <code>images</code> feature on <code>djangors</code> (or <code>djangors-staticfiles</code>) to generate resized PNG, JPEG, or WebP thumbnails with <code>generate_variant</code> and <code>save_with_variants</code>.</p>
 
                     </main>
 

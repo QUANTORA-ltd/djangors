@@ -11,7 +11,7 @@ cargo install djangors-cli
 
 | Command | Description | Example |
 |---|---|---|
-| `dj new <name>` | Scaffold a new Djangors project | `dj new mysite` |
+| `dj new <name> [--starter minimal\|api\|htmx\|inertia\|saas]` | Scaffold a new Djangors project from a starter kit | `dj new mysite --starter saas` |
 | `dj new-app <name>` | Scaffold a new app module inside a project | `dj new-app blog` |
 | `dj run [--port 8000]` | Watch files, rebuild on change, and reload browser | `dj run --port 8080` |
 | `dj check [--deploy]` | Validate `djangors.toml`, system checks, and (with `--deploy`) production hardening | `dj check --deploy` |

@@ -5,6 +5,33 @@ All notable changes to Djangors are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [1.1.0]
+
+Feature release expanding Djangors across real-time UIs, AI/vector search, HTTP mailers, developer inspection, feature flags, multi-channel notifications, outbound webhooks, optional GraphQL/gRPC adapters, S3 presigned uploads, and CLI starter kits.
+
+### Added
+
+- **Core HTTP, Inertia.js, Presence & AI SSE** (`djangors-core`):
+  - `Inertia` & `InertiaConfig` protocol adapter (`X-Inertia` JSON, HTML shell, partial reloads, `409` version mismatch).
+  - Expanded htmx helpers (`Request::htmx_trigger_name`, `htmx_prompt`; `Response::hx_location`, `hx_trigger_after_swap`, `hx_trigger_after_settle`, `hx_replace_url`).
+  - RAII `Presence` & `PresenceGuard` with multi-connection ref-counting and `Groups` pub/sub broadcast.
+  - `SseEvent`, `StreamingResponse::sse_events`, `sse_json`, and `llm_stream` (`X-Accel-Buffering: no`, `[DONE]` sentinel).
+  - `DevInspector` ring buffer & `/_inspector/` dashboard wired into `DebugPanelLayer::with_inspector`.
+- **Vector Search (`pgvector`) & SQLite FTS5** (`djangors-orm`, `djangors-macros`, `djangors-migrations`):
+  - `Vector` type, `FieldKind::Vector { dimensions }`, `#[djangors(vector = N)]`, `order_by_{cosine,l2,inner_product}_distance()`.
+  - `Operation::EnableExtension` and `Operation::CreateVectorIndex` (`Hnsw` / `IvfFlat`).
+  - Dialect-aware `QuerySet::search()` on SQLite plus `search_fts5()`, `create_fts5_table()`, and `index_fts5_row()`.
+- **HTTP Email Transports & Mail Capture** (`djangors-mail`):
+  - `ResendBackend`, `PostmarkBackend`, `SendGridBackend`, `SesBackend` (AWS SES v2 with pure-Rust SigV4), and `CapturingBackend`.
+- **Live Queue Dashboard** (`djangors-tasks`):
+  - `queue_dashboard_router` & `register_dashboard` (`/tasks/dashboard/`, `stats.json`, 1-click retry, purge).
+- **Direct S3 Presigned URLs & Image Variants** (`djangors-staticfiles`):
+  - `S3Storage::presign_put` / `presign_get` (`PresignedUrl`) and opt-in `images` feature (`generate_variant`, `save_with_variants`).
+- **New Contrib Crates & CLI Starters** (`djangors-contrib-flags`, `djangors-contrib-notifications`, `djangors-contrib-webhooks`, `djangors-contrib-graphql`, `djangors-contrib-grpc`, `djangors-cli`):
+  - `flags`, `notifications`, and `webhooks` crates (enabled in `djangors` default features).
+  - Optional `graphql` (`async-graphql`) and `grpc` (`tonic` + `HybridServer`) adapters.
+  - `dj new <name> --starter minimal|api|htmx|inertia|saas` starter kits.
+
 ## [1.0.0]
 
 First stable release of Djangors — full Django 5.x/6.0 parity across ORM, multi-DB, MySQL, GIS,

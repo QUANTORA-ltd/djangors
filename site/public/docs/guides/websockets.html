@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-1b0d75c8.js";
+            window.path_to_searchindex_js = "../searchindex-233506c4.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-078f3e88.js"></script>
+        <script src="../toc-805d447c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -323,6 +323,19 @@ fragments, such as htmx partials, are left alone.</li>
 </ol>
 <p>There’s nothing to configure. In production nothing sets <code>DJANGORS_LIVERELOAD_PORT</code>,
 so no script is added.</p>
+<h2 id="real-time-room-presence"><a class="header" href="#real-time-room-presence">Real-Time Room Presence</a></h2>
+<p><code>djangors_core::Presence</code> tracks online members per room with multi-tab connection ref-counting and RAII cleanup (<code>PresenceGuard</code>). Attach a <code>Groups</code> registry with <code>Presence::with_groups(groups)</code> to broadcast JSON <code>Join</code>/<code>Leave</code> events on <code>"presence:{room}"</code>:</p>
+<pre class="playground"><code class="language-rust compile"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_core::{Groups, Presence};
+
+pub fn track_presence() {
+    let presence = Presence::with_groups(Groups::new());
+    let guard = presence.track("room-1", "user-42", serde_json::json!({"name": "Ada"}));
+    assert!(presence.is_present("room-1", "user-42"));
+    drop(guard); // automatically marks offline when last connection drops
+}
+<span class="boring">}</span></code></pre>
 
                     </main>
 

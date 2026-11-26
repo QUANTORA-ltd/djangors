@@ -235,3 +235,18 @@ fn mount_static() -> djangors::Router {
 `PathParams` yourself, call `serve(req, params)` directly from a custom `async fn` handler — the
 method is public and takes the buffer body `Request` plus `PathParams`, exactly like any other
 handler.
+
+---
+
+## Presigned S3 URLs & Image Variants
+
+`S3Storage` supports direct client-to-S3 uploads and temporary private downloads without proxying bytes through your Rust server:
+
+```rust,illustrative
+use std::time::Duration;
+
+let upload = storage.presign_put("uploads/avatar.png", Duration::from_secs(300), Some("image/png"))?;
+let download = storage.presign_get("uploads/avatar.png", Duration::from_secs(60))?;
+```
+
+Enable the `images` feature on `djangors` (or `djangors-staticfiles`) to generate resized PNG, JPEG, or WebP thumbnails with `generate_variant` and `save_with_variants`.

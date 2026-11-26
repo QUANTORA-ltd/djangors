@@ -284,6 +284,12 @@ Dual-licensed under `MIT OR Apache-2.0`. See [`LICENSE-MIT`](LICENSE-MIT) and
 - [Sites Framework](guides/sites.md)
 - [Geospatial & PostGIS (GIS)](guides/gis.md)
 - [Sites, Feeds, and 2FA](guides/sites-and-2fa.md)
+- [Feature Flags](guides/feature-flags.md)
+- [Multi-Channel Notifications](guides/notifications.md)
+- [Outbound Webhooks](guides/webhooks.md)
+- [Vector Search & SQLite FTS5](guides/vector-search.md)
+- [Inertia.js, htmx & AI SSE](guides/inertia-and-htmx.md)
+- [GraphQL & gRPC Adapters](guides/graphql-and-grpc.md)
 
 # How-To Guides
 
@@ -3785,7 +3791,7 @@ cargo install djangors-cli
 
 | Command | Description | Example |
 |---|---|---|
-| `dj new <name>` | Scaffold a new Djangors project | `dj new mysite` |
+| `dj new <name> [--starter minimal\|api\|htmx\|inertia\|saas]` | Scaffold a new Djangors project from a starter kit | `dj new mysite --starter saas` |
 | `dj new-app <name>` | Scaffold a new app module inside a project | `dj new-app blog` |
 | `dj run [--port 8000]` | Watch files, rebuild on change, and reload browser | `dj run --port 8080` |
 | `dj check [--deploy]` | Validate `djangors.toml`, system checks, and (with `--deploy`) production hardening | `dj check --deploy` |
@@ -4868,6 +4874,58 @@ A database backup of encrypted columns is only useful together with the key that
 Test restores by loading an encrypted row with the restored environment.
 
 
+<!-- docs/src/guides/feature-flags.md -->
+
+# Feature Flags & Gradual Rollouts
+
+`djangors-contrib-flags` (`djangors::flags`, enabled by default) provides database- and cache-backed feature flags with user/org allowlists and deterministic percentage rollouts.
+
+## Setup
+
+```rust,illustrative
+use std::sync::Arc;
+use djangors::flags::{create_flags_table, FlagContext, FlagService};
+
+// Create the `djangors_feature_flag` table (PostgreSQL & SQLite)
+create_flags_table(&db).await?;
+
+let flags = FlagService::new(db.clone())
+    .with_cache(Arc::new(cache), 60); // optional 60s TTL cache
+```
+
+## Creating & Evaluating Flags
+
+```rust,illustrative
+// Enable "new_billing_ui" for 25% of subjects, plus beta orgs
+flags
+    .set_flag(
+        "new_billing_ui",
+        "Roll out redesigned billing portal",
+        true,
+        25,
+        &["user-1"],
+        &["org-beta"],
+    )
+    .await?;
+
+let ctx = FlagContext::new().user("user-42").org("org-acme");
+if flags.is_enabled("new_billing_ui", &ctx).await? {
+    // serve new UI
+}
+```
+
+### Evaluation Precedence
+
+1. `enabled == false` → `false`
+2. `user_id` in `allowed_users` or `org_id` in `allowed_orgs` → `true`
+3. `rollout_percentage >= 100` → `true`; `<= 0` → `false`
+4. Deterministic SHA-256 bucket on `"{flag_name}:{subject}"` (`% 100 < rollout_percentage`).
+
+## Admin Integration
+
+Enable the `admin` feature and call `djangors::flags::register_admin(&site)` to manage flags live in the Admin panel.
+
+
 <!-- docs/src/guides/flatpages-and-redirects.md -->
 
 # Flat Pages and Redirects
@@ -5417,6 +5475,46 @@ let dist_expr = postgis::st_distance_meters("location", "$1");
 
 Pass the target geometry as an EWKT string (`point.to_ewkt()`) for `$1` and the radius in meters
 as a float for `$2`.
+
+
+<!-- docs/src/guides/graphql-and-grpc.md -->
+
+# Optional GraphQL & gRPC Adapters
+
+Both `graphql` (`djangors-contrib-graphql`) and `grpc` (`djangors-contrib-grpc`) are opt-in Cargo features on `djangors` so core compile times stay lean unless you enable them.
+
+## GraphQL (`features = ["graphql"]`)
+
+```rust,illustrative
+use djangors::graphql::{
+    async_graphql::{EmptyMutation, EmptySubscription, Object, Schema},
+    graphql_router,
+};
+
+struct Query;
+
+#[Object]
+impl Query {
+    async fn hello(&self) -> &str { "Hello from Djangors GraphQL!" }
+}
+
+let schema = Schema::build(Query, EmptyMutation, EmptySubscription).finish();
+let app = Router::new().mount("", graphql_router(schema, "/graphql"));
+```
+
+`graphql_router` mounts `POST /graphql`, `GET /graphql?query=...`, and serves the interactive GraphiQL playground on `GET /graphql` (without `?query`) and `GET /graphql/playground`.
+
+## gRPC (`features = ["grpc"]`)
+
+`djangors::grpc` integrates `tonic` with `djangors_core::AppState` and provides `HybridServer` to serve HTTP and gRPC either on separate ports (`serve_dual`) or multiplexed on a single port (`serve_multiplexed`):
+
+```rust,illustrative
+use djangors::grpc::{AppStateInterceptor, HybridServer};
+
+let interceptor = AppStateInterceptor::new(app_state);
+let server = HybridServer::new(http_router, grpc_routes);
+server.serve_multiplexed("0.0.0.0:8080".parse()?).await?;
+```
 
 
 <!-- docs/src/guides/http-and-middleware.md -->
@@ -6409,6 +6507,51 @@ dj compilemessages
 ```
 
 
+<!-- docs/src/guides/inertia-and-htmx.md -->
+
+# Inertia.js, htmx & AI SSE Streaming
+
+## Inertia.js Protocol Adapter
+
+`djangors_core::Inertia` lets you build React, Vue, or Svelte frontends backed by standard Djangors routes, sessions, and CSRF protection without maintaining a separate REST API:
+
+```rust,compile
+use djangors_core::{DjangorsError, Inertia, InertiaConfig, PathParams, Request, Response};
+
+pub async fn dashboard(req: Request, _params: PathParams) -> Result<Response, DjangorsError> {
+    let inertia = Inertia::with_config(
+        InertiaConfig::new("v1.1").with_shared_prop("appName", "Djangors")?,
+    );
+    inertia.render(&req, "Dashboard/Index", serde_json::json!({ "users": 42 }))
+}
+```
+
+- Browser requests receive `200 OK` HTML with `<div id="app" data-page="..."></div>`.
+- Inertia XHR requests (`X-Inertia: true`) receive JSON with `X-Inertia: true` and `Vary: X-Inertia`.
+- Partial reloads (`X-Inertia-Partial-Component` + `X-Inertia-Partial-Data`) filter props automatically.
+- Stale `X-Inertia-Version` on `GET` returns `409 Conflict` with `X-Inertia-Location`.
+
+## htmx Request & Response Helpers
+
+`Request` and `Response` include ergonomic htmx helpers:
+
+- `Request`: `is_htmx()`, `is_htmx_boosted()`, `htmx_target()`, `htmx_trigger()`, `htmx_trigger_name()`, `htmx_prompt()`, `htmx_current_url()`.
+- `Response`: `hx_trigger()`, `hx_trigger_after_swap()`, `hx_trigger_after_settle()`, `hx_redirect()`, `hx_location()`, `hx_refresh()`, `hx_push_url()`, `hx_replace_url()`, `hx_retarget()`, `hx_reswap()`.
+
+## AI / LLM Token Streaming (SSE)
+
+```rust,illustrative
+use djangors_core::StreamingResponse;
+
+pub fn stream_tokens() -> StreamingResponse {
+    let tokens = futures_util::stream::iter(vec!["Hello".to_string(), " world".to_string()]);
+    StreamingResponse::llm_stream(tokens)
+}
+```
+
+`StreamingResponse::llm_stream` sets `X-Accel-Buffering: no`, emits `data: {"token":...}\n\n` frames, and finishes with `data: [DONE]\n\n`. For custom events, use `SseEvent` with `StreamingResponse::sse_events` or `StreamingResponse::sse_json`.
+
+
 <!-- docs/src/guides/ldap.md -->
 
 # LDAP / Active Directory Authentication
@@ -7334,6 +7477,52 @@ maps that to `Internal` (500) instead of `Unauthorized`. For callers who need to
 Schema-per-tenant/database-per-tenant support, subdomain-based tenant resolution (v1 is
 `X-Tenant-Id`-header only), and automatic Postgres Row-Level Security policy generation are
 deliberately out of scope for this first slice.
+
+
+<!-- docs/src/guides/notifications.md -->
+
+# Multi-Channel Notifications
+
+`djangors-contrib-notifications` (`djangors::notifications`, enabled by default) dispatches notifications across **Email**, **In-App DB Inbox**, **Webhooks**, **Slack**, and **Discord**, respecting per-user channel opt-outs.
+
+## Defining a Notification
+
+```rust,illustrative
+use djangors::notifications::{
+    create_notifications_tables, Notification, NotificationChannel,
+    NotificationDispatcher, NotificationRecipient,
+};
+
+struct InvoicePaid {
+    amount: String,
+}
+
+impl Notification for InvoicePaid {
+    fn kind(&self) -> &str { "invoice_paid" }
+    fn channels(&self) -> Vec<NotificationChannel> {
+        vec![NotificationChannel::Email, NotificationChannel::InApp, NotificationChannel::Slack]
+    }
+    fn subject(&self) -> String { format!("Invoice paid: {}", self.amount) }
+    fn body(&self) -> String { format!("Payment of {} succeeded.", self.amount) }
+}
+```
+
+## Dispatching & In-App Inbox
+
+```rust,illustrative
+create_notifications_tables(&db).await?;
+
+let dispatcher = NotificationDispatcher::new(db.clone())
+    .with_mail(Arc::new(mail_backend), "billing@example.com");
+
+let recipient = NotificationRecipient::new("user-42")
+    .email("ada@example.com")
+    .slack("https://hooks.slack.com/services/...");
+
+let report = dispatcher.send(&recipient, &InvoicePaid { amount: "$49.00".into() }).await?;
+let unread = dispatcher.unread_count("user-42").await?;
+dispatcher.mark_all_read("user-42").await?;
+```
 
 
 <!-- docs/src/guides/oauth-provider.md -->
@@ -11507,6 +11696,21 @@ fn mount_static() -> djangors::Router {
 method is public and takes the buffer body `Request` plus `PathParams`, exactly like any other
 handler.
 
+---
+
+## Presigned S3 URLs & Image Variants
+
+`S3Storage` supports direct client-to-S3 uploads and temporary private downloads without proxying bytes through your Rust server:
+
+```rust,illustrative
+use std::time::Duration;
+
+let upload = storage.presign_put("uploads/avatar.png", Duration::from_secs(300), Some("image/png"))?;
+let download = storage.presign_get("uploads/avatar.png", Duration::from_secs(60))?;
+```
+
+Enable the `images` feature on `djangors` (or `djangors-staticfiles`) to generate resized PNG, JPEG, or WebP thumbnails with `generate_variant` and `save_with_variants`.
+
 
 <!-- docs/src/guides/tasks.md -->
 
@@ -11704,6 +11908,10 @@ register_admin(&site);
 ```
 
 This registers the `QueuedTask` model under the `djangors_tasks` app label. Admin users can view the task list, search for tasks by `task_name` or `status`, monitor execution attempts, and inspect `error_message` text details for failed background tasks.
+
+### Live Queue Dashboard
+
+Mount `djangors::tasks::queue_dashboard_router(db)` (or `register_dashboard(site, db)`) for a live `/tasks/dashboard/` UI with queue counters, recent failures, 1-click **Retry** (`POST /tasks/dashboard/retry/{id}`), **Purge Completed**, and `/tasks/dashboard/stats.json`.
 
 
 <!-- docs/src/guides/templates.md -->
@@ -12575,6 +12783,117 @@ fn test_production_settings_branch() {
 ```
 
 
+<!-- docs/src/guides/vector-search.md -->
+
+# Vector Search (`pgvector`) & SQLite FTS5
+
+Djangors supports dense vector embeddings (`Vector` + `#[djangors(vector = N)]`) for RAG and semantic search, plus portable full-text search across PostgreSQL (`tsvector`) and SQLite (`FTS5` / multi-term `LIKE`).
+
+## Vector Embeddings (`pgvector`)
+
+```rust,illustrative
+use djangors::orm::{Model, Vector};
+
+#[derive(Model, Debug, Clone)]
+#[djangors(app = "kb", table_name = "articles")]
+pub struct Article {
+    #[djangors(primary_key, auto)]
+    pub id: i64,
+    pub title: String,
+    #[djangors(vector = 1536)]
+    pub embedding: Vector,
+}
+
+let nearest = Article::objects()
+    .order_by_cosine_distance("embedding", &query_embedding)?
+    .limit(5)
+    .all(&db)
+    .await?;
+```
+
+On PostgreSQL this emits `VECTOR(1536)` and `ORDER BY "embedding" <=> '...'::vector`; on SQLite it stores `[...]` in `TEXT` and computes exact distances in Rust so local tests behave identically.
+
+### `pgvector` Migrations & HNSW / IVFFlat Indexes
+
+```rust,compile
+use djangors::migrations::{Operation, VectorIndexMethod, VectorOpClass};
+
+pub fn pgvector_ops() -> (Operation, Operation) {
+    let enable_pgvector = Operation::EnableExtension {
+        name: "vector".to_string(),
+    };
+    let hnsw_index = Operation::CreateVectorIndex {
+        index_name: "articles_embedding_hnsw".to_string(),
+        table_name: "articles".to_string(),
+        column_name: "embedding".to_string(),
+        method: VectorIndexMethod::Hnsw,
+        opclass: VectorOpClass::Cosine,
+    };
+    (enable_pgvector, hnsw_index)
+}
+```
+
+## SQLite FTS5 Full-Text Search
+
+`QuerySet::search(query, fields)` automatically uses `to_tsvector` on PostgreSQL and multi-term case-insensitive `LIKE` on SQLite. For dedicated SQLite FTS5 virtual tables:
+
+```rust,illustrative
+use djangors::orm::{create_fts5_table, index_fts5_row};
+
+create_fts5_table(&db, "articles_fts", &["title", "body"]).await?;
+index_fts5_row(&db, "articles_fts", article.id, &[("title", &article.title), ("body", &article.body)]).await?;
+
+let hits = Article::objects()
+    .search_fts5("articles_fts", "rust async")?
+    .all(&db)
+    .await?;
+```
+
+
+<!-- docs/src/guides/webhooks.md -->
+
+# Outbound Webhooks
+
+`djangors-contrib-webhooks` (`djangors::webhooks`, enabled by default) provides customer-facing outbound webhook endpoints with HMAC-SHA256 signing, replay-window protection, exponential backoff retries, and 1-click replay.
+
+## Registering Endpoints & Emitting Events
+
+```rust,illustrative
+use djangors::webhooks::{create_webhooks_tables, WebhookDispatcher};
+
+create_webhooks_tables(&db).await?;
+let dispatcher = WebhookDispatcher::new(db.clone()).with_max_attempts(5);
+
+dispatcher
+    .register_endpoint(
+        "org-1",
+        "https://customer.example.com/webhooks",
+        "whsec_super_secret",
+        &["invoice.paid", "subscription.*"],
+        "Billing events",
+    )
+    .await?;
+
+// Enqueue deliveries for matching enabled endpoints
+let delivery_ids = dispatcher
+    .emit("org-1", "invoice.paid", &serde_json::json!({ "id": "inv_123" }))
+    .await?;
+
+// Process due deliveries (run periodically from a worker or cron task)
+let report = dispatcher.deliver_due().await?;
+```
+
+## Signature Verification
+
+Every request includes `X-Djangors-Signature: t=<unix_ts>,v1=<hex_hmac_sha256>` and `X-Djangors-Event`. Receivers can verify payloads with `verify_signature`:
+
+```rust,illustrative
+use djangors::webhooks::verify_signature;
+
+verify_signature("whsec_super_secret", header_value, raw_body, now_unix, 300)?;
+```
+
+
 <!-- docs/src/guides/websockets.md -->
 
 # WebSockets and Live Reload
@@ -12740,6 +13059,21 @@ changes, and now also refreshes the open browser tabs:
 
 There's nothing to configure. In production nothing sets `DJANGORS_LIVERELOAD_PORT`,
 so no script is added.
+
+## Real-Time Room Presence
+
+`djangors_core::Presence` tracks online members per room with multi-tab connection ref-counting and RAII cleanup (`PresenceGuard`). Attach a `Groups` registry with `Presence::with_groups(groups)` to broadcast JSON `Join`/`Leave` events on `"presence:{room}"`:
+
+```rust,compile
+use djangors_core::{Groups, Presence};
+
+pub fn track_presence() {
+    let presence = Presence::with_groups(Groups::new());
+    let guard = presence.track("room-1", "user-42", serde_json::json!({"name": "Ada"}));
+    assert!(presence.is_present("room-1", "user-42"));
+    drop(guard); // automatically marks offline when last connection drops
+}
+```
 
 
 <!-- docs/src/how-to/api-keys.md -->
@@ -14010,6 +14344,24 @@ assert_eq!(messages[0].subject, "reset");
 `ConsoleBackend` is the fourth backend: it logs the message body via `tracing`
 to stdout/stderr, useful for local development when you want to *see* emails
 without an SMTP server or files on disk.
+
+### 4. HTTP API Transports (Resend, Postmark, SendGrid, AWS SES v2)
+
+When outbound SMTP ports are blocked or throttled in cloud environments, use one of the built-in HTTP transports (enabled via the default `http` feature on `djangors-mail`):
+
+```rust,compile
+use djangors_mail::{ResendBackend, PostmarkBackend, SendGridBackend, SesBackend, CapturingBackend};
+
+pub fn configure_http_mailers() {
+    let resend = ResendBackend::new("re_...");
+    let _postmark = PostmarkBackend::new("pm_...");
+    let _sendgrid = SendGridBackend::new("sg_...");
+    let _ses = SesBackend::new("us-east-1", "AKIA...", "secret");
+
+    // Wrap any backend to capture sent emails in memory for DevInspector
+    let _captured = CapturingBackend::new(resend, 100);
+}
+```
 
 
 <!-- docs/src/how-to/signed-urls.md -->

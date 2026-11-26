@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-1b0d75c8.js";
+            window.path_to_searchindex_js = "../searchindex-233506c4.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-078f3e88.js"></script>
+        <script src="../toc-805d447c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -360,6 +360,8 @@ let site = djangors_admin::AdminSite::new("Admin Portal");
 register_admin(&amp;site);
 <span class="boring">}</span></code></pre>
 <p>This registers the <code>QueuedTask</code> model under the <code>djangors_tasks</code> app label. Admin users can view the task list, search for tasks by <code>task_name</code> or <code>status</code>, monitor execution attempts, and inspect <code>error_message</code> text details for failed background tasks.</p>
+<h3 id="live-queue-dashboard"><a class="header" href="#live-queue-dashboard">Live Queue Dashboard</a></h3>
+<p>Mount <code>djangors::tasks::queue_dashboard_router(db)</code> (or <code>register_dashboard(site, db)</code>) for a live <code>/tasks/dashboard/</code> UI with queue counters, recent failures, 1-click <strong>Retry</strong> (<code>POST /tasks/dashboard/retry/{id}</code>), <strong>Purge Completed</strong>, and <code>/tasks/dashboard/stats.json</code>.</p>
 
                     </main>
 

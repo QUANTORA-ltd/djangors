@@ -161,3 +161,18 @@ changes, and now also refreshes the open browser tabs:
 
 There's nothing to configure. In production nothing sets `DJANGORS_LIVERELOAD_PORT`,
 so no script is added.
+
+## Real-Time Room Presence
+
+`djangors_core::Presence` tracks online members per room with multi-tab connection ref-counting and RAII cleanup (`PresenceGuard`). Attach a `Groups` registry with `Presence::with_groups(groups)` to broadcast JSON `Join`/`Leave` events on `"presence:{room}"`:
+
+```rust,compile
+use djangors_core::{Groups, Presence};
+
+pub fn track_presence() {
+    let presence = Presence::with_groups(Groups::new());
+    let guard = presence.track("room-1", "user-42", serde_json::json!({"name": "Ada"}));
+    assert!(presence.is_present("room-1", "user-42"));
+    drop(guard); // automatically marks offline when last connection drops
+}
+```

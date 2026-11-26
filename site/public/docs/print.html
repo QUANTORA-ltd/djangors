@@ -37,10 +37,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-1b0d75c8.js";
+            window.path_to_searchindex_js = "searchindex-233506c4.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-078f3e88.js"></script>
+        <script src="toc-805d447c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -2847,7 +2847,7 @@ crates.io:</p>
 <tr><th>Command</th><th>Description</th><th>Example</th></tr>
 </thead>
 <tbody>
-<tr><td><code>dj new &lt;name&gt;</code></td><td>Scaffold a new Djangors project</td><td><code>dj new mysite</code></td></tr>
+<tr><td><code>dj new &lt;name&gt; [--starter minimal|api|htmx|inertia|saas]</code></td><td>Scaffold a new Djangors project from a starter kit</td><td><code>dj new mysite --starter saas</code></td></tr>
 <tr><td><code>dj new-app &lt;name&gt;</code></td><td>Scaffold a new app module inside a project</td><td><code>dj new-app blog</code></td></tr>
 <tr><td><code>dj run [--port 8000]</code></td><td>Watch files, rebuild on change, and reload browser</td><td><code>dj run --port 8080</code></td></tr>
 <tr><td><code>dj check [--deploy]</code></td><td>Validate <code>djangors.toml</code>, system checks, and (with <code>--deploy</code>) production hardening</td><td><code>dj check --deploy</code></td></tr>
@@ -11777,6 +11777,8 @@ let site = djangors_admin::AdminSite::new("Admin Portal");
 register_admin(&amp;site);
 <span class="boring">}</span></code></pre>
 <p>This registers the <code>QueuedTask</code> model under the <code>djangors_tasks</code> app label. Admin users can view the task list, search for tasks by <code>task_name</code> or <code>status</code>, monitor execution attempts, and inspect <code>error_message</code> text details for failed background tasks.</p>
+<h3 id="live-queue-dashboard"><a class="header" href="#live-queue-dashboard">Live Queue Dashboard</a></h3>
+<p>Mount <code>djangors::tasks::queue_dashboard_router(db)</code> (or <code>register_dashboard(site, db)</code>) for a live <code>/tasks/dashboard/</code> UI with queue counters, recent failures, 1-click <strong>Retry</strong> (<code>POST /tasks/dashboard/retry/{id}</code>), <strong>Purge Completed</strong>, and <code>/tasks/dashboard/stats.json</code>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="websockets-and-live-reload"><a class="header" href="#websockets-and-live-reload">WebSockets and Live Reload</a></h1>
 <p>Djangors has built-in RFC 6455 WebSockets: no separate ASGI server, and nothing like
@@ -11926,6 +11928,19 @@ fragments, such as htmx partials, are left alone.</li>
 </ol>
 <p>There’s nothing to configure. In production nothing sets <code>DJANGORS_LIVERELOAD_PORT</code>,
 so no script is added.</p>
+<h2 id="real-time-room-presence"><a class="header" href="#real-time-room-presence">Real-Time Room Presence</a></h2>
+<p><code>djangors_core::Presence</code> tracks online members per room with multi-tab connection ref-counting and RAII cleanup (<code>PresenceGuard</code>). Attach a <code>Groups</code> registry with <code>Presence::with_groups(groups)</code> to broadcast JSON <code>Join</code>/<code>Leave</code> events on <code>"presence:{room}"</code>:</p>
+<pre class="playground"><code class="language-rust compile"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_core::{Groups, Presence};
+
+pub fn track_presence() {
+    let presence = Presence::with_groups(Groups::new());
+    let guard = presence.track("room-1", "user-42", serde_json::json!({"name": "Ada"}));
+    assert!(presence.is_present("room-1", "user-42"));
+    drop(guard); // automatically marks offline when last connection drops
+}
+<span class="boring">}</span></code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="caching"><a class="header" href="#caching">Caching</a></h1>
 <p>Djangors provides a unified key-value caching system. It supports multiple storage backends, flexible Time-To-Live (TTL) configuration, JSON serialization helpers, and opt-in HTTP response caching middleware.</p>
@@ -12532,6 +12547,17 @@ fn mount_static() -&gt; djangors::Router {
 <code>PathParams</code> yourself, call <code>serve(req, params)</code> directly from a custom <code>async fn</code> handler — the
 method is public and takes the buffer body <code>Request</code> plus <code>PathParams</code>, exactly like any other
 handler.</p>
+<hr>
+<h2 id="presigned-s3-urls--image-variants"><a class="header" href="#presigned-s3-urls--image-variants">Presigned S3 URLs &amp; Image Variants</a></h2>
+<p><code>S3Storage</code> supports direct client-to-S3 uploads and temporary private downloads without proxying bytes through your Rust server:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use std::time::Duration;
+
+let upload = storage.presign_put("uploads/avatar.png", Duration::from_secs(300), Some("image/png"))?;
+let download = storage.presign_get("uploads/avatar.png", Duration::from_secs(60))?;
+<span class="boring">}</span></code></pre>
+<p>Enable the <code>images</code> feature on <code>djangors</code> (or <code>djangors-staticfiles</code>) to generate resized PNG, JPEG, or WebP thumbnails with <code>generate_variant</code> and <code>save_with_variants</code>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="signals"><a class="header" href="#signals">Signals</a></h1>
 <p>Djangors features a pub-sub (publish-subscribe) signals subsystem allowing decoupled parts of your application to react to framework lifecycle events.</p>
@@ -12995,6 +13021,255 @@ timestamps from <code>FeedItem.pub_date</code>. Matching the <code>FeedItem.pub_
 you — the crate renders exactly what the trait returns.</p>
 </blockquote>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="feature-flags--gradual-rollouts"><a class="header" href="#feature-flags--gradual-rollouts">Feature Flags &amp; Gradual Rollouts</a></h1>
+<p><code>djangors-contrib-flags</code> (<code>djangors::flags</code>, enabled by default) provides database- and cache-backed feature flags with user/org allowlists and deterministic percentage rollouts.</p>
+<h2 id="setup-2"><a class="header" href="#setup-2">Setup</a></h2>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use std::sync::Arc;
+use djangors::flags::{create_flags_table, FlagContext, FlagService};
+
+// Create the `djangors_feature_flag` table (PostgreSQL &amp; SQLite)
+create_flags_table(&amp;db).await?;
+
+let flags = FlagService::new(db.clone())
+    .with_cache(Arc::new(cache), 60); // optional 60s TTL cache
+<span class="boring">}</span></code></pre>
+<h2 id="creating--evaluating-flags"><a class="header" href="#creating--evaluating-flags">Creating &amp; Evaluating Flags</a></h2>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// Enable "new_billing_ui" for 25% of subjects, plus beta orgs
+flags
+    .set_flag(
+        "new_billing_ui",
+        "Roll out redesigned billing portal",
+        true,
+        25,
+        &amp;["user-1"],
+        &amp;["org-beta"],
+    )
+    .await?;
+
+let ctx = FlagContext::new().user("user-42").org("org-acme");
+if flags.is_enabled("new_billing_ui", &amp;ctx).await? {
+    // serve new UI
+}
+<span class="boring">}</span></code></pre>
+<h3 id="evaluation-precedence"><a class="header" href="#evaluation-precedence">Evaluation Precedence</a></h3>
+<ol>
+<li><code>enabled == false</code> → <code>false</code></li>
+<li><code>user_id</code> in <code>allowed_users</code> or <code>org_id</code> in <code>allowed_orgs</code> → <code>true</code></li>
+<li><code>rollout_percentage &gt;= 100</code> → <code>true</code>; <code>&lt;= 0</code> → <code>false</code></li>
+<li>Deterministic SHA-256 bucket on <code>"{flag_name}:{subject}"</code> (<code>% 100 &lt; rollout_percentage</code>).</li>
+</ol>
+<h2 id="admin-integration-1"><a class="header" href="#admin-integration-1">Admin Integration</a></h2>
+<p>Enable the <code>admin</code> feature and call <code>djangors::flags::register_admin(&amp;site)</code> to manage flags live in the Admin panel.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="multi-channel-notifications"><a class="header" href="#multi-channel-notifications">Multi-Channel Notifications</a></h1>
+<p><code>djangors-contrib-notifications</code> (<code>djangors::notifications</code>, enabled by default) dispatches notifications across <strong>Email</strong>, <strong>In-App DB Inbox</strong>, <strong>Webhooks</strong>, <strong>Slack</strong>, and <strong>Discord</strong>, respecting per-user channel opt-outs.</p>
+<h2 id="defining-a-notification"><a class="header" href="#defining-a-notification">Defining a Notification</a></h2>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors::notifications::{
+    create_notifications_tables, Notification, NotificationChannel,
+    NotificationDispatcher, NotificationRecipient,
+};
+
+struct InvoicePaid {
+    amount: String,
+}
+
+impl Notification for InvoicePaid {
+    fn kind(&amp;self) -&gt; &amp;str { "invoice_paid" }
+    fn channels(&amp;self) -&gt; Vec&lt;NotificationChannel&gt; {
+        vec![NotificationChannel::Email, NotificationChannel::InApp, NotificationChannel::Slack]
+    }
+    fn subject(&amp;self) -&gt; String { format!("Invoice paid: {}", self.amount) }
+    fn body(&amp;self) -&gt; String { format!("Payment of {} succeeded.", self.amount) }
+}
+<span class="boring">}</span></code></pre>
+<h2 id="dispatching--in-app-inbox"><a class="header" href="#dispatching--in-app-inbox">Dispatching &amp; In-App Inbox</a></h2>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>create_notifications_tables(&amp;db).await?;
+
+let dispatcher = NotificationDispatcher::new(db.clone())
+    .with_mail(Arc::new(mail_backend), "billing@example.com");
+
+let recipient = NotificationRecipient::new("user-42")
+    .email("ada@example.com")
+    .slack("https://hooks.slack.com/services/...");
+
+let report = dispatcher.send(&amp;recipient, &amp;InvoicePaid { amount: "$49.00".into() }).await?;
+let unread = dispatcher.unread_count("user-42").await?;
+dispatcher.mark_all_read("user-42").await?;
+<span class="boring">}</span></code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="outbound-webhooks"><a class="header" href="#outbound-webhooks">Outbound Webhooks</a></h1>
+<p><code>djangors-contrib-webhooks</code> (<code>djangors::webhooks</code>, enabled by default) provides customer-facing outbound webhook endpoints with HMAC-SHA256 signing, replay-window protection, exponential backoff retries, and 1-click replay.</p>
+<h2 id="registering-endpoints--emitting-events"><a class="header" href="#registering-endpoints--emitting-events">Registering Endpoints &amp; Emitting Events</a></h2>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors::webhooks::{create_webhooks_tables, WebhookDispatcher};
+
+create_webhooks_tables(&amp;db).await?;
+let dispatcher = WebhookDispatcher::new(db.clone()).with_max_attempts(5);
+
+dispatcher
+    .register_endpoint(
+        "org-1",
+        "https://customer.example.com/webhooks",
+        "whsec_super_secret",
+        &amp;["invoice.paid", "subscription.*"],
+        "Billing events",
+    )
+    .await?;
+
+// Enqueue deliveries for matching enabled endpoints
+let delivery_ids = dispatcher
+    .emit("org-1", "invoice.paid", &amp;serde_json::json!({ "id": "inv_123" }))
+    .await?;
+
+// Process due deliveries (run periodically from a worker or cron task)
+let report = dispatcher.deliver_due().await?;
+<span class="boring">}</span></code></pre>
+<h2 id="signature-verification"><a class="header" href="#signature-verification">Signature Verification</a></h2>
+<p>Every request includes <code>X-Djangors-Signature: t=&lt;unix_ts&gt;,v1=&lt;hex_hmac_sha256&gt;</code> and <code>X-Djangors-Event</code>. Receivers can verify payloads with <code>verify_signature</code>:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors::webhooks::verify_signature;
+
+verify_signature("whsec_super_secret", header_value, raw_body, now_unix, 300)?;
+<span class="boring">}</span></code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="vector-search-pgvector--sqlite-fts5"><a class="header" href="#vector-search-pgvector--sqlite-fts5">Vector Search (<code>pgvector</code>) &amp; SQLite FTS5</a></h1>
+<p>Djangors supports dense vector embeddings (<code>Vector</code> + <code>#[djangors(vector = N)]</code>) for RAG and semantic search, plus portable full-text search across PostgreSQL (<code>tsvector</code>) and SQLite (<code>FTS5</code> / multi-term <code>LIKE</code>).</p>
+<h2 id="vector-embeddings-pgvector"><a class="header" href="#vector-embeddings-pgvector">Vector Embeddings (<code>pgvector</code>)</a></h2>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors::orm::{Model, Vector};
+
+#[derive(Model, Debug, Clone)]
+#[djangors(app = "kb", table_name = "articles")]
+pub struct Article {
+    #[djangors(primary_key, auto)]
+    pub id: i64,
+    pub title: String,
+    #[djangors(vector = 1536)]
+    pub embedding: Vector,
+}
+
+let nearest = Article::objects()
+    .order_by_cosine_distance("embedding", &amp;query_embedding)?
+    .limit(5)
+    .all(&amp;db)
+    .await?;
+<span class="boring">}</span></code></pre>
+<p>On PostgreSQL this emits <code>VECTOR(1536)</code> and <code>ORDER BY "embedding" &lt;=&gt; '...'::vector</code>; on SQLite it stores <code>[...]</code> in <code>TEXT</code> and computes exact distances in Rust so local tests behave identically.</p>
+<h3 id="pgvector-migrations--hnsw--ivfflat-indexes"><a class="header" href="#pgvector-migrations--hnsw--ivfflat-indexes"><code>pgvector</code> Migrations &amp; HNSW / IVFFlat Indexes</a></h3>
+<pre class="playground"><code class="language-rust compile"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors::migrations::{Operation, VectorIndexMethod, VectorOpClass};
+
+pub fn pgvector_ops() -&gt; (Operation, Operation) {
+    let enable_pgvector = Operation::EnableExtension {
+        name: "vector".to_string(),
+    };
+    let hnsw_index = Operation::CreateVectorIndex {
+        index_name: "articles_embedding_hnsw".to_string(),
+        table_name: "articles".to_string(),
+        column_name: "embedding".to_string(),
+        method: VectorIndexMethod::Hnsw,
+        opclass: VectorOpClass::Cosine,
+    };
+    (enable_pgvector, hnsw_index)
+}
+<span class="boring">}</span></code></pre>
+<h2 id="sqlite-fts5-full-text-search"><a class="header" href="#sqlite-fts5-full-text-search">SQLite FTS5 Full-Text Search</a></h2>
+<p><code>QuerySet::search(query, fields)</code> automatically uses <code>to_tsvector</code> on PostgreSQL and multi-term case-insensitive <code>LIKE</code> on SQLite. For dedicated SQLite FTS5 virtual tables:</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors::orm::{create_fts5_table, index_fts5_row};
+
+create_fts5_table(&amp;db, "articles_fts", &amp;["title", "body"]).await?;
+index_fts5_row(&amp;db, "articles_fts", article.id, &amp;[("title", &amp;article.title), ("body", &amp;article.body)]).await?;
+
+let hits = Article::objects()
+    .search_fts5("articles_fts", "rust async")?
+    .all(&amp;db)
+    .await?;
+<span class="boring">}</span></code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="inertiajs-htmx--ai-sse-streaming"><a class="header" href="#inertiajs-htmx--ai-sse-streaming">Inertia.js, htmx &amp; AI SSE Streaming</a></h1>
+<h2 id="inertiajs-protocol-adapter"><a class="header" href="#inertiajs-protocol-adapter">Inertia.js Protocol Adapter</a></h2>
+<p><code>djangors_core::Inertia</code> lets you build React, Vue, or Svelte frontends backed by standard Djangors routes, sessions, and CSRF protection without maintaining a separate REST API:</p>
+<pre class="playground"><code class="language-rust compile"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_core::{DjangorsError, Inertia, InertiaConfig, PathParams, Request, Response};
+
+pub async fn dashboard(req: Request, _params: PathParams) -&gt; Result&lt;Response, DjangorsError&gt; {
+    let inertia = Inertia::with_config(
+        InertiaConfig::new("v1.1").with_shared_prop("appName", "Djangors")?,
+    );
+    inertia.render(&amp;req, "Dashboard/Index", serde_json::json!({ "users": 42 }))
+}
+<span class="boring">}</span></code></pre>
+<ul>
+<li>Browser requests receive <code>200 OK</code> HTML with <code>&lt;div id="app" data-page="..."&gt;&lt;/div&gt;</code>.</li>
+<li>Inertia XHR requests (<code>X-Inertia: true</code>) receive JSON with <code>X-Inertia: true</code> and <code>Vary: X-Inertia</code>.</li>
+<li>Partial reloads (<code>X-Inertia-Partial-Component</code> + <code>X-Inertia-Partial-Data</code>) filter props automatically.</li>
+<li>Stale <code>X-Inertia-Version</code> on <code>GET</code> returns <code>409 Conflict</code> with <code>X-Inertia-Location</code>.</li>
+</ul>
+<h2 id="htmx-request--response-helpers"><a class="header" href="#htmx-request--response-helpers">htmx Request &amp; Response Helpers</a></h2>
+<p><code>Request</code> and <code>Response</code> include ergonomic htmx helpers:</p>
+<ul>
+<li><code>Request</code>: <code>is_htmx()</code>, <code>is_htmx_boosted()</code>, <code>htmx_target()</code>, <code>htmx_trigger()</code>, <code>htmx_trigger_name()</code>, <code>htmx_prompt()</code>, <code>htmx_current_url()</code>.</li>
+<li><code>Response</code>: <code>hx_trigger()</code>, <code>hx_trigger_after_swap()</code>, <code>hx_trigger_after_settle()</code>, <code>hx_redirect()</code>, <code>hx_location()</code>, <code>hx_refresh()</code>, <code>hx_push_url()</code>, <code>hx_replace_url()</code>, <code>hx_retarget()</code>, <code>hx_reswap()</code>.</li>
+</ul>
+<h2 id="ai--llm-token-streaming-sse"><a class="header" href="#ai--llm-token-streaming-sse">AI / LLM Token Streaming (SSE)</a></h2>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_core::StreamingResponse;
+
+pub fn stream_tokens() -&gt; StreamingResponse {
+    let tokens = futures_util::stream::iter(vec!["Hello".to_string(), " world".to_string()]);
+    StreamingResponse::llm_stream(tokens)
+}
+<span class="boring">}</span></code></pre>
+<p><code>StreamingResponse::llm_stream</code> sets <code>X-Accel-Buffering: no</code>, emits <code>data: {"token":...}\n\n</code> frames, and finishes with <code>data: [DONE]\n\n</code>. For custom events, use <code>SseEvent</code> with <code>StreamingResponse::sse_events</code> or <code>StreamingResponse::sse_json</code>.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="optional-graphql--grpc-adapters"><a class="header" href="#optional-graphql--grpc-adapters">Optional GraphQL &amp; gRPC Adapters</a></h1>
+<p>Both <code>graphql</code> (<code>djangors-contrib-graphql</code>) and <code>grpc</code> (<code>djangors-contrib-grpc</code>) are opt-in Cargo features on <code>djangors</code> so core compile times stay lean unless you enable them.</p>
+<h2 id="graphql-features--graphql"><a class="header" href="#graphql-features--graphql">GraphQL (<code>features = ["graphql"]</code>)</a></h2>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors::graphql::{
+    async_graphql::{EmptyMutation, EmptySubscription, Object, Schema},
+    graphql_router,
+};
+
+struct Query;
+
+#[Object]
+impl Query {
+    async fn hello(&amp;self) -&gt; &amp;str { "Hello from Djangors GraphQL!" }
+}
+
+let schema = Schema::build(Query, EmptyMutation, EmptySubscription).finish();
+let app = Router::new().mount("", graphql_router(schema, "/graphql"));
+<span class="boring">}</span></code></pre>
+<p><code>graphql_router</code> mounts <code>POST /graphql</code>, <code>GET /graphql?query=...</code>, and serves the interactive GraphiQL playground on <code>GET /graphql</code> (without <code>?query</code>) and <code>GET /graphql/playground</code>.</p>
+<h2 id="grpc-features--grpc"><a class="header" href="#grpc-features--grpc">gRPC (<code>features = ["grpc"]</code>)</a></h2>
+<p><code>djangors::grpc</code> integrates <code>tonic</code> with <code>djangors_core::AppState</code> and provides <code>HybridServer</code> to serve HTTP and gRPC either on separate ports (<code>serve_dual</code>) or multiplexed on a single port (<code>serve_multiplexed</code>):</p>
+<pre class="playground"><code class="language-rust illustrative"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors::grpc::{AppStateInterceptor, HybridServer};
+
+let interceptor = AppStateInterceptor::new(app_state);
+let server = HybridServer::new(http_router, grpc_routes);
+server.serve_multiplexed("0.0.0.0:8080".parse()?).await?;
+<span class="boring">}</span></code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="how-to-add-a-custom-admin-action"><a class="header" href="#how-to-add-a-custom-admin-action">How to Add a Custom Admin Action</a></h1>
 <h2 id="problem"><a class="header" href="#problem">Problem</a></h2>
 <p>You want to perform a custom bulk action on selected rows in the Djangors admin changelist (e.g. marking selected articles as published or resetting user accounts).</p>
@@ -13114,6 +13389,22 @@ assert_eq!(messages[0].subject, "reset");
 <p><code>ConsoleBackend</code> is the fourth backend: it logs the message body via <code>tracing</code>
 to stdout/stderr, useful for local development when you want to <em>see</em> emails
 without an SMTP server or files on disk.</p>
+<h3 id="4-http-api-transports-resend-postmark-sendgrid-aws-ses-v2"><a class="header" href="#4-http-api-transports-resend-postmark-sendgrid-aws-ses-v2">4. HTTP API Transports (Resend, Postmark, SendGrid, AWS SES v2)</a></h3>
+<p>When outbound SMTP ports are blocked or throttled in cloud environments, use one of the built-in HTTP transports (enabled via the default <code>http</code> feature on <code>djangors-mail</code>):</p>
+<pre class="playground"><code class="language-rust compile"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use djangors_mail::{ResendBackend, PostmarkBackend, SendGridBackend, SesBackend, CapturingBackend};
+
+pub fn configure_http_mailers() {
+    let resend = ResendBackend::new("re_...");
+    let _postmark = PostmarkBackend::new("pm_...");
+    let _sendgrid = SendGridBackend::new("sg_...");
+    let _ses = SesBackend::new("us-east-1", "AKIA...", "secret");
+
+    // Wrap any backend to capture sent emails in memory for DevInspector
+    let _captured = CapturingBackend::new(resend, 100);
+}
+<span class="boring">}</span></code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="how-to-cache-a-view-response"><a class="header" href="#how-to-cache-a-view-response">How to Cache a View Response</a></h1>
 <h2 id="problem-2"><a class="header" href="#problem-2">Problem</a></h2>

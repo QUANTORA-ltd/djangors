@@ -74,3 +74,21 @@ assert_eq!(messages[0].subject, "reset");
 `ConsoleBackend` is the fourth backend: it logs the message body via `tracing`
 to stdout/stderr, useful for local development when you want to *see* emails
 without an SMTP server or files on disk.
+
+### 4. HTTP API Transports (Resend, Postmark, SendGrid, AWS SES v2)
+
+When outbound SMTP ports are blocked or throttled in cloud environments, use one of the built-in HTTP transports (enabled via the default `http` feature on `djangors-mail`):
+
+```rust,compile
+use djangors_mail::{ResendBackend, PostmarkBackend, SendGridBackend, SesBackend, CapturingBackend};
+
+pub fn configure_http_mailers() {
+    let resend = ResendBackend::new("re_...");
+    let _postmark = PostmarkBackend::new("pm_...");
+    let _sendgrid = SendGridBackend::new("sg_...");
+    let _ses = SesBackend::new("us-east-1", "AKIA...", "secret");
+
+    // Wrap any backend to capture sent emails in memory for DevInspector
+    let _captured = CapturingBackend::new(resend, 100);
+}
+```
