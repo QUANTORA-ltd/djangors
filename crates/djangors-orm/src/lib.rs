@@ -23,6 +23,8 @@ pub mod query_cache;
 pub mod queryset;
 /// Model lifecycle signals.
 pub mod signals;
+/// Vector embedding type and similarity distance metrics.
+pub mod vector;
 
 pub use djangors_db;
 pub use djangors_forms;
@@ -44,7 +46,11 @@ pub use expr::{
     ArithOp, CompareOp, Exists, Expr, IntoSetExpr, NotExists, OuterRef, SetExpr, UnresolvedCompare,
     UnresolvedExpr, UnresolvedFieldCompare, UnresolvedOuterCompare, Value, F,
 };
-pub use queryset::{m2m_add, m2m_related, m2m_remove, prefetch_related, GroupRow, QuerySet, SetOp};
+pub use queryset::{
+    create_fts5_table, index_fts5_row, m2m_add, m2m_related, m2m_remove, prefetch_related,
+    GroupRow, QuerySet, SetOp,
+};
+pub use vector::{Vector, VectorDistanceMetric};
 
 #[cfg(test)]
 #[allow(unused_extern_crates)]

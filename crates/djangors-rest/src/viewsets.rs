@@ -268,6 +268,7 @@ fn parse_filter_value<M: Model>(field_name: &str, raw_val: &str) -> Option<Value
             | FieldKind::Ip
             | FieldKind::Binary
             | FieldKind::Json
+            | FieldKind::Vector { .. }
             | FieldKind::Decimal { .. }
             | FieldKind::Date
             | FieldKind::Time

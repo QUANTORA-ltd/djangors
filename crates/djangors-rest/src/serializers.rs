@@ -168,7 +168,8 @@ fn deserialize_inner<M: Model>(
                 | FieldKind::Slug
                 | FieldKind::Ip
                 | FieldKind::Binary
-                | FieldKind::Json => {
+                | FieldKind::Json
+                | FieldKind::Vector { .. } => {
                     if let Some(s) = v.as_str() {
                         values.push((field.name, Value::Text(s.to_string())));
                     } else {

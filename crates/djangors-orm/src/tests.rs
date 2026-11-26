@@ -4092,4 +4092,102 @@ mod v1_orm_parity_tests {
         let empty = SqliteTestModel::objects().none().all(&db).await.unwrap();
         assert!(empty.is_empty());
     }
+
+    #[derive(djangors_macros::Model, Debug, Clone)]
+    #[djangors(app = "test_app", table_name = "doc_vectors")]
+    struct DocVector {
+        #[djangors(primary_key, auto)]
+        id: i64,
+        title: String,
+        body: String,
+        #[djangors(vector = 3)]
+        embedding: crate::Vector,
+    }
+
+    #[tokio::test]
+    async fn sqlite_vector_ordering_and_fts5_search() {
+        let cfg = crate::djangors_db::DatabaseConfig::new("sqlite::memory:")
+            .max_connections(1)
+            .min_connections(1);
+        let db = crate::djangors_db::Database::connect(&cfg).await.unwrap();
+        db.conn()
+            .execute(
+                "CREATE TABLE doc_vectors (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, body TEXT NOT NULL, embedding TEXT NOT NULL)",
+                &[],
+            )
+            .await
+            .unwrap();
+
+        let d1 = DocVector {
+            id: 0,
+            title: "Rust Async".to_string(),
+            body: "Tokio and Hyper power Djangors HTTP".to_string(),
+            embedding: crate::Vector::new(vec![1.0, 0.0, 0.0]),
+        }
+        .save(&db)
+        .await
+        .unwrap();
+        let d2 = DocVector {
+            id: 0,
+            title: "Baking Bread".to_string(),
+            body: "Sourdough fermentation guide".to_string(),
+            embedding: crate::Vector::new(vec![0.0, 1.0, 0.0]),
+        }
+        .save(&db)
+        .await
+        .unwrap();
+        let d3 = DocVector {
+            id: 0,
+            title: "Web Frameworks".to_string(),
+            body: "Djangors ORM and migrations in Rust".to_string(),
+            embedding: crate::Vector::new(vec![0.8, 0.6, 0.0]),
+        }
+        .save(&db)
+        .await
+        .unwrap();
+
+        // Cosine similarity ordering against [1.0, 0.0, 0.0]
+        let nearest = DocVector::objects()
+            .order_by_cosine_distance("embedding", &crate::Vector::new(vec![1.0, 0.0, 0.0]))
+            .unwrap()
+            .limit(2)
+            .all(&db)
+            .await
+            .unwrap();
+        assert_eq!(nearest.len(), 2);
+        assert_eq!(nearest[0].id, d1.id);
+        assert_eq!(nearest[1].id, d3.id);
+
+        // Dialect-aware search() on SQLite
+        let found = DocVector::objects()
+            .search("djangors rust", &["title", "body"])
+            .unwrap()
+            .all(&db)
+            .await
+            .unwrap();
+        assert_eq!(found.len(), 2);
+
+        // SQLite FTS5 virtual table search
+        crate::create_fts5_table(&db, "doc_vectors_fts", &["title", "body"])
+            .await
+            .unwrap();
+        for doc in [&d1, &d2, &d3] {
+            crate::index_fts5_row(
+                &db,
+                "doc_vectors_fts",
+                doc.id,
+                &[("title", &doc.title), ("body", &doc.body)],
+            )
+            .await
+            .unwrap();
+        }
+        let fts_hits = DocVector::objects()
+            .search_fts5("doc_vectors_fts", "sourdough")
+            .unwrap()
+            .all(&db)
+            .await
+            .unwrap();
+        assert_eq!(fts_hits.len(), 1);
+        assert_eq!(fts_hits[0].id, d2.id);
+    }
 }

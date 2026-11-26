@@ -35,6 +35,47 @@ pub struct ColumnDef {
     pub references: Option<ForeignKeyRef>,
 }
 
+/// Index algorithm for `pgvector` similarity indexes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VectorIndexMethod {
+    /// Hierarchical Navigable Small World graph (`hnsw`).
+    Hnsw,
+    /// Inverted File with Flat quantization (`ivfflat`).
+    IvfFlat,
+}
+
+impl VectorIndexMethod {
+    /// Returns the PostgreSQL index method name.
+    pub fn as_sql(&self) -> &'static str {
+        match self {
+            Self::Hnsw => "hnsw",
+            Self::IvfFlat => "ivfflat",
+        }
+    }
+}
+
+/// Operator class for `pgvector` similarity indexes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VectorOpClass {
+    /// Cosine distance (`vector_cosine_ops`).
+    Cosine,
+    /// Euclidean L2 distance (`vector_l2_ops`).
+    L2,
+    /// Inner product (`vector_ip_ops`).
+    InnerProduct,
+}
+
+impl VectorOpClass {
+    /// Returns the PostgreSQL `pgvector` operator class identifier.
+    pub fn as_sql(&self) -> &'static str {
+        match self {
+            Self::Cosine => "vector_cosine_ops",
+            Self::L2 => "vector_l2_ops",
+            Self::InnerProduct => "vector_ip_ops",
+        }
+    }
+}
+
 /// A DDL operation step in a migration plan.
 #[derive(Debug, Clone)]
 pub enum Operation {
@@ -139,10 +180,28 @@ pub enum Operation {
     },
     /// Executes arbitrary raw SQL (Django `RunSQL` equivalent).
     RunSql {
-        /// Forward SQL statement(s).
+        /// Forward SQL statement(s) to execute when applying this operation.
         sql: String,
-        /// Optional reverse SQL statement(s) making this operation invertible.
+        /// Optional reverse SQL statement(s) executed when rolling back.
         reverse_sql: Option<String>,
+    },
+    /// Enables a PostgreSQL extension (e.g. `"vector"` for `pgvector`).
+    EnableExtension {
+        /// Extension name (e.g. `"vector"`, `"pg_trgm"`).
+        name: String,
+    },
+    /// Creates a `pgvector` ANN similarity index (`hnsw` or `ivfflat`) on PostgreSQL.
+    CreateVectorIndex {
+        /// Index name.
+        index_name: String,
+        /// Table name.
+        table_name: String,
+        /// Vector column name.
+        column_name: String,
+        /// Index algorithm (`Hnsw` or `IvfFlat`).
+        method: VectorIndexMethod,
+        /// Distance operator class (`Cosine`, `L2`, or `InnerProduct`).
+        opclass: VectorOpClass,
     },
 }
 
@@ -385,6 +444,32 @@ impl Operation {
                 }),
             },
             Operation::RunSql { sql, .. } => Ok(sql.clone()),
+            Operation::EnableExtension { name } => match dialect {
+                Dialect::Postgres => Ok(format!("CREATE EXTENSION IF NOT EXISTS \"{name}\";")),
+                Dialect::Sqlite | Dialect::MySql => {
+                    Ok(format!("-- extension '{name}' is Postgres-only (no-op)"))
+                }
+            },
+            Operation::CreateVectorIndex {
+                index_name,
+                table_name,
+                column_name,
+                method,
+                opclass,
+            } => match dialect {
+                Dialect::Postgres => Ok(format!(
+                    "CREATE INDEX IF NOT EXISTS \"{}\" ON \"{}\" USING {} (\"{}\" {});",
+                    index_name,
+                    table_name,
+                    method.as_sql(),
+                    column_name,
+                    opclass.as_sql()
+                )),
+                Dialect::Sqlite | Dialect::MySql => Err(MigrationError::UnsupportedOnDialect {
+                    operation: "CreateVectorIndex".to_string(),
+                    dialect: format!("{dialect:?}"),
+                }),
+            },
         }
     }
 
@@ -441,12 +526,16 @@ impl Operation {
                 sql: rev.clone(),
                 reverse_sql: Some(sql.clone()),
             }),
+            Self::CreateVectorIndex { index_name, .. } => Some(Self::DropIndex {
+                index_name: index_name.clone(),
+            }),
             Self::DropColumn { .. }
             | Self::AlterColumnType { .. }
             | Self::DropTable { .. }
             | Self::DropIndex { .. }
             | Self::RemoveConstraint { .. }
-            | Self::AlterColumnDefault { .. } => None,
+            | Self::AlterColumnDefault { .. }
+            | Self::EnableExtension { .. } => None,
         }
     }
 

@@ -832,7 +832,8 @@ pub(crate) fn parse_field_value(
         | FieldKind::Slug
         | FieldKind::Ip
         | FieldKind::Binary
-        | FieldKind::Json => Ok(Value::Text(raw.to_string())),
+        | FieldKind::Json
+        | FieldKind::Vector { .. } => Ok(Value::Text(raw.to_string())),
         FieldKind::FileField => Ok(Value::Text(raw.to_string())),
         FieldKind::Integer | FieldKind::BigInt => raw
             .parse::<i64>()

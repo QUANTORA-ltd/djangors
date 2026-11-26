@@ -73,6 +73,12 @@ fn field_value_expr(f: &ModelField) -> TokenStream {
                         None => djangors_orm::expr::Value::Null,
                     }
                 },
+                "Vector" => quote! {
+                    match &self.#ident {
+                        Some(v) => djangors_orm::expr::Value::Text(v.to_pgvector_literal()),
+                        None => djangors_orm::expr::Value::Null,
+                    }
+                },
                 _ => quote! {
                     match self.#ident {
                         Some(v) => djangors_orm::expr::Value::from(v),
@@ -96,6 +102,7 @@ fn field_value_expr(f: &ModelField) -> TokenStream {
                 }
                 "Uuid" => quote! { djangors_orm::expr::Value::Text(self.#ident.to_string()) },
                 "Decimal" => quote! { djangors_orm::expr::Value::Text(self.#ident.to_string()) },
+                "Vector" => quote! { djangors_orm::expr::Value::Text(self.#ident.to_pgvector_literal()) },
                 _ => quote! { djangors_orm::expr::Value::from(self.#ident) },
             }
         }
@@ -173,7 +180,7 @@ fn field_write_json_expr(f: &ModelField) -> TokenStream {
                 "f64" => quote! { djangors_orm::json::write_json_f64(buf, self.#ident) },
                 "f32" => quote! { djangors_orm::json::write_json_f64(buf, self.#ident as f64) },
                 "bool" => quote! { djangors_orm::json::write_json_bool(buf, self.#ident) },
-                "NaiveDate" | "NaiveTime" | "Uuid" | "Decimal" => {
+                "NaiveDate" | "NaiveTime" | "Uuid" | "Decimal" | "Vector" => {
                     quote! { djangors_orm::json::write_json_display(buf, &self.#ident) }
                 }
                 "Duration" => {
@@ -435,6 +442,7 @@ pub fn expand_derive_model(input: DeriveInput) -> syn::Result<TokenStream> {
         let mut column = None;
         let mut max_digits = None;
         let mut decimal_places = None;
+        let mut vector_dims: Option<u32> = None;
         let mut on_delete = None;
         let mut related_name = None;
         let mut choices: Option<Vec<String>> = None;
@@ -475,6 +483,9 @@ pub fn expand_derive_model(input: DeriveInput) -> syn::Result<TokenStream> {
                     } else if meta.path.is_ident("decimal_places") {
                         let lit: LitInt = meta.value()?.parse()?;
                         decimal_places = Some(lit.base10_parse::<u32>()?);
+                    } else if meta.path.is_ident("vector") {
+                        let lit: LitInt = meta.value()?.parse()?;
+                        vector_dims = Some(lit.base10_parse::<u32>()?);
                     } else if meta.path.is_ident("foreign_key") {
                         meta.parse_nested_meta(|nested| {
                             if nested.path.is_ident("on_delete") {
@@ -747,6 +758,15 @@ pub fn expand_derive_model(input: DeriveInput) -> syn::Result<TokenStream> {
                     let dp = decimal_places.unwrap_or(0);
                     quote! { djangors_orm::FieldKind::Decimal { max_digits: #md, decimal_places: #dp } }
                 }
+                Some("Vector") => {
+                    let dims = vector_dims.ok_or_else(|| {
+                        syn::Error::new_spanned(
+                            &field_ident,
+                            "Vector field requires #[djangors(vector = <dimensions>)]",
+                        )
+                    })?;
+                    quote! { djangors_orm::FieldKind::Vector { dimensions: #dims } }
+                }
                 Some(other) => {
                     return Err(syn::Error::new_spanned(
                         inner_ty,
@@ -894,6 +914,24 @@ pub fn expand_derive_model(input: DeriveInput) -> syn::Result<TokenStream> {
                 }
                 (Some("Decimal"), false) => {
                     quote! { row.try_string_by_name(#final_column).map_err(djangors_orm::OrmError::from)?.ok_or_else(|| djangors_orm::OrmError::Query(djangors_orm::sqlx::Error::RowNotFound))?.parse().map_err(|e| djangors_orm::OrmError::InvalidQuery(format!("failed to parse {} field: {}", #final_column, e)))? }
+                }
+                (Some("Vector"), true) => {
+                    quote! {
+                        row.try_string_by_name(#final_column)
+                            .map_err(djangors_orm::OrmError::from)?
+                            .map(|s| djangors_orm::Vector::from_pgvector_literal(&s))
+                            .transpose()
+                            .map_err(|e| djangors_orm::OrmError::InvalidQuery(format!("failed to parse {} field: {}", #final_column, e)))?
+                    }
+                }
+                (Some("Vector"), false) => {
+                    quote! {
+                        djangors_orm::Vector::from_pgvector_literal(
+                            &row.try_string_by_name(#final_column)
+                                .map_err(djangors_orm::OrmError::from)?
+                                .ok_or_else(|| djangors_orm::OrmError::Query(djangors_orm::sqlx::Error::RowNotFound))?
+                        ).map_err(|e| djangors_orm::OrmError::InvalidQuery(format!("failed to parse {} field: {}", #final_column, e)))?
+                    }
                 }
                 (_, true) => {
                     quote! { row.try_string_by_name(#final_column).map_err(djangors_orm::OrmError::from)? }

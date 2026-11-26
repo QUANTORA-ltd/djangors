@@ -26,7 +26,7 @@ pub mod type_mapping;
 pub use error::MigrationError;
 pub use operation::{
     apply_data_migration, rollback_data_migration, ColumnDef, DataMigration, DataMigrationFn,
-    ForeignKeyRef, MigrationFuture, Operation, RunRust,
+    ForeignKeyRef, MigrationFuture, Operation, RunRust, VectorIndexMethod, VectorOpClass,
 };
 pub use plan::build_create_all_plan;
 pub use plan::build_create_plan_from_snapshots;

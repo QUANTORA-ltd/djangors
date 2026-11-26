@@ -49,6 +49,11 @@ pub enum FieldKind {
     Binary,
     /// JSON-encoded data field. Django's `JSONField`.
     Json,
+    /// Fixed-dimension vector embedding field (`pgvector` `VECTOR(N)` on Postgres, `TEXT` on SQLite).
+    Vector {
+        /// Vector dimensionality.
+        dimensions: u32,
+    },
 }
 
 /// Represents the default value of a model field.

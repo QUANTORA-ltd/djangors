@@ -64,6 +64,7 @@ pub fn sql_type_for(
             FieldKind::Ip => Ok("INET".to_string()),
             FieldKind::Binary => Ok("BYTEA".to_string()),
             FieldKind::Json => Ok("JSONB".to_string()),
+            FieldKind::Vector { dimensions } => Ok(format!("VECTOR({dimensions})")),
         },
         Dialect::Sqlite => match kind {
             FieldKind::Char | FieldKind::Email | FieldKind::Url | FieldKind::Slug => {
@@ -86,7 +87,8 @@ pub fn sql_type_for(
             | FieldKind::Duration
             | FieldKind::Uuid
             | FieldKind::Ip
-            | FieldKind::Json => Ok("TEXT".to_string()),
+            | FieldKind::Json
+            | FieldKind::Vector { .. } => Ok("TEXT".to_string()),
             FieldKind::Binary => Ok("BLOB".to_string()),
         },
         Dialect::MySql => match kind {
@@ -128,6 +130,7 @@ pub fn sql_type_for(
             FieldKind::Ip => Ok("VARCHAR(45)".to_string()),
             FieldKind::Binary => Ok("LONGBLOB".to_string()),
             FieldKind::Json => Ok("JSON".to_string()),
+            FieldKind::Vector { .. } => Ok("JSON".to_string()),
         },
     }
 }

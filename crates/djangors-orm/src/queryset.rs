@@ -57,7 +57,9 @@ pub struct QuerySet<T: Model + FromRow> {
     limit: Option<i64>,
     offset: Option<i64>,
     for_update: Option<ForUpdate>,
-    search_condition: Option<String>,
+    search_query: Option<(Vec<&'static str>, String)>,
+    fts5_query: Option<(String, String)>,
+    vector_order: Option<(String, crate::vector::VectorDistanceMetric, crate::vector::Vector)>,
     cache_ttl: Option<std::time::Duration>,
     include_deleted: bool,
     distinct: bool,
@@ -77,7 +79,9 @@ impl<T: Model + FromRow> Clone for QuerySet<T> {
             limit: self.limit,
             offset: self.offset,
             for_update: self.for_update.clone(),
-            search_condition: self.search_condition.clone(),
+            search_query: self.search_query.clone(),
+            fts5_query: self.fts5_query.clone(),
+            vector_order: self.vector_order.clone(),
             cache_ttl: self.cache_ttl,
             include_deleted: self.include_deleted,
             distinct: self.distinct,
@@ -106,7 +110,9 @@ impl<T: Model + FromRow> QuerySet<T> {
             limit: None,
             offset: None,
             for_update: None,
-            search_condition: None,
+            search_query: None,
+            fts5_query: None,
+            vector_order: None,
             cache_ttl: None,
             include_deleted: false,
             distinct: false,
@@ -816,27 +822,95 @@ impl<T: Model + FromRow> QuerySet<T> {
         Ok(self)
     }
 
-    /// Performs a Postgres full-text search on the given text fields.
-    /// Uses `plainto_tsquery('english', query)` and matches via `@@` against a
-    /// concatenated `to_tsvector` of the fields.
+    /// Performs a full-text search on the given text fields across both backends.
     ///
-    /// Postgres-only. Use `filter_or_icontains` for case-insensitive substring
-    /// matching on both backends.
+    /// - **PostgreSQL**: uses `to_tsvector('english', ...) @@ plainto_tsquery('english', query)`.
+    /// - **SQLite / MySQL**: performs multi-term case-insensitive `LIKE` matching across the
+    ///   specified fields (all whitespace-separated terms must match at least one field).
     pub fn search(mut self, query: &str, fields: &[&'static str]) -> Result<Self, OrmError> {
+        let meta = T::meta();
         for field in fields {
-            Self::reject_encrypted(T::meta(), field)?;
+            if !meta.fields.iter().any(|f| f.name == *field) {
+                return Err(OrmError::FieldNotFound {
+                    field: (*field).to_string(),
+                    model: meta.struct_name,
+                });
+            }
+            Self::reject_encrypted(meta, field)?;
         }
-        let escaped = query.replace('\'', "''");
-        let tsvector_parts: Vec<String> = fields
-            .iter()
-            .map(|f| format!("coalesce(\"{}\"::text, '')", f))
-            .collect();
-        let condition = format!(
-            "to_tsvector('english', {}) @@ plainto_tsquery('english', '{escaped}')",
-            tsvector_parts.join(" || ' ' || ")
-        );
-        self.search_condition = Some(condition);
+        self.search_query = Some((fields.to_vec(), query.to_string()));
         Ok(self)
+    }
+
+    /// Filters rows matching an FTS5 virtual table query on SQLite (`rowid IN (SELECT rowid FROM {fts_table} WHERE {fts_table} MATCH ?)`).
+    ///
+    /// Create the virtual table via [`create_fts5_table`] and populate it with [`index_fts5_row`].
+    pub fn search_fts5(mut self, fts_table: &str, query: &str) -> Result<Self, OrmError> {
+        if !fts_table
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+            || fts_table.is_empty()
+        {
+            return Err(OrmError::InvalidQuery(format!(
+                "invalid FTS5 table name '{fts_table}'"
+            )));
+        }
+        self.fts5_query = Some((fts_table.to_string(), query.to_string()));
+        Ok(self)
+    }
+
+    /// Orders results by similarity to `query` using the requested [`VectorDistanceMetric`].
+    ///
+    /// - **PostgreSQL**: generates `ORDER BY "col" <=> '[...]'::vector` (or `<->`, `<#>`).
+    /// - **SQLite**: computes exact distances in Rust and sorts before applying `offset`/`limit`.
+    pub fn order_by_vector_distance(
+        mut self,
+        field: &str,
+        query: &crate::vector::Vector,
+        metric: crate::vector::VectorDistanceMetric,
+    ) -> Result<Self, OrmError> {
+        let meta = T::meta();
+        let f = meta
+            .fields
+            .iter()
+            .find(|f| f.name == field)
+            .ok_or_else(|| OrmError::FieldNotFound {
+                field: field.to_string(),
+                model: meta.struct_name,
+            })?;
+        self.vector_order = Some((f.column_name.to_string(), metric, query.clone()));
+        Ok(self)
+    }
+
+    /// Orders results by ascending cosine distance (`<=>` in pgvector) to `query`.
+    pub fn order_by_cosine_distance(
+        self,
+        field: &str,
+        query: &crate::vector::Vector,
+    ) -> Result<Self, OrmError> {
+        self.order_by_vector_distance(field, query, crate::vector::VectorDistanceMetric::Cosine)
+    }
+
+    /// Orders results by ascending Euclidean L2 distance (`<->` in pgvector) to `query`.
+    pub fn order_by_l2_distance(
+        self,
+        field: &str,
+        query: &crate::vector::Vector,
+    ) -> Result<Self, OrmError> {
+        self.order_by_vector_distance(field, query, crate::vector::VectorDistanceMetric::L2)
+    }
+
+    /// Orders results by ascending negative inner product (`<#>` in pgvector) to `query`.
+    pub fn order_by_inner_product(
+        self,
+        field: &str,
+        query: &crate::vector::Vector,
+    ) -> Result<Self, OrmError> {
+        self.order_by_vector_distance(
+            field,
+            query,
+            crate::vector::VectorDistanceMetric::InnerProduct,
+        )
     }
 
     /// Restricts to rows where `field` is in `[gte, lt)`.
@@ -1123,11 +1197,69 @@ impl<T: Model + FromRow> QuerySet<T> {
             sql.push_str(&where_clause);
         }
 
-        if let Some(ref sc) = self.search_condition {
+        if let Some((ref fields, ref query)) = self.search_query {
+            let escaped = query.replace('\'', "''");
+            let sc = match dialect {
+                Dialect::Postgres => {
+                    let tsvector_parts: Vec<String> = fields
+                        .iter()
+                        .map(|f| format!("coalesce(\"{}\"::text, '')", f))
+                        .collect();
+                    format!(
+                        "to_tsvector('english', {}) @@ plainto_tsquery('english', '{escaped}')",
+                        tsvector_parts.join(" || ' ' || ")
+                    )
+                }
+                Dialect::Sqlite | Dialect::MySql => {
+                    let terms: Vec<&str> = query.split_whitespace().collect();
+                    if terms.is_empty() || fields.is_empty() {
+                        "1 = 1".to_string()
+                    } else {
+                        let mut term_clauses = Vec::with_capacity(terms.len());
+                        for term in terms {
+                            let pat = term
+                                .replace('\'', "''")
+                                .replace('%', "\\%")
+                                .replace('_', "\\_");
+                            let field_ors: Vec<String> = fields
+                                .iter()
+                                .map(|f| {
+                                    if dialect == Dialect::Sqlite {
+                                        format!("LOWER(COALESCE(\"{f}\", '')) LIKE LOWER('%{pat}%') ESCAPE '\\'")
+                                    } else {
+                                        format!("LOWER(COALESCE(`{f}`, '')) LIKE LOWER('%{pat}%')")
+                                    }
+                                })
+                                .collect();
+                            term_clauses.push(format!("({})", field_ors.join(" OR ")));
+                        }
+                        term_clauses.join(" AND ")
+                    }
+                }
+            };
             if sql.contains(" WHERE ") {
                 sql.push_str(&format!(" AND ({sc})"));
             } else {
                 sql.push_str(&format!(" WHERE ({sc})"));
+            }
+        }
+
+        if let Some((ref fts_table, ref fts_q)) = self.fts5_query {
+            let escaped = fts_q.replace('\'', "''");
+            let clause = match dialect {
+                Dialect::Sqlite => format!(
+                    "rowid IN (SELECT rowid FROM \"{fts_table}\" WHERE \"{fts_table}\" MATCH '{escaped}')"
+                ),
+                Dialect::Postgres | Dialect::MySql => {
+                    // Fallback when FTS5 helper is invoked against Postgres/MySQL.
+                    let _ = fts_table;
+                    "1 = 1".to_string()
+                }
+            };
+            if sql.contains(" WHERE ") {
+                sql.push_str(&format!(" AND ({clause})"));
+            } else {
+                sql.push_str(&format!(" WHERE ({clause})"));
             }
         }
 
@@ -1171,16 +1303,31 @@ impl<T: Model + FromRow> QuerySet<T> {
                 .collect();
             sql.push_str(" ORDER BY ");
             sql.push_str(&order_parts.join(", "));
+        } else if include_order && dialect == Dialect::Postgres {
+            if let Some((ref col, metric, ref query_vec)) = self.vector_order {
+                let lit = query_vec.to_pgvector_literal();
+                sql.push_str(&format!(
+                    " ORDER BY \"{}\" {} '{}'::vector ASC",
+                    col,
+                    metric.pgvector_operator(),
+                    lit
+                ));
+            }
         }
 
-        if let Some(limit) = self.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
-        }
-        if let Some(offset) = self.offset {
-            if self.limit.is_none() && dialect == Dialect::Sqlite {
-                sql.push_str(" LIMIT -1");
+        let defer_limit_for_sqlite_vec =
+            dialect != Dialect::Postgres && self.vector_order.is_some();
+
+        if !defer_limit_for_sqlite_vec {
+            if let Some(limit) = self.limit {
+                sql.push_str(&format!(" LIMIT {}", limit));
             }
-            sql.push_str(&format!(" OFFSET {}", offset));
+            if let Some(offset) = self.offset {
+                if self.limit.is_none() && dialect == Dialect::Sqlite {
+                    sql.push_str(" LIMIT -1");
+                }
+                sql.push_str(&format!(" OFFSET {}", offset));
+            }
         }
 
         if dialect == Dialect::Postgres {
@@ -1393,6 +1540,39 @@ impl<T: Model + FromRow> QuerySet<T> {
         let mut results = Vec::with_capacity(rows.len());
         for row in rows {
             results.push(T::from_row(&row)?);
+        }
+        if dialect != Dialect::Postgres {
+            if let Some((ref col, metric, ref query_vec)) = self.vector_order {
+                let field_name = T::meta()
+                    .fields
+                    .iter()
+                    .find(|f| f.column_name == col)
+                    .map(|f| f.name)
+                    .unwrap_or(col.as_str());
+                results.sort_by(|a, b| {
+                    let dist = |item: &T| -> f32 {
+                        item.field_values()
+                            .into_iter()
+                            .find(|(k, _)| *k == field_name)
+                            .and_then(|(_, v)| match v {
+                                Value::Text(s) => crate::vector::Vector::from_pgvector_literal(&s).ok(),
+                                _ => None,
+                            })
+                            .map(|v| v.distance(query_vec, metric))
+                            .unwrap_or(f32::INFINITY)
+                    };
+                    dist(a)
+                        .partial_cmp(&dist(b))
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+                if let Some(offset) = self.offset {
+                    let start = (offset.max(0) as usize).min(results.len());
+                    results = results.split_off(start);
+                }
+                if let Some(limit) = self.limit {
+                    results.truncate(limit.max(0) as usize);
+                }
+            }
         }
         Ok(results)
     }
@@ -2977,4 +3157,74 @@ fn compile_expr_sql(
             }
         }
     }
+}
+
+fn validate_sql_ident(name: &str) -> Result<(), OrmError> {
+    if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return Err(OrmError::InvalidQuery(format!(
+            "invalid SQL identifier '{name}'"
+        )));
+    }
+    Ok(())
+}
+
+/// Creates a SQLite FTS5 virtual table for full-text search across `columns`.
+///
+/// On non-SQLite backends this is a no-op (use [`QuerySet::search`] for Postgres `tsvector`).
+pub async fn create_fts5_table(
+    db: &djangors_db::Database,
+    fts_table: &str,
+    columns: &[&str],
+) -> Result<(), OrmError> {
+    validate_sql_ident(fts_table)?;
+    for col in columns {
+        validate_sql_ident(col)?;
+    }
+    let mut conn = db.conn();
+    if conn.dialect() != Dialect::Sqlite {
+        return Ok(());
+    }
+    let cols_sql = columns
+        .iter()
+        .map(|c| format!("\"{c}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!("CREATE VIRTUAL TABLE IF NOT EXISTS \"{fts_table}\" USING fts5({cols_sql});");
+    conn.execute(&sql, &[]).await?;
+    Ok(())
+}
+
+/// Inserts or replaces a row in a SQLite FTS5 virtual table keyed by `rowid`.
+pub async fn index_fts5_row(
+    db: &djangors_db::Database,
+    fts_table: &str,
+    rowid: i64,
+    columns: &[(&str, &str)],
+) -> Result<(), OrmError> {
+    validate_sql_ident(fts_table)?;
+    for (col, _) in columns {
+        validate_sql_ident(col)?;
+    }
+    let mut conn = db.conn();
+    if conn.dialect() != Dialect::Sqlite {
+        return Ok(());
+    }
+    let del_sql = format!("DELETE FROM \"{fts_table}\" WHERE rowid = ?;");
+    conn.execute(&del_sql, &[BindValue::I64(rowid)]).await?;
+
+    let mut col_names = vec!["\"rowid\"".to_string()];
+    let mut placeholders = vec!["?".to_string()];
+    let mut binds = vec![BindValue::I64(rowid)];
+    for (col, val) in columns {
+        col_names.push(format!("\"{col}\""));
+        placeholders.push("?".to_string());
+        binds.push(BindValue::Text((*val).to_string()));
+    }
+    let ins_sql = format!(
+        "INSERT INTO \"{fts_table}\" ({}) VALUES ({});",
+        col_names.join(", "),
+        placeholders.join(", ")
+    );
+    conn.execute(&ins_sql, &binds).await?;
+    Ok(())
 }
