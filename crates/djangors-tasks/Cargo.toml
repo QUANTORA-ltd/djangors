@@ -14,10 +14,11 @@ authors.workspace = true
 
 [features]
 default = ["postgres", "sqlite"]
-postgres = ["djangors-db/postgres", "djangors-orm/postgres", "djangors-admin/postgres"]
-sqlite = ["djangors-db/sqlite", "djangors-orm/sqlite", "djangors-admin/sqlite"]
+postgres = ["djangors-db/postgres", "djangors-orm/postgres", "djangors-core/postgres", "djangors-admin/postgres"]
+sqlite = ["djangors-db/sqlite", "djangors-orm/sqlite", "djangors-core/sqlite", "djangors-admin/sqlite"]
 
 [dependencies]
+djangors-core = { path = "../djangors-core", version = "1.0.0", default-features = false }
 djangors-db = { path = "../djangors-db", version = "1.0.0", default-features = false }
 djangors-orm = { path = "../djangors-orm", version = "1.0.0", default-features = false }
 djangors-macros = { path = "../djangors-macros", version = "1.0.0" }
@@ -34,3 +35,7 @@ sqlx = { version = "0.9.0", default-features = false, features = ["chrono"] }
 [dev-dependencies]
 djangors-test = { path = "../djangors-test" }
 tokio = { version = "1.53.0", features = ["full", "rt-multi-thread"] }
+bytes = "1.12"
+http-body-util = "0.1.4"
+hyper = "1.10.1"
+tower = { version = "0.5.3", features = ["util"] }

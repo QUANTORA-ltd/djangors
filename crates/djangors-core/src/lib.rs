@@ -98,7 +98,10 @@ pub mod ws;
 pub use app::Djangors;
 pub use checks::{run_system_checks, CheckLevel, CheckMessage, SystemCheckRegistration};
 #[cfg(feature = "debug-panel")]
-pub use debug_panel::{debug_panel_layer, DebugPanelLayer, DebugPanelService};
+pub use debug_panel::{
+    debug_panel_layer, CapturedEmailEntry, CapturedError, CapturedRequest, CapturedSlowQuery,
+    DebugPanelLayer, DebugPanelService, DevInspector, InspectorSnapshot,
+};
 pub use endpoint::{
     mounted_endpoints_for_router, registered_endpoints_for_router, registered_endpoints_snapshot,
     EndpointRegistration, EndpointSchema, EndpointSnapshot, MountedRouteEntry,

@@ -6,31 +6,377 @@
 //! queries executed in a loop, sets diagnostic `X-Djangors-*` headers, and optionally
 //! injects a collapsible HTML toolbar before `</body>` on `text/html` responses.
 
+use std::collections::VecDeque;
 use std::convert::Infallible;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
 use djangors_orm::djangors_db::{with_query_log, QueryStats};
 use http_body_util::{BodyExt, Full};
 use hyper::http::{header::CONTENT_TYPE, HeaderName, HeaderValue};
+use serde::Serialize;
 use tower::{Layer, Service};
 
 use crate::html_escape;
+
+/// A recorded HTTP request entry stored by [`DevInspector`].
+#[derive(Debug, Clone, Serialize)]
+pub struct CapturedRequest {
+    /// HTTP method (`GET`, `POST`, ...).
+    pub method: String,
+    /// Request path.
+    pub path: String,
+    /// Response HTTP status code.
+    pub status: u16,
+    /// Wall-clock duration in milliseconds.
+    pub duration_ms: f64,
+    /// Total SQL query count executed during the request.
+    pub query_count: usize,
+    /// Number of duplicate query patterns detected (N+1 indicator).
+    pub duplicate_queries: usize,
+    /// Unix epoch timestamp (seconds).
+    pub timestamp_unix: u64,
+}
+
+/// A slow SQL query captured by [`DevInspector`].
+#[derive(Debug, Clone, Serialize)]
+pub struct CapturedSlowQuery {
+    /// Request path that executed the query.
+    pub path: String,
+    /// SQL statement text.
+    pub sql: String,
+    /// Execution time in milliseconds.
+    pub duration_ms: f64,
+    /// Unix epoch timestamp (seconds).
+    pub timestamp_unix: u64,
+}
+
+/// A captured outgoing email entry for the [`DevInspector`] mailbox preview.
+#[derive(Debug, Clone, Serialize)]
+pub struct CapturedEmailEntry {
+    /// Recipient addresses.
+    pub to: Vec<String>,
+    /// Sender address.
+    pub from: String,
+    /// Subject line.
+    pub subject: String,
+    /// Plain-text body.
+    pub body: String,
+    /// Optional HTML body.
+    pub html_body: Option<String>,
+    /// Unix epoch timestamp (seconds).
+    pub timestamp_unix: u64,
+}
+
+/// A captured error or 5xx trace stored by [`DevInspector`].
+#[derive(Debug, Clone, Serialize)]
+pub struct CapturedError {
+    /// Request path or subsystem label.
+    pub path: String,
+    /// Error summary message.
+    pub message: String,
+    /// Unix epoch timestamp (seconds).
+    pub timestamp_unix: u64,
+}
+
+#[derive(Default)]
+struct InspectorState {
+    requests: VecDeque<CapturedRequest>,
+    slow_queries: VecDeque<CapturedSlowQuery>,
+    emails: VecDeque<CapturedEmailEntry>,
+    errors: VecDeque<CapturedError>,
+}
+
+/// Snapshot of all captured entries returned by `/_inspector/api.json`.
+#[derive(Debug, Clone, Serialize)]
+pub struct InspectorSnapshot {
+    /// Recent requests.
+    pub requests: Vec<CapturedRequest>,
+    /// Recent slow SQL queries.
+    pub slow_queries: Vec<CapturedSlowQuery>,
+    /// Recent captured emails.
+    pub emails: Vec<CapturedEmailEntry>,
+    /// Recent captured errors.
+    pub errors: Vec<CapturedError>,
+}
+
+/// Laravel Telescope / Pulse-style in-memory dev inspector recording requests,
+/// slow SQL queries, captured emails, and errors, with a built-in `/_inspector/` UI.
+#[derive(Clone)]
+pub struct DevInspector {
+    state: Arc<Mutex<InspectorState>>,
+    max_entries: usize,
+    slow_query_threshold_us: u64,
+}
+
+impl Default for DevInspector {
+    fn default() -> Self {
+        Self::new(200, 50)
+    }
+}
+
+impl DevInspector {
+    /// Create a [`DevInspector`] retaining up to `max_entries` per ring buffer and
+    /// flagging queries slower than `slow_query_ms` milliseconds.
+    pub fn new(max_entries: usize, slow_query_ms: u64) -> Self {
+        Self {
+            state: Arc::new(Mutex::new(InspectorState::default())),
+            max_entries: max_entries.max(1),
+            slow_query_threshold_us: slow_query_ms.saturating_mul(1000),
+        }
+    }
+
+    fn now_unix() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+    }
+
+    fn push_bounded<T>(queue: &mut VecDeque<T>, item: T, max_entries: usize) {
+        if queue.len() >= max_entries {
+            queue.pop_front();
+        }
+        queue.push_back(item);
+    }
+
+    /// Record a completed request and any slow SQL queries from `stats`.
+    pub fn record_request(
+        &self,
+        method: &str,
+        path: &str,
+        status: u16,
+        duration_micros: u64,
+        stats: &QueryStats,
+    ) {
+        let now = Self::now_unix();
+        let mut guard = self.state.lock().expect("lock dev inspector");
+        Self::push_bounded(
+            &mut guard.requests,
+            CapturedRequest {
+                method: method.to_string(),
+                path: path.to_string(),
+                status,
+                duration_ms: duration_micros as f64 / 1000.0,
+                query_count: stats.total_queries(),
+                duplicate_queries: stats.duplicates.len(),
+                timestamp_unix: now,
+            },
+            self.max_entries,
+        );
+        for q in &stats.queries {
+            if q.duration_micros >= self.slow_query_threshold_us {
+                Self::push_bounded(
+                    &mut guard.slow_queries,
+                    CapturedSlowQuery {
+                        path: path.to_string(),
+                        sql: q.sql.clone(),
+                        duration_ms: q.duration_micros as f64 / 1000.0,
+                        timestamp_unix: now,
+                    },
+                    self.max_entries,
+                );
+            }
+        }
+        if status >= 500 {
+            Self::push_bounded(
+                &mut guard.errors,
+                CapturedError {
+                    path: path.to_string(),
+                    message: format!("{method} {path} returned HTTP {status}"),
+                    timestamp_unix: now,
+                },
+                self.max_entries,
+            );
+        }
+    }
+
+    /// Record an outgoing email into the inspector's mailbox preview.
+    pub fn record_email(
+        &self,
+        to: Vec<String>,
+        from: impl Into<String>,
+        subject: impl Into<String>,
+        body: impl Into<String>,
+        html_body: Option<String>,
+    ) {
+        let mut guard = self.state.lock().expect("lock dev inspector");
+        Self::push_bounded(
+            &mut guard.emails,
+            CapturedEmailEntry {
+                to,
+                from: from.into(),
+                subject: subject.into(),
+                body: body.into(),
+                html_body,
+                timestamp_unix: Self::now_unix(),
+            },
+            self.max_entries,
+        );
+    }
+
+    /// Record an application error entry.
+    pub fn record_error(&self, path: impl Into<String>, message: impl Into<String>) {
+        let mut guard = self.state.lock().expect("lock dev inspector");
+        Self::push_bounded(
+            &mut guard.errors,
+            CapturedError {
+                path: path.into(),
+                message: message.into(),
+                timestamp_unix: Self::now_unix(),
+            },
+            self.max_entries,
+        );
+    }
+
+    /// Clear all captured requests, slow queries, emails, and errors.
+    pub fn clear(&self) {
+        let mut guard = self.state.lock().expect("lock dev inspector");
+        guard.requests.clear();
+        guard.slow_queries.clear();
+        guard.emails.clear();
+        guard.errors.clear();
+    }
+
+    /// Return a cloned [`InspectorSnapshot`] of all recorded telemetry.
+    pub fn snapshot(&self) -> InspectorSnapshot {
+        let guard = self.state.lock().expect("lock dev inspector");
+        InspectorSnapshot {
+            requests: guard.requests.iter().cloned().collect(),
+            slow_queries: guard.slow_queries.iter().cloned().collect(),
+            emails: guard.emails.iter().cloned().collect(),
+            errors: guard.errors.iter().cloned().collect(),
+        }
+    }
+
+    /// Build a [`crate::Router`] serving `/_inspector/`, `/_inspector/api.json`, and `POST /_inspector/clear`.
+    pub fn router(&self) -> crate::Router {
+        let insp_html = self.clone();
+        let insp_json = self.clone();
+        let insp_clear = self.clone();
+
+        crate::Router::new()
+            .get("/_inspector/", move |_req, _params| {
+                let snap = insp_html.snapshot();
+                async move {
+                    let req_rows: String = snap
+                        .requests
+                        .iter()
+                        .rev()
+                        .map(|r| {
+                            format!(
+                                "<tr><td><b>{}</b></td><td><code>{}</code></td><td>{}</td><td>{:.2} ms</td><td>{} ({} dup)</td></tr>",
+                                html_escape(&r.method),
+                                html_escape(&r.path),
+                                r.status,
+                                r.duration_ms,
+                                r.query_count,
+                                r.duplicate_queries
+                            )
+                        })
+                        .collect();
+                    let slow_rows: String = snap
+                        .slow_queries
+                        .iter()
+                        .rev()
+                        .map(|q| {
+                            format!(
+                                "<tr><td><code>{}</code></td><td>{:.2} ms</td><td><code>{}</code></td></tr>",
+                                html_escape(&q.path),
+                                q.duration_ms,
+                                html_escape(&q.sql)
+                            )
+                        })
+                        .collect();
+                    let email_rows: String = snap
+                        .emails
+                        .iter()
+                        .rev()
+                        .map(|m| {
+                            format!(
+                                "<tr><td>{}</td><td>{}</td><td><b>{}</b></td><td><pre>{}</pre></td></tr>",
+                                html_escape(&m.from),
+                                html_escape(&m.to.join(", ")),
+                                html_escape(&m.subject),
+                                html_escape(&m.body)
+                            )
+                        })
+                        .collect();
+                    let err_rows: String = snap
+                        .errors
+                        .iter()
+                        .rev()
+                        .map(|e| {
+                            format!(
+                                "<tr><td><code>{}</code></td><td>{}</td></tr>",
+                                html_escape(&e.path),
+                                html_escape(&e.message)
+                            )
+                        })
+                        .collect();
+
+                    let html = format!(
+                        "<!DOCTYPE html><html><head><meta charset=\"utf-8\">\
+                         <title>Djangors Dev Inspector</title>\
+                         <style>body{{font-family:system-ui,sans-serif;max-width:1040px;margin:2rem auto;padding:0 1rem}}\
+                         table{{width:100%;border-collapse:collapse;margin:1rem 0}}th,td{{text-align:left;padding:.45rem;border-bottom:1px solid #e5e7eb;font-size:13px}}\
+                         button{{background:#201e1e;color:#f5f1e7;border:0;padding:.4rem .8rem;border-radius:4px;cursor:pointer}}</style>\
+                         </head><body><h1>Djangors Dev Inspector</h1>\
+                         <form method=\"post\" action=\"/_inspector/clear\"><button type=\"submit\">Clear All</button></form>\
+                         <h2>Requests ({})</h2><table><thead><tr><th>Method</th><th>Path</th><th>Status</th><th>Time</th><th>SQL</th></tr></thead><tbody>{}</tbody></table>\
+                         <h2>Slow Queries ({})</h2><table><thead><tr><th>Path</th><th>Time</th><th>SQL</th></tr></thead><tbody>{}</tbody></table>\
+                         <h2>Captured Emails ({})</h2><table><thead><tr><th>From</th><th>To</th><th>Subject</th><th>Body</th></tr></thead><tbody>{}</tbody></table>\
+                         <h2>Errors ({})</h2><table><thead><tr><th>Path</th><th>Message</th></tr></thead><tbody>{}</tbody></table></body></html>",
+                        snap.requests.len(),
+                        req_rows,
+                        snap.slow_queries.len(),
+                        slow_rows,
+                        snap.emails.len(),
+                        email_rows,
+                        snap.errors.len(),
+                        err_rows,
+                    );
+                    Ok(crate::Response::html(crate::StatusCode::OK, html))
+                }
+            })
+            .get("/_inspector/api.json", move |_req, _params| {
+                let snap = insp_json.snapshot();
+                async move { crate::Response::json(crate::StatusCode::OK, &snap) }
+            })
+            .post("/_inspector/clear", move |_req, _params| {
+                insp_clear.clear();
+                async move { Ok(crate::Response::redirect("/_inspector/")) }
+            })
+    }
+}
 
 /// Tower [`Layer`] that records SQL queries per request, detects N+1 duplicate query loops,
 /// attaches `X-Djangors-Query-Count`, `X-Djangors-Query-Time-Us`, `X-Djangors-Request-Time-Us`,
 /// and `X-Djangors-Duplicate-Queries` response headers, and injects an interactive HTML
 /// debug panel before `</body>` on HTML responses.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct DebugPanelLayer {
     inject_html: bool,
     enabled: bool,
     /// True when the caller did not say whether this is a debug build (`new()`), so
     /// `layer()` falls back to checking `DJANGORS_DEBUG` before warning.
     debug_unknown: bool,
+    inspector: Option<DevInspector>,
+}
+
+impl std::fmt::Debug for DebugPanelLayer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DebugPanelLayer")
+            .field("inject_html", &self.inject_html)
+            .field("enabled", &self.enabled)
+            .field("debug_unknown", &self.debug_unknown)
+            .field("has_inspector", &self.inspector.is_some())
+            .finish()
+    }
 }
 
 impl Default for DebugPanelLayer {
@@ -46,7 +392,14 @@ impl DebugPanelLayer {
             inject_html: true,
             enabled: true,
             debug_unknown: true,
+            inspector: None,
         }
+    }
+
+    /// Attaches a [`DevInspector`] to record requests, slow SQL queries, and 5xx errors.
+    pub fn with_inspector(mut self, inspector: DevInspector) -> Self {
+        self.inspector = Some(inspector);
+        self
     }
 
     /// Creates a panel layer whose enabled state follows the application debug setting.
@@ -85,16 +438,18 @@ impl<S> Layer<S> for DebugPanelLayer {
             inner,
             inject_html: self.inject_html,
             enabled: self.enabled,
+            inspector: self.inspector.clone(),
         }
     }
 }
 
 /// Tower [`Service`] produced by [`DebugPanelLayer`].
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct DebugPanelService<S> {
     inner: S,
     inject_html: bool,
     enabled: bool,
+    inspector: Option<DevInspector>,
 }
 
 impl<S, ReqBody> Service<hyper::Request<ReqBody>> for DebugPanelService<S>
@@ -121,6 +476,7 @@ where
         let mut inner = self.inner.clone();
         let inject_html = self.inject_html;
         let enabled = self.enabled;
+        let inspector = self.inspector.clone();
         let method = req.method().as_str().to_string();
         let path = req.uri().path().to_string();
 
@@ -133,6 +489,9 @@ where
             let req_micros = req_start.elapsed().as_micros() as u64;
 
             let mut resp = res.expect("infallible service");
+            if let Some(insp) = &inspector {
+                insp.record_request(&method, &path, resp.status().as_u16(), req_micros, &stats);
+            }
             attach_debug_headers(resp.headers_mut(), &stats, req_micros);
 
             if inject_html && is_html_response(resp.headers()) {
@@ -368,5 +727,53 @@ mod tests {
     fn for_settings_follows_debug_setting() {
         assert!(!DebugPanelLayer::for_settings(&DjangorsSettings::new().with_debug(false)).enabled);
         assert!(DebugPanelLayer::for_settings(&DjangorsSettings::new().with_debug(true)).enabled);
+    }
+
+    #[tokio::test]
+    async fn dev_inspector_records_requests_emails_and_serves_dashboard() {
+        let inspector = DevInspector::new(50, 0);
+        inspector.record_email(
+            vec!["user@example.com".into()],
+            "app@example.com",
+            "Welcome",
+            "Hello!",
+            None,
+        );
+        let app = Router::new()
+            .get("/ping", |_req: Request, _p: PathParams| async {
+                Ok(Response::text(StatusCode::OK, "pong"))
+            })
+            .mount("", inspector.router());
+
+        let svc = DebugPanelLayer::new()
+            .with_inspector(inspector.clone())
+            .layer(app);
+
+        let r1 = svc
+            .clone()
+            .oneshot(
+                hyper::Request::builder()
+                    .uri("/ping")
+                    .body(Full::new(Bytes::new()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(r1.status(), StatusCode::OK);
+
+        let r2 = svc
+            .oneshot(
+                hyper::Request::builder()
+                    .uri("/_inspector/api.json")
+                    .body(Full::new(Bytes::new()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(r2.status(), StatusCode::OK);
+        let body = r2.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["requests"].as_array().unwrap().len(), 1);
+        assert_eq!(json["emails"].as_array().unwrap().len(), 1);
     }
 }

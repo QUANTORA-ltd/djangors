@@ -11,6 +11,13 @@
 
 extern crate self as djangors_tasks;
 
+/// Live task queue dashboard router and admin mounting helpers.
+pub mod dashboard;
+pub use dashboard::{
+    collect_queue_stats, purge_completed_tasks, queue_dashboard_router, register_dashboard,
+    retry_task, QueueStats,
+};
+
 use djangors_db::DbExecutor;
 use djangors_macros::Model;
 use std::future::Future;
